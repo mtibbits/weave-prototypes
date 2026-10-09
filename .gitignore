@@ -1,0 +1,7 @@
+_site/
+.venv/
+__pycache__/
+.pytest_cache/
+verify-output/
+dist/
+.superpowers/
