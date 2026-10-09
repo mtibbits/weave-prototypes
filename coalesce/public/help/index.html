@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Help · Coalesce</title>
+  <meta name="description" content="Get help with Coalesce: open a service desk ticket, take the interactive tutorial, or read the usage docs and SOP.">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="../fonts/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../css/site.css">
+  <script src="../site-config.js"></script>
+  <script type="importmap">
+    { "imports": { "three": "../vendor/three/build/three.module.min.js", "three/addons/": "../vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Coalesce home">
+      <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><circle cx="13" cy="9" r="5.5" fill="#1D5E5B"/><path d="M3 27a10 9.5 0 0 1 20 0z" fill="#1D5E5B"/><circle cx="26.5" cy="17" r="2.4" fill="#C4623A"/></svg>
+      <span class="brand-name">Coalesce</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a data-link="docs" href="#">Docs</a>
+      <a data-link="releases" href="#">Releases</a>
+      <a data-link="access" href="#">Get access</a>
+      <a href="./" aria-current="page">Help</a>
+    </nav>
+    <a class="btn btn-primary" data-link="download" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span data-cta>Download Coalesce</span>
+    </a>
+  </header>
+
+  <main id="main">
+    <section class="hero hero-help" aria-labelledby="help-title">
+      <div class="hero-copy">
+        <p class="eyebrow">Help</p>
+        <h1 id="help-title">Let's take a <em>closer</em> look.</h1>
+        <p class="lede">Stuck on a step, or not sure what comes next? Learn it with the tutorial, look it up in the SOP, or open a service desk ticket.</p>
+      </div>
+      <div class="hero-figure">
+        <div class="hero-stage" data-hero role="img" aria-label="The same figure made of many small people, with a magnifying glass that enlarges one of them. The glass follows the pointer.">
+          <img class="hero-still" src="../assets/help-still.webp" width="1400" height="1080" alt="" fetchpriority="high">
+        </div>
+        <button class="hero-pause" type="button" data-pause aria-pressed="false" hidden>Pause motion</button>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="ways-title">
+      <div class="section-head">
+        <h2 id="ways-title">Get help</h2>
+        <p>Not sure which? Start with the tutorial.</p>
+      </div>
+      <div class="cards cards-3">
+        <a class="card" data-link="serviceDesk" href="#">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+          <span class="card-title">Service desk</span>
+          <span class="card-text">Report a problem or request a change. Tickets go to <span data-text="teamName">the Coalesce team</span> in Jira.</span>
+          <span class="card-cta" data-cta>Open a ticket <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></span>
+        </a>
+        <a class="card" data-link="tutorial" href="#">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4z"/></svg>
+          <span class="card-title">Interactive tutorial</span>
+          <span class="card-text">A guided walkthrough of onboarding and offboarding someone in Coalesce.</span>
+          <span class="card-cta" data-cta>Start the tutorial <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></span>
+        </a>
+        <a class="card" data-link="docs" href="#">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>
+          <span class="card-title">Usage docs &amp; SOP</span>
+          <span class="card-text">How to use each screen, and the standard operating procedure behind every step.</span>
+          <span class="card-cta" data-cta>Read the SOP <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Coalesce · maintained by <span data-text="teamName">the Coalesce team</span></span>
+    <nav aria-label="Footer">
+      <a data-link="project" href="#">GitLab project</a>
+      <a data-link="serviceDesk" href="#">Report an issue</a>
+    </nav>
+  </footer>
+
+  <script type="module">
+    import { boot } from '../js/config.js';
+    boot();
+  </script>
+  <script type="module">
+    import { mountHero } from '../js/hero.js';
+    const query = new URLSearchParams(location.search);
+    mountHero(document.querySelector('[data-hero]'), {
+      variant: 'help',
+      assetsBase: '../assets/',
+      watchdog: !query.has('nowatchdog'),
+      watchdogLimitMs: query.has('watchdogLimitMs') ? Number(query.get('watchdogLimitMs')) : 45,
+    });
+  </script>
+</body>
+</html>
