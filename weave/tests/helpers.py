@@ -75,3 +75,23 @@ def ink_fraction(png, background=LINEN, tolerance=40):
             if abs(row[x] - background[0]) + abs(row[x + 1] - background[1]) + abs(row[x + 2] - background[2]) > tolerance:
                 differ += 1
     return differ / (width * height)
+
+
+STATIC_LABEL = ("A quilt of twelve blocks, one for each WEAVE dashboard panel: "
+                "some sewn in, others pinned in place for later releases.")
+HOME = "/public/index.html"
+
+
+def open_page(make_page, base_url, panels_body=None, **context_args):
+    """Open the WEAVE page, optionally with panels.js swapped for `panels_body`; returns (page, errors).
+
+    Reduced motion is the default, so list tests never request Three.js and test_hero.py alone owns the hero.
+    """
+    context_args.setdefault("reduced_motion", "reduce")
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    page.goto(base_url + HOME)
+    page.wait_for_load_state("networkidle")
+    return page, errors
