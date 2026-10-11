@@ -148,3 +148,101 @@ def test_local_references_match_file_case():
     assert {"panels.js", "js/main.js", "assets/weave-still.jpg", "css/weave.css",
             "fonts/InstrumentSans.woff2", "index.html"} <= refs, refs
     assert case_mismatches(refs) == []
+
+
+# --- The panel lists (Task 5). ---
+
+LIVE = [
+    ("Manpower", "248 assigned (sample)", "Who's on board, inbound and outbound: what Coalesce does today."),
+    ("Hiring", "4 open positions (sample)", "Open positions and where each hire stands."),
+    ("Training", "87% current (sample)", "Who's current on required training, and who's due."),
+    ("Awards", "3 to review (sample)", "Nominations waiting for review."),
+    ("Travel", "12 trips pending (sample)", "Trip requests and approvals."),
+    ("Action Tracking", "9 open (2 overdue) (sample)", "Taskers and action items with due dates."),
+    ("Desk Allocation", "18 desks free (sample)", "Who sits where, and what's free."),
+]
+PLANNED = [
+    ("Promotions", "Promotion boards and eligibility."),
+    ("Feedback", "Feedback, in both directions."),
+    ("Oversight", "Reviews, inspections and findings."),
+    ("Building Access", "Badges and building access."),
+]
+
+
+def _rows(page, group, selectors):
+    """For each li.panel in a group, the text of each selector (None when the element is absent)."""
+    return page.locator(f'[data-list="{group}"] li.panel').evaluate_all(
+        "(els, sel) => els.map((li) => sel.map((s) => li.querySelector(s)?.textContent ?? null))", selectors)
+
+
+def test_default_lists(make_page, base_url):
+    page, errors = open_page(make_page, base_url)
+    live = _rows(page, "live", [".panel-name", ".panel-figure", ".panel-blurb"])
+    assert [tuple(r) for r in live] == LIVE
+    planned = _rows(page, "planned", [".panel-name", ".panel-blurb", ".panel-figure"])
+    assert [tuple(r) for r in planned] == [(n, b, None) for n, b in PLANNED]
+    suggest = page.locator("[data-suggest]")
+    assert suggest.is_visible() and suggest.text_content() == "Have an idea for a panel?"
+    assert page.locator("[data-panels-status]").is_hidden()
+    assert errors == []
+
+
+def test_default_stage_label_names_the_panels(make_page, base_url):
+    page, _ = open_page(make_page, base_url)
+    label = page.locator("[data-hero]").get_attribute("aria-label")
+    assert label == ("WEAVE's dashboard panels as a quilt. Sewn in: Manpower, Hiring, Training, Awards, Travel, "
+                     "Action Tracking, Desk Allocation. Pinned for later: Promotions, Feedback, Oversight, "
+                     "Building Access.")
+
+
+def test_every_figure_is_sample_data(make_page, base_url):
+    page, _ = open_page(make_page, base_url)
+    figures = page.locator(".panel-figure").all_text_contents()
+    assert len(figures) == 7 and all(f.endswith("(sample)") for f in figures), figures
+    assert page.locator(".pill").text_content().strip() == "Prototype · work in progress"
+    assert "Sample data only" in page.locator("footer").inner_text()
+
+
+MARKUP = '<img src=x onerror="window.__pwned=1">'
+
+
+def test_markup_in_panel_strings_stays_text(make_page, base_url):
+    m = json.dumps(MARKUP)
+    body = (PUBLIC / "panels.js").read_text(encoding="utf-8") + f"""
+window.WEAVE_PANELS.panels.push(
+  {{ id: 'm-live', name: {m}, status: 'live', sample: {{ value: {m}, unit: {m} }}, blurb: {m} }},
+  {{ id: 'm-planned', name: {m}, status: 'planned', sample: null, blurb: {m} }});
+window.WEAVE_PANELS.panels.find((p) => p.id === 'suggest').blurb = {m};
+"""
+    page, _ = open_page(make_page, base_url, body)
+    live = _rows(page, "live", [".panel-name", ".panel-figure", ".panel-blurb"])[-1]
+    assert live == [MARKUP, f"{MARKUP} {MARKUP} (sample)", MARKUP]
+    planned = _rows(page, "planned", [".panel-name", ".panel-blurb"])[-1]
+    assert planned == [MARKUP, MARKUP]
+    assert page.locator("[data-suggest]").text_content() == MARKUP
+    assert page.locator("#panels img").count() == 0
+    assert page.evaluate("document.images.length") == 1
+    assert page.evaluate("window.__pwned === undefined")
+    assert MARKUP in page.locator("[data-hero]").get_attribute("aria-label")
+
+
+# --- Panel strings never pass through an HTML parser (standing source guard). ---
+
+HTML_SINKS = re.compile(r"\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write)\b")
+
+
+def html_sinks(text):
+    """Line numbers (1-based) where an HTML-parsing sink appears, at any column, including column 0."""
+    return [n for n, line in enumerate(text.splitlines(), 1) if HTML_SINKS.search(line)]
+
+
+def test_sink_check_catches_every_html_sink():
+    planted = "innerHTML = x;\nconst a = 1;\nel.outerHTML = y;\nel.insertAdjacentHTML('beforeend', z);\ndocument.write(w);\n"
+    assert html_sinks(planted) == [1, 3, 4, 5]
+
+
+def test_no_module_writes_html():
+    modules = sorted((PUBLIC / "js").glob("*.js"))
+    assert {p.name for p in modules} >= {"main.js", "dom.js", "catalog.js"}
+    found = {p.name: html_sinks(p.read_text(encoding="utf-8")) for p in modules}
+    assert all(lines == [] for lines in found.values()), found

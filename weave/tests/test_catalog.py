@@ -5,36 +5,14 @@ import re
 
 import pytest
 
+from helpers import MALFORMED, VALID, W_STATUS
+
 E1 = ("WEAVE: the panel list (window.WEAVE_PANELS from panels.js) is missing or is not an object. "
       "Check panels.js for a syntax error.")
 E2 = "WEAVE: WEAVE_PANELS.panels in panels.js is not an array."
-W_OBJECT = "WEAVE: panels.js entry {n} was skipped: it is not an object."
-W_ID = "WEAVE: panels.js entry {n} was skipped: its id must be a non-empty string."
-W_NAME = "WEAVE: panels.js entry {n} was skipped: its name must be a non-empty string."
-W_STATUS = "WEAVE: panels.js entry {n} was skipped: its status must be 'live', 'planned' or 'suggest'."
 W_DUP = "WEAVE: panels.js entry {n} was skipped: the id '{id}' is already used (the first one is kept)."
 W_SAMPLE = "WEAVE: the live panel '{id}' has no valid sample, so it reads \"No sample yet\"."
 W_MANY = "WEAVE: panels.js has {count} valid panels; the quilt draws the first 12."
-
-VALID = "{ id: 'ok', name: 'Okay', status: 'planned', sample: null }"
-
-# (id, JS literal of the bad entry, message template). Shared with test_robustness.py.
-MALFORMED = [
-    ("object-null", "null", W_OBJECT),
-    ("object-number", "7", W_OBJECT),
-    ("object-string", "'x'", W_OBJECT),
-    ("object-array", "[]", W_OBJECT),
-    ("id-missing", "{ name: 'No id', status: 'live' }", W_ID),
-    ("id-blank", "{ id: '  ', name: 'Blank id', status: 'live' }", W_ID),
-    ("id-number", "{ id: 7, name: 'Seven', status: 'live' }", W_ID),
-    ("name-missing", "{ id: 'a', status: 'live' }", W_NAME),
-    ("name-blank", "{ id: 'a', name: '  ', status: 'live' }", W_NAME),
-    ("name-number", "{ id: 'a', name: 7, status: 'live' }", W_NAME),
-    ("status-unknown", "{ id: 'a', name: 'A', status: 'archived' }", W_STATUS),
-    ("status-case", "{ id: 'a', name: 'A', status: 'Live' }", W_STATUS),
-    ("status-missing", "{ id: 'a', name: 'A' }", W_STATUS),
-]
-
 
 def clean(js, raw):
     """Run cleanPanels over a JS literal; returns the result with error read as None when absent."""

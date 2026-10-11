@@ -82,16 +82,54 @@ STATIC_LABEL = ("A quilt of twelve blocks, one for each WEAVE dashboard panel: "
 HOME = "/public/index.html"
 
 
-def open_page(make_page, base_url, panels_body=None, **context_args):
+PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
+
+
+def hidden_by_attribute(locator):
+    """True when the element carries `hidden` AND that actually removes it from layout (not just an empty box)."""
+    return locator.evaluate("el => el.hidden === true && getComputedStyle(el).display === 'none'")
+
+
+def open_page(make_page, base_url, panels_body=None, warnings=None, **context_args):
     """Open the WEAVE page, optionally with panels.js swapped for `panels_body`; returns (page, errors).
 
+    Pass a list as `warnings` to collect the panel-list console warnings (only those families) into it.
     Reduced motion is the default, so list tests never request Three.js and test_hero.py alone owns the hero.
     """
     context_args.setdefault("reduced_motion", "reduce")
     page = make_page(**context_args)
     errors = collect_errors(page)
+    if warnings is not None:
+        page.on("console", lambda msg: warnings.append(msg.text)
+                if msg.type == "warning" and msg.text.startswith(PANEL_WARNING_PREFIXES) else None)
     if panels_body is not None:
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     page.goto(base_url + HOME)
     page.wait_for_load_state("networkidle")
     return page, errors
+
+
+# --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---
+
+W_OBJECT = "WEAVE: panels.js entry {n} was skipped: it is not an object."
+W_ID = "WEAVE: panels.js entry {n} was skipped: its id must be a non-empty string."
+W_NAME = "WEAVE: panels.js entry {n} was skipped: its name must be a non-empty string."
+W_STATUS = "WEAVE: panels.js entry {n} was skipped: its status must be 'live', 'planned' or 'suggest'."
+VALID = "{ id: 'ok', name: 'Okay', status: 'planned', sample: null }"
+
+# (id, JS literal of the bad entry, message template): one per malformed kind, pure and page.
+MALFORMED = [
+    ("object-null", "null", W_OBJECT),
+    ("object-number", "7", W_OBJECT),
+    ("object-string", "'x'", W_OBJECT),
+    ("object-array", "[]", W_OBJECT),
+    ("id-missing", "{ name: 'No id', status: 'live' }", W_ID),
+    ("id-blank", "{ id: '  ', name: 'Blank id', status: 'live' }", W_ID),
+    ("id-number", "{ id: 7, name: 'Seven', status: 'live' }", W_ID),
+    ("name-missing", "{ id: 'a', status: 'live' }", W_NAME),
+    ("name-blank", "{ id: 'a', name: '  ', status: 'live' }", W_NAME),
+    ("name-number", "{ id: 'a', name: 7, status: 'live' }", W_NAME),
+    ("status-unknown", "{ id: 'a', name: 'A', status: 'archived' }", W_STATUS),
+    ("status-case", "{ id: 'a', name: 'A', status: 'Live' }", W_STATUS),
+    ("status-missing", "{ id: 'a', name: 'A' }", W_STATUS),
+]
