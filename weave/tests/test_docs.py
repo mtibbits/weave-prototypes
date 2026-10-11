@@ -31,3 +31,12 @@ def test_root_readme_points_to_weave():
     assert "weave/README.md" in section(readme, "Tests")
     layout = re.search(r"```(.*?)```", section(readme, "Layout"), re.S).group(1)
     assert "weave/tests/" in layout and "weave/README.md" in layout
+
+
+def test_every_tests_command_line_is_a_bare_command():
+    """Each fenced line in Tests is one pasteable command per shell: no prose, and an activate line for each shell."""
+    tests = section(WEAVE / "README.md", "Tests")
+    lines = [line.strip() for fence in re.findall(r"```(.*?)```", tests, re.S) for line in fence.splitlines() if line.strip()]
+    assert lines and not [line for line in lines if "(" in line or ";" in line], lines
+    for activate in (r".venv\Scripts\activate", "source .venv/Scripts/activate", "source .venv/bin/activate"):
+        assert activate in lines, activate

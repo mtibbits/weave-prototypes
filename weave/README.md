@@ -20,7 +20,29 @@ From the repo root, make a virtual environment and activate it first, so the ins
 
 ```
 python -m venv .venv
-.venv\Scripts\activate          (Windows; elsewhere: source .venv/bin/activate)
+```
+
+Activate it with the line for your shell. In PowerShell or cmd:
+
+```
+.venv\Scripts\activate
+```
+
+In Git Bash:
+
+```
+source .venv/Scripts/activate
+```
+
+On macOS or Linux:
+
+```
+source .venv/bin/activate
+```
+
+Then install the test tools:
+
+```
 python -m pip install -r weave/requirements-dev.txt
 python -m playwright install chromium
 ```
