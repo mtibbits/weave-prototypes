@@ -133,3 +133,87 @@ MALFORMED = [
     ("status-case", "{ id: 'a', name: 'A', status: 'Live' }", W_STATUS),
     ("status-missing", "{ id: 'a', name: 'A' }", W_STATUS),
 ]
+
+
+# --- Focus and contrast checks (reused by later children, e.g. #10's tooltip and #14's badge). ---
+
+FOCUS_TARGETS = r"""() => {
+    const targets = [...document.querySelectorAll('a[href], button:not([disabled])')].filter((el) =>
+        el.getClientRects().length > 0 && !el.closest('[hidden]') && getComputedStyle(el).visibility !== 'hidden');
+    targets.forEach((el, i) => { el.dataset.focusProbe = String(i); });
+    if (document.activeElement) document.activeElement.blur();
+    return targets.map((el) => `${el.tagName.toLowerCase()} "${el.textContent.trim()}" ${el.getAttribute('href') ?? ''}`.trim());
+}"""
+
+FOCUSED = r"""() => {
+    const el = document.activeElement;
+    const style = getComputedStyle(el);
+    return [el.dataset.focusProbe ?? null, style.outlineStyle, parseFloat(style.outlineWidth) || 0];
+}"""
+
+
+def focus_failures(page):
+    """Tab through every rendered link and button; describe those with no visible (>= 2 px) outline or never reached."""
+    targets = page.evaluate(FOCUS_TARGETS)
+    assert targets, "no rendered link or button to tab through"
+    outlines = {}
+    for _ in range(len(targets) + 2):
+        page.keyboard.press("Tab")
+        probe, style, width = page.evaluate(FOCUSED)
+        if probe is not None:
+            outlines.setdefault(int(probe), (style, width))
+    failures = []
+    for i, description in enumerate(targets):
+        if i not in outlines:
+            failures.append(f"not reached by Tab: {description}")
+        elif outlines[i][0] == "none" or outlines[i][1] < 2:
+            failures.append(description)
+    return failures
+
+
+# Coalesce's CONTRAST luminance, background walk and opacity, over every element that directly holds text.
+CONTRAST = r"""() => {
+    const lum = (c) => {
+      const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+        v /= 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const background = (el) => {
+      for (let e = el; e; e = e.parentElement) {
+        const c = getComputedStyle(e).backgroundColor;
+        if (c !== 'transparent' && !c.startsWith('rgba(0, 0, 0, 0)')) return c;
+      }
+      return 'rgb(243, 238, 228)';
+    };
+    const opacity = (el) => {
+      let o = 1;
+      for (let e = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+      return o;
+    };
+    const holdsText = (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    const checked = [...document.body.querySelectorAll('*')].filter((el) => holdsText(el)
+      && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+    const failures = [];
+    for (const el of checked) {
+      const style = getComputedStyle(el);
+      const a = lum(style.color);
+      const b = lum(background(el));
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const size = parseFloat(style.fontSize);
+      const weight = Number(style.fontWeight);
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      if (opacity(el) < 1 || ratio < (large ? 3 : 4.5)) {
+        failures.push({ text: el.textContent.trim().slice(0, 60), ratio: Math.round(ratio * 100) / 100, size, weight });
+      }
+    }
+    return { checked: checked.length, failures };
+}"""
+
+
+def contrast_failures(page):
+    """Every rendered text element under 4.5:1 (3:1 when large), or not fully opaque; fails closed below 10 checked."""
+    result = page.evaluate(CONTRAST)
+    assert result["checked"] >= 10, f"only {result['checked']} text elements checked"
+    return result["failures"]
