@@ -28,6 +28,14 @@ Activate it with the line for your shell. In PowerShell or cmd:
 .venv\Scripts\activate
 ```
 
+If PowerShell answers that running scripts is disabled (the stock Windows policy), allow scripts for this window only, then run the activate line again:
+
+```
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+If a group policy blocks that too, use cmd, where the same activate line works. Check that your prompt now starts with `(.venv)` before installing anything.
+
 In Git Bash:
 
 ```

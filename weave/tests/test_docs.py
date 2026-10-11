@@ -40,3 +40,5 @@ def test_every_tests_command_line_is_a_bare_command():
     assert lines and not [line for line in lines if "(" in line or ";" in line], lines
     for activate in (r".venv\Scripts\activate", "source .venv/Scripts/activate", "source .venv/bin/activate"):
         assert activate in lines, activate
+    # PowerShell refuses Activate.ps1 under the stock Restricted policy, and without the venv the install goes global.
+    assert "Set-ExecutionPolicy -Scope Process Bypass" in lines, lines
