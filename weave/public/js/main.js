@@ -6,12 +6,12 @@ import { decideMode, readEnvironment } from './eligibility.js';
 const result = cleanPanels(window.WEAVE_PANELS);
 if (result.error) console.error(result.error);
 result.warnings.forEach((warning) => console.warn(warning));
+const stage = document.querySelector('[data-hero]');
 renderPanels(document.getElementById('panels'), result);
 // A broken file keeps the static label from the HTML.
-if (!result.error) setStageLabel(document.querySelector('[data-hero]'), result.panels);
+if (!result.error) setStageLabel(stage, result.panels);
 
 async function startHero() {
-  const stage = document.querySelector('[data-hero]');
   const hint = document.querySelector('[data-hint]');
   const decision = decideMode(readEnvironment(window));
   if (!decision.live) {

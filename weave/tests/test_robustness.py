@@ -1,7 +1,7 @@
 """Each panels.js robustness rule, on the real page, with panels.js swapped by page.route."""
 import pytest
 
-from helpers import MALFORMED, STATIC_LABEL, VALID, hidden_by_attribute, open_page
+from helpers import MALFORMED, STATIC_LABEL, VALID, W_DUP, W_MANY, W_SAMPLE, hidden_by_attribute, open_page
 
 LOAD_MESSAGE = "The panel list couldn't be loaded."
 
@@ -37,12 +37,12 @@ def test_broken_file_shows_the_load_message(make_page, base_url, panels_body):
     assert page.locator("[data-hero]").get_attribute("aria-label") == STATIC_LABEL
 
 
-@pytest.mark.parametrize("bad", [b for _, b, _ in MALFORMED], ids=[i for i, _, _ in MALFORMED])
-def test_malformed_entry_is_skipped_with_a_warning(make_page, base_url, bad):
+@pytest.mark.parametrize("bad,message", [(b, m) for _, b, m in MALFORMED], ids=[i for i, _, _ in MALFORMED])
+def test_malformed_entry_is_skipped_with_a_warning(make_page, base_url, bad, message):
     warnings = []
     page, _ = open_page(make_page, base_url, body([bad, VALID]), warnings)
     assert names(page, "live") + names(page, "planned") == ["Okay"]
-    assert len(warnings) == 1 and "entry 1 was skipped" in warnings[0], warnings
+    assert warnings == [message.format(n=1)]
 
 
 def test_duplicate_id_keeps_the_first(make_page, base_url):
@@ -52,7 +52,7 @@ def test_duplicate_id_keeps_the_first(make_page, base_url):
         "{ id: ' x ', name: 'Second', status: 'planned', sample: null }",
     ]), warnings)
     assert names(page, "planned") == ["First"]
-    assert len(warnings) == 1 and "already used" in warnings[0], warnings
+    assert warnings == [W_DUP.format(n=2, id='x')]
 
 
 def figure(page):
@@ -71,7 +71,7 @@ def test_live_missing_or_bad_sample_reads_no_sample_yet_with_a_warning(make_page
     warnings = []
     page, _ = open_page(make_page, base_url, body([f"{{ id: 'a', name: 'A', status: 'live'{field} }}"]), warnings)
     assert figure(page) == ["No sample yet"]
-    assert len(warnings) == 1 and "no valid sample" in warnings[0], warnings
+    assert warnings == [W_SAMPLE.format(id='a')]
 
 
 def test_empty_unit_reads_value_and_sample(make_page, base_url):
@@ -84,7 +84,7 @@ def test_thirteen_entries_are_all_listed_with_a_warning(make_page, base_url):
     entries = [f"{{ id: 'p{i}', name: 'P{i}', status: 'planned', sample: null }}" for i in range(13)]
     page, _ = open_page(make_page, base_url, body(entries), warnings)
     assert page.locator("li.panel").count() == 13
-    assert len(warnings) == 1 and "the quilt draws the first 12" in warnings[0], warnings
+    assert warnings == [W_MANY.format(count=13)]
 
 
 def test_empty_panel_list_reads_none_yet(make_page, base_url):

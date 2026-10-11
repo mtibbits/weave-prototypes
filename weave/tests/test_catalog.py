@@ -5,14 +5,8 @@ import re
 
 import pytest
 
-from helpers import MALFORMED, VALID, W_STATUS
+from helpers import E1, E2, MALFORMED, VALID, W_DUP, W_MANY, W_SAMPLE, W_STATUS
 
-E1 = ("WEAVE: the panel list (window.WEAVE_PANELS from panels.js) is missing or is not an object. "
-      "Check panels.js for a syntax error.")
-E2 = "WEAVE: WEAVE_PANELS.panels in panels.js is not an array."
-W_DUP = "WEAVE: panels.js entry {n} was skipped: the id '{id}' is already used (the first one is kept)."
-W_SAMPLE = "WEAVE: the live panel '{id}' has no valid sample, so it reads \"No sample yet\"."
-W_MANY = "WEAVE: panels.js has {count} valid panels; the quilt draws the first 12."
 
 def clean(js, raw):
     """Run cleanPanels over a JS literal; returns the result with error read as None when absent."""

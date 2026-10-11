@@ -115,6 +115,12 @@ W_OBJECT = "WEAVE: panels.js entry {n} was skipped: it is not an object."
 W_ID = "WEAVE: panels.js entry {n} was skipped: its id must be a non-empty string."
 W_NAME = "WEAVE: panels.js entry {n} was skipped: its name must be a non-empty string."
 W_STATUS = "WEAVE: panels.js entry {n} was skipped: its status must be 'live', 'planned' or 'suggest'."
+E1 = ("WEAVE: the panel list (window.WEAVE_PANELS from panels.js) is missing or is not an object. "
+      "Check panels.js for a syntax error.")
+E2 = "WEAVE: WEAVE_PANELS.panels in panels.js is not an array."
+W_DUP = "WEAVE: panels.js entry {n} was skipped: the id '{id}' is already used (the first one is kept)."
+W_SAMPLE = "WEAVE: the live panel '{id}' has no valid sample, so it reads \"No sample yet\"."
+W_MANY = "WEAVE: panels.js has {count} valid panels; the quilt draws the first 12."
 VALID = "{ id: 'ok', name: 'Okay', status: 'planned', sample: null }"
 
 # (id, JS literal of the bad entry, message template): one per malformed kind, pure and page.
