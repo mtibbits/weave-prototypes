@@ -61,4 +61,13 @@ export function setStageLabel(stage, panels) {
   stage.setAttribute('aria-label', stageLabel(panels));
 }
 
-export function setHeroState() {}
+export const STILL_HINT = 'Your browser shows a picture of the quilt. The panels below have everything.';
+
+// The one writer of the stage's state attributes and of the hint: #7 reuses it for live/ok and the runtime
+// reasons, and #8 extends it (for example with an optional hint argument) to write the live hint, rather than
+// writing the hint around it.
+export function setHeroState(stage, hint, state, reason) {
+  stage.dataset.heroState = state;
+  stage.dataset.heroReason = reason;
+  hint.textContent = state === 'still' && reason !== 'loading' ? STILL_HINT : '';
+}
