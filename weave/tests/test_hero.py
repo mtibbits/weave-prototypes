@@ -2,6 +2,7 @@
 from helpers import HOME, collect_errors, hero_result, hidden_by_attribute, ink_fraction
 
 STILL_HINT = "Your browser shows a picture of the quilt. The panels below have everything."
+THREE_FAILED = "WEAVE: Three.js could not load, so the still image stays."
 
 
 def assert_still_page(page):
@@ -72,7 +73,8 @@ def test_three_load_failure_keeps_still(make_page, base_url):
     assert page.locator("[data-hint]").text_content() == STILL_HINT
     assert page.locator(".hero-still").is_visible()
     assert not [e for e in errors if e.startswith("pageerror")]
-    assert len([w for w in warnings if "Three.js could not load" in w]) == 1, warnings
+    # The browser appends the error object to the console text, so pin the message as a prefix.
+    assert len([w for w in warnings if w.startswith(THREE_FAILED)]) == 1, warnings
 
 
 def test_controls_check_fails_when_the_row_is_unhidden(make_page, base_url):

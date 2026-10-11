@@ -54,7 +54,7 @@ cd weave
 python -m pytest
 ```
 
-The tests drive headless Chromium with Playwright. The desktop hero tests need it to report WebGL and a mouse (hover). That is verified on Windows with the GPU flags in `tests/conftest.py`; on other machines, check `test_hero.py`'s desktop test before trusting a green run.
+The tests drive headless Chromium with Playwright. The desktop hero tests need it to report WebGL and a mouse (hover). That is verified on Windows with the GPU flags in `tests/conftest.py`. Elsewhere, if the desktop hero tests fail, suspect those flags before the page code.
 
 ## Licenses
 
