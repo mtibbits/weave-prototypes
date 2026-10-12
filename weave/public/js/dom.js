@@ -1,4 +1,5 @@
 // The page's DOM writers. Panel strings reach the DOM only through textContent and setAttribute.
+import { cleanPanels } from './catalog.js';
 
 export const LOAD_MESSAGE = "The panel list couldn't be loaded.";
 export const NONE_YET = 'None yet.';
@@ -70,4 +71,42 @@ export function setHeroState(stage, hint, state, reason) {
   stage.dataset.heroState = state;
   stage.dataset.heroReason = reason;
   hint.textContent = state === 'still' && reason !== 'loading' ? STILL_HINT : '';
+}
+
+// --- The live hero's controls and URL hooks (#7). ---
+
+export const PAUSE_LABEL = 'Pause motion';
+export const PLAY_LABEL = 'Play motion';
+
+// The one writer of Pause's pressed state and label.
+export function setPaused(button, paused) {
+  button.setAttribute('aria-pressed', String(paused));
+  button.textContent = paused ? PLAY_LABEL : PAUSE_LABEL;
+}
+
+// Shows or hides the controls row and Pause together.
+export function showLiveControls(controls, pause, live) {
+  controls.hidden = !live;
+  pause.hidden = !live;
+}
+
+// The page's URL hooks, read once at start: ?nowatchdog, ?watchdogLimitMs=<ms> (Coalesce's form: an absent key
+// keeps 45, never Number(null) === 0), ?pose=rest and ?frame=still.
+export function readHooks(search) {
+  const params = new URLSearchParams(search);
+  return {
+    watchdog: !params.has('nowatchdog'),
+    limitMs: params.has('watchdogLimitMs') ? Number(params.get('watchdogLimitMs')) : 45,
+    rest: params.get('pose') === 'rest',
+    still: params.get('frame') === 'still',
+  };
+}
+
+export const QUILT_SLOTS = 12;
+
+// The quilt's 12 slots: the first 12 entries that pass #5's validation, in file order, padded with null (a
+// filler); anything that is not an array of panels gives 12 fillers.
+export function fillSlots(panels) {
+  const valid = Array.isArray(panels) ? cleanPanels({ panels }).panels.slice(0, QUILT_SLOTS) : [];
+  return [...valid, ...new Array(QUILT_SLOTS - valid.length).fill(null)];
 }

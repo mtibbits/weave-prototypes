@@ -242,6 +242,54 @@ def open_page(make_page, base_url, panels_body=None, warnings=None, **context_ar
     return page, errors
 
 
+# --- The live hero (#7). ---
+
+LOAD_FAILED = "WEAVE: the 3D quilt could not load, so the still image stays."
+WEBGL_FAILED = "WEAVE: WebGL setup failed, so the still image stays."
+PAUSE_NAME = "Pause motion"
+
+
+def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before_goto=None, **context_args):
+    """Open the WEAVE page on desktop and wait until the quilt is live; returns (page, errors).
+
+    Routes `panels_body` like open_page; `before_goto(page)` runs after that route and before navigation (routes,
+    clock.set_fixed_time and init scripts). The stage is scrolled into view, so the loop is running on return.
+    """
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    if before_goto is not None:
+        before_goto(page)
+    page.goto(base_url + HOME + query)
+    assert hero_result(page) == ["live", "ok"], errors
+    page.locator("[data-hero]").scroll_into_view_if_needed()
+    return page, errors
+
+
+def frames(page):
+    """The live loop's counted frames (data-hero-frames)."""
+    return page.eval_on_selector("[data-hero]", "el => Number(el.dataset.heroFrames || 0)")
+
+
+def weave(page, expr):
+    """Evaluate `el.__weave<expr>` on the stage, e.g. weave(page, '.clock')."""
+    return page.eval_on_selector("[data-hero]", f"el => el.__weave{expr}")
+
+
+def corner_z(page, slot):
+    """The world z of block `slot`'s four corner vertices, from the page's snapshot()."""
+    return page.eval_on_selector("[data-hero]", "(el, slot) => { const p = el.__weave.snapshot().blocks[slot].positions;"
+                                 " return [0, 40, 1640, 1680].map((j) => p[3 * j + 2]); }", slot)
+
+
+def wait_for_reason(page, reason, timeout=20000):
+    """Wait for a runtime fallback's reason (port of coalesce/tests/test_hero.py's wait on heroReason): hero_result
+    returns at live/ok, before any runtime fallback has happened."""
+    page.wait_for_function("(reason) => document.querySelector('[data-hero]')?.dataset.heroReason === reason",
+                           arg=reason, timeout=timeout)
+
+
 # --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---
 
 W_OBJECT = "WEAVE: panels.js entry {n} was skipped: it is not an object."

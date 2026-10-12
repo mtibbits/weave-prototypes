@@ -1,12 +1,17 @@
-"""The load-time half of the hero contract: the still path, the desktop positive control and load-failed."""
-from helpers import HOME, collect_errors, hero_result, hidden_by_attribute, ink_fraction
+"""The hero contract: the still path and its reasons, going live on desktop, the hooks, and every runtime fallback."""
+import pytest
+
+from helpers import (HOME, LOAD_FAILED, PAUSE_NAME, WEBGL_FAILED, collect_errors, frames, hero_result,
+                     hidden_by_attribute, ink_fraction, open_live, wait_for_reason, weave)
 
 STILL_HINT = "Your browser shows a picture of the quilt. The panels below have everything."
-THREE_FAILED = "WEAVE: Three.js could not load, so the still image stays."
+DEFAULT_IDS = ["manpower", "hiring", "training", "awards", "promotions", "travel", "feedback", "actions",
+               "oversight", "access", "desks", "suggest"]
 
 
 def assert_still_page(page):
-    """The still is showing, both lists rendered, the still hint is written and the controls row is hidden."""
+    """The still is showing, both lists rendered, the still hint is written, and nothing live is left: no canvas,
+    Pause and the controls row hidden, no is-live."""
     still = page.locator(".hero-still")
     assert still.is_visible()
     assert still.evaluate("img => [img.complete, img.naturalWidth]") == [True, 1600]
@@ -16,6 +21,16 @@ def assert_still_page(page):
     controls = page.locator("[data-controls]")
     # Count guard first: hidden_by_attribute on a missing element would never get the chance to fail.
     assert controls.count() == 1 and hidden_by_attribute(controls)
+    assert page.locator("[data-hero] canvas").count() == 0
+    pause = page.locator("[data-pause]")
+    assert pause.count() == 1 and pause.evaluate("el => el.hidden") is True
+    assert page.eval_on_selector("[data-hero]", "el => el.classList.contains('is-live')") is False
+
+
+def warnings_of(page):
+    warnings = []
+    page.on("console", lambda msg: warnings.append(msg.text) if msg.type == "warning" else None)
+    return warnings
 
 
 def test_reduced_motion_keeps_still_and_skips_three(make_page, base_url):
@@ -45,43 +60,214 @@ def test_touch_device_keeps_still(make_page, base_url):
     assert_still_page(page)
 
 
-def test_desktop_requests_three_and_stays_loading(make_page, base_url):
-    """The positive control for the still path: the same page on desktop does request Three.js."""
+def test_goes_live_on_desktop(make_page, base_url):
+    """Port of coalesce/tests/test_hero.py::test_goes_live_on_desktop, with the first-frame mark and a non-blank
+    canvas (control: the same stage with the canvas hidden)."""
+    page, errors = open_live(make_page, base_url)
+    canvas = page.locator("[data-hero] canvas")
+    assert canvas.count() == 1 and canvas.get_attribute("aria-hidden") == "true"
+    assert page.locator("[data-pause]").is_visible()
+    first = frames(page)
+    page.wait_for_timeout(600)
+    assert frames(page) > first
+    assert page.evaluate("performance.getEntriesByName('weave:first-live-frame', 'mark').length") == 1
+    assert page.eval_on_selector("[data-hero]", "el => el.classList.contains('is-live')") is True
+    page.wait_for_function("getComputedStyle(document.querySelector('.hero-still')).opacity === '0'", timeout=5000)
+    stage = page.locator("[data-hero]")
+    live = ink_fraction(stage.screenshot())
+    canvas.evaluate("el => { el.style.visibility = 'hidden'; }")
+    control = ink_fraction(stage.screenshot())
+    print(f"ink live={live:.4f} control={control:.4f}")
+    assert live >= 0.05 and live >= 3 * control
+    assert errors == []
+
+
+def test_pause_sits_in_the_controls_row_not_the_stage(make_page, base_url):
+    page, _ = open_live(make_page, base_url)
+    pause = page.get_by_role("button", name=PAUSE_NAME)
+    assert pause.count() == 1
+    assert pause.evaluate("el => el.closest('[data-hero]') === null") is True
+    assert pause.evaluate("el => el.closest('[data-controls]') !== null") is True
+
+
+def test_hooks_describe_the_drawn_quilt(make_page, base_url):
+    page, _ = open_live(make_page, base_url)
+    assert weave(page, ".mode") == "quilt"
+    assert weave(page, ".order") == DEFAULT_IDS
+    slots = weave(page, ".slots")
+    assert slots[0] == {"id": "manpower", "name": "Manpower", "status": "live", "face": "sewn"}
+    assert slots[4]["face"] == "planned" and slots[11]["face"] == "suggest"
+    # Copies: a caller's edit never reaches the page's state.
+    assert page.eval_on_selector("[data-hero]", "el => { el.__weave.order[0] = 'x'; el.__weave.slots[0].id = 'x';"
+                                 " return [el.__weave.order[0], el.__weave.slots[0].id]; }") == ["manpower", "manpower"]
+    clock = weave(page, ".clock")
+    page.wait_for_timeout(300)
+    assert weave(page, ".clock") > clock
+
+
+READ_HOOKS = "const { readHooks } = await import('/public/js/dom.js');"
+
+
+def test_read_hooks_parses_the_url(js):
+    r = js(READ_HOOKS + r"""
+        return ['', '?watchdogLimitMs=0', '?watchdogLimitMs=', '?watchdogLimitMs=abc', '?nowatchdog',
+                '?pose=rest&frame=still'].map((q) => { const h = readHooks(q); return [h.watchdog, String(h.limitMs), h.rest, h.still]; });
+    """)
+    assert r == [
+        [True, "45", False, False],
+        [True, "0", False, False],
+        [True, "0", False, False],
+        [True, "NaN", False, False],
+        [False, "45", False, False],
+        [True, "45", True, True],
+    ]
+
+
+FILL_SLOTS = r"""
+    const { fillSlots } = await import('/public/js/dom.js');
+    const entry = (i) => ({ id: `p${i}`, name: `P${i}`, status: 'live', sample: null });
+    const ids = (slots) => slots.map((s) => (s === null ? null : s.id));
+"""
+
+
+def test_fill_slots(js):
+    r = js(FILL_SLOTS + r"""
+        const ten = Array.from({ length: 10 }, (_, i) => entry(i));
+        const thirteen = Array.from({ length: 13 }, (_, i) => entry(i));
+        const invalid = [entry(0), { id: '', name: 'bad', status: 'live' }, entry(2)];
+        return { ten: ids(fillSlots(ten)), thirteen: ids(fillSlots(thirteen)), broken: ids(fillSlots(undefined)),
+                 object: ids(fillSlots({})), invalid: ids(fillSlots(invalid)) };
+    """)
+    assert r["ten"] == [f"p{i}" for i in range(10)] + [None, None]
+    assert r["thirteen"] == [f"p{i}" for i in range(12)]
+    assert r["broken"] == [None] * 12 and r["object"] == [None] * 12
+    assert r["invalid"] == ["p0", "p2"] + [None] * 10
+
+
+def test_default_watchdog_stays_live(make_page, base_url):
+    """The production configuration (w202): no query at all, so the real watchdog rules."""
+    page, errors = open_live(make_page, base_url, query="")
+    page.wait_for_timeout(2000)
+    before = frames(page)
+    page.wait_for_timeout(1000)
+    assert hero_result(page) == ["live", "ok"]
+    assert frames(page) > before
+    assert errors == []
+
+
+# Makes the sashing's canvas (#6's sashingSize(LAYOUT), 1204 x 912) refuse a context, so buildQuilt throws after
+# createRenderer has succeeded.
+SASHING_THROWS = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (...args) {
+      if (this.width === 1204 && this.height === 912) throw new Error('planted: paintSashing fails');
+      return original.apply(this, args);
+    };
+"""
+
+# U4: a WebGL context is refused only to the stage's (aria-hidden) canvas, so readEnvironment's probe still passes.
+NO_STAGE_WEBGL = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      if (/webgl/.test(type) && this.getAttribute('aria-hidden') === 'true') return null;
+      return original.call(this, type, ...args);
+    };
+"""
+
+
+def open_desktop(make_page, base_url, query="?nowatchdog", init_script=None, route=None):
     page = make_page()
     errors = collect_errors(page)
-    with page.expect_request("**/three.module.min.js"):
-        page.goto(f"{base_url}{HOME}")
-    # Same module record as main.js's import, so a failed load surfaces here rather than after the asserts.
-    assert page.evaluate("() => import('three').then(() => 'ok')") == "ok"
-    page.wait_for_load_state("networkidle")
-    stage = page.locator("[data-hero]")
-    assert stage.evaluate("el => [el.dataset.heroState, el.dataset.heroReason]") == ["still", "loading"]
-    assert page.locator("[data-hint]").text_content() == ""
-    assert page.locator(".hero-still").is_visible()
-    assert errors == []
-    assert ink_fraction(stage.screenshot()) > 0.3
+    warnings = warnings_of(page)
+    if init_script:
+        page.add_init_script(init_script)
+    if route:
+        page.route(route, lambda r: r.abort())
+    page.goto(f"{base_url}{HOME}{query}")
+    return page, errors, warnings
+
+
+def prefixed(warnings, prefix):
+    # The browser appends the error object to the console text, so pin the message as a prefix.
+    return [w for w in warnings if w.startswith(prefix)]
+
+
+def test_quilt_build_failure_keeps_still(make_page, base_url):
+    page, errors, warnings = open_desktop(make_page, base_url, init_script=SASHING_THROWS)
+    wait_for_reason(page, "load-failed")
+    assert hero_result(page) == ["still", "load-failed"]
+    assert_still_page(page)
+    assert len(prefixed(warnings, LOAD_FAILED)) == 1, warnings
+    assert not [e for e in errors if e.startswith("pageerror")]
+
+
+def test_slow_machine_falls_back(make_page, base_url):
+    """Port of coalesce/tests/test_hero.py::test_slow_machine_falls_back."""
+    page, _, _ = open_desktop(make_page, base_url, query="?watchdogLimitMs=0")
+    wait_for_reason(page, "too-slow")
+    assert hero_result(page) == ["still", "too-slow"]
+    assert_still_page(page)
+
+
+def test_scene_module_failure_keeps_still(make_page, base_url):
+    """Port of coalesce/tests/test_hero.py::test_asset_failure_keeps_still."""
+    page, errors, warnings = open_desktop(make_page, base_url, route="**/js/scene.js")
+    wait_for_reason(page, "load-failed")
+    assert hero_result(page) == ["still", "load-failed"]
+    assert_still_page(page)
+    assert len(prefixed(warnings, LOAD_FAILED)) == 1, warnings
+    assert not [e for e in errors if e.startswith("pageerror")]
 
 
 def test_three_load_failure_keeps_still(make_page, base_url):
-    page = make_page()
-    errors = collect_errors(page)
-    warnings = []
-    page.on("console", lambda msg: warnings.append(msg.text) if msg.type == "warning" else None)
-    page.route("**/three.module.min.js", lambda route: route.abort())
-    page.goto(f"{base_url}{HOME}")
+    page, errors, warnings = open_desktop(make_page, base_url, route="**/three.module.min.js")
+    wait_for_reason(page, "load-failed")
     assert hero_result(page) == ["still", "load-failed"]
-    assert page.locator("[data-hint]").text_content() == STILL_HINT
-    assert page.locator(".hero-still").is_visible()
+    assert_still_page(page)
     assert not [e for e in errors if e.startswith("pageerror")]
-    # The browser appends the error object to the console text, so pin the message as a prefix.
-    assert len([w for w in warnings if w.startswith(THREE_FAILED)]) == 1, warnings
+    assert len(prefixed(warnings, LOAD_FAILED)) == 1, warnings
 
 
-def test_controls_check_fails_when_the_row_is_unhidden(make_page, base_url):
-    """Planted control: a controls row that shows must fail assert_still_page's check."""
+def test_context_loss_falls_back(make_page, base_url):
+    page, errors = open_live(make_page, base_url)
+    page.eval_on_selector("[data-hero] canvas", "c => c.getContext('webgl2').getExtension('WEBGL_lose_context').loseContext()")
+    wait_for_reason(page, "context-lost")
+    assert hero_result(page) == ["still", "context-lost"]
+    assert_still_page(page)
+    assert errors == []
+
+
+def test_webgl_setup_failure_falls_back(make_page, base_url):
+    page, errors, warnings = open_desktop(make_page, base_url, init_script=NO_STAGE_WEBGL)
+    wait_for_reason(page, "webgl-failed")
+    assert hero_result(page) == ["still", "webgl-failed"]
+    assert_still_page(page)
+    assert errors == ["console.error: THREE.WebGLRenderer: Error creating WebGL context."]
+    assert len(prefixed(warnings, WEBGL_FAILED)) == 1, warnings
+
+
+def test_stop_hook_tears_down_once(make_page, base_url):
+    page, errors = open_live(make_page, base_url)
+    page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('context-lost'); }")
+    assert hero_result(page) == ["still", "context-lost"]
+    assert_still_page(page)
+    held = frames(page)
+    clock = weave(page, ".clock")
+    page.wait_for_timeout(600)
+    assert frames(page) == held and weave(page, ".clock") == clock
+    assert weave(page, ".mode") == "quilt"  # the hook outlives the teardown
+    assert errors == []
+
+
+@pytest.mark.parametrize("planted", ["unhidden-row", "canvas-left"])
+def test_still_check_fails_on_a_live_leftover(make_page, base_url, planted):
+    """Planted controls: a controls row that shows, or a canvas left in the stage, must fail assert_still_page."""
     page = make_page(reduced_motion="reduce")
     page.goto(f"{base_url}{HOME}")
     hero_result(page)
-    controls = page.locator("[data-controls]")
-    controls.evaluate("el => { el.hidden = false; }")
-    assert not hidden_by_attribute(controls)
+    if planted == "unhidden-row":
+        page.locator("[data-controls]").evaluate("el => { el.hidden = false; }")
+    else:
+        page.locator("[data-hero]").evaluate("el => el.append(document.createElement('canvas'))")
+    with pytest.raises(AssertionError):
+        assert_still_page(page)
