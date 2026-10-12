@@ -1,7 +1,7 @@
 // WEAVE's boot module: the panel lists first, then the hero. The load-time decision picks the still or the live
 // quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
 import { cleanPanels } from './catalog.js';
-import { fillSlots, readHooks, renderPanels, setHeroState, setStageLabel, showLiveControls } from './dom.js';
+import { fillSlots, readHooks, renderPanels, setHeroState, setPaused, setStageLabel, showLiveControls } from './dom.js';
 import { decideMode, FrameWatchdog, readEnvironment } from './eligibility.js';
 
 const LOAD_FAILED = 'WEAVE: the 3D quilt could not load, so the still image stays.';
@@ -72,6 +72,8 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   let tilt = { x: 0, y: 0 };
   const tiltTarget = { x: 0, y: 0 };
   let stopped = false;
+  let paused = false;
+  let onScreen = true;
   let rafId = 0;
   let last = 0;
   let clock = 0;
@@ -87,6 +89,8 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     const height = stage.clientHeight;
     if (!width || !height) return;
     quilt.resize(width, height, Math.min(window.devicePixelRatio || 1, S.MAX_PIXEL_RATIO));
+    // Resizing clears the canvas; when no frame is coming (paused or idle), redraw the current pose, uncounted.
+    if (!rafId && !stopped) draw();
   };
   const sizeObserver = new ResizeObserver(resize);
   sizeObserver.observe(stage);
@@ -120,8 +124,9 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     schedule();
   }
 
+  // rAF keeps firing in a hidden tab (U5), so the loop checks document.hidden itself.
   function schedule() {
-    if (!rafId && !stopped) rafId = requestAnimationFrame(frame);
+    if (!rafId && !stopped && !paused && onScreen && !document.hidden) rafId = requestAnimationFrame(frame);
   }
 
   function unschedule() {
@@ -147,15 +152,46 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   };
   canvas.addEventListener('webglcontextlost', onContextLost);
 
+  // Pausing jumps any running sequence to its end, stops the loop and draws that pose once (uncounted).
+  const onPause = () => {
+    paused = !paused;
+    setPaused(pause, paused);
+    if (paused) {
+      springs.snap();
+      unschedule();
+      draw();
+    } else {
+      schedule();
+    }
+  };
+  pause.addEventListener('click', onPause);
+
+  // Off screen or in a hidden tab, the pending frame is cancelled too (coalesce/public/js/hero.js), so none runs.
+  const visibility = new IntersectionObserver((entries) => {
+    onScreen = entries[entries.length - 1].isIntersecting;
+    if (onScreen) schedule();
+    else unschedule();
+  });
+  visibility.observe(stage);
+  const onVisibilityChange = () => {
+    if (document.hidden) unschedule();
+    else schedule();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
   // The only teardown: the watchdog, a lost context and the hook all come here, once. It releases the rAF handle
-  // (with last reset), the ResizeObserver, Pause and the controls row (hidden again), the canvas with its pointer
-  // listeners, and the webglcontextlost listener (removed before quilt.dispose() forces the context loss); then
-  // is-live, and setHeroState writes the still and #5's still hint.
+  // (with last reset), both observers, the document's visibilitychange listener, the Pause listener (Pause and the
+  // controls row hidden again), the canvas with its pointer listeners, and the webglcontextlost listener (removed
+  // before quilt.dispose() forces the context loss); then is-live, and setHeroState writes the still and #5's
+  // still hint.
   function stop(reason) {
     if (stopped) return;
     stopped = true;
     unschedule();
     sizeObserver.disconnect();
+    visibility.disconnect();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    pause.removeEventListener('click', onPause);
     showLiveControls(controls, pause, false);
     canvas.removeEventListener('webglcontextlost', onContextLost);
     canvas.remove();
