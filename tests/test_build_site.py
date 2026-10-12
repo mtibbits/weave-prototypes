@@ -6,7 +6,7 @@ import build_site
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_build_assembles_the_front_page_and_both_prototypes(tmp_path):
+def test_build_assembles_the_front_page_and_every_prototype(tmp_path):
     out = build_site.build(tmp_path / "_site")
 
     assert (out / "index.html").is_file()
@@ -16,6 +16,10 @@ def test_build_assembles_the_front_page_and_both_prototypes(tmp_path):
     assert (out / "weave" / "index.html").is_file()
     assert (out / "weave" / "panels.js").is_file()
     assert (out / "weave" / "assets" / "weave-still.jpg").is_file()
+    assert (out / "blazeahead" / "index.html").is_file()
+    assert (out / "blazeahead" / "tour" / "index.html").is_file()
+    assert (out / "blazeahead" / "help" / "index.html").is_file()
+    assert (out / "blazeahead" / "assets" / "blazeahead.glb").is_file()
 
 
 def test_build_replaces_a_stale_output_folder(tmp_path):
@@ -29,8 +33,9 @@ def test_build_replaces_a_stale_output_folder(tmp_path):
     assert (out / "index.html").is_file()
 
 
-def test_the_front_page_links_to_both_prototypes_with_relative_urls():
+def test_the_front_page_links_to_every_prototype_with_relative_urls():
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
 
     assert 'href="weave/"' in html
     assert 'href="coalesce/"' in html
+    assert 'href="blazeahead/"' in html
