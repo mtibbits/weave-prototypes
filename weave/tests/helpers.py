@@ -84,6 +84,49 @@ HOME = "/public/index.html"
 
 PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 
+# --- Painting helpers (#6): console collection, font warnings, canvas hashing. ---
+
+FONT_WARNING_PREFIX = "WEAVE: the web font"
+
+
+def collect_console(page):
+    """Record every console message from now on as (type, text); returns the live list."""
+    messages = []
+    page.on("console", lambda msg: messages.append((msg.type, msg.text)))
+    return messages
+
+
+def font_warnings(messages):
+    """The font-wait warnings among collected (type, text) console messages."""
+    return [text for kind, text in messages if kind == "warning" and text.startswith(FONT_WARNING_PREFIX)]
+
+
+# Links weave.css (its @font-face rules) into a blank page and waits for the stylesheet.
+LINK_CSS = r"""
+    await new Promise((resolve, reject) => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/public/css/weave.css';
+      link.onload = resolve;
+      link.onerror = reject;
+      document.head.append(link);
+    });
+"""
+
+# Page globals: sha256Canvas(c) hashes the canvas's RGBA bytes; isUniform(c) is true when every pixel is equal.
+SHA256_JS = r"""
+    window.sha256Canvas = async (c) => {
+      const bytes = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+    };
+    window.isUniform = (c) => {
+      const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
+      return px.every((v) => v === px[0]);
+    };
+"""
+
+
 # Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
 DEFAULTS_JS = r"""
     if (!window.WEAVE_PANELS) {
