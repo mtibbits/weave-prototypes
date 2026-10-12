@@ -23,7 +23,8 @@ def test_pose_rest_is_still_but_not_paused(make_page, base_url, rest):
     sweep(page)
     page.eval_on_selector("[data-hero]", STORE)
     before = frames(page)
-    page.wait_for_timeout(1000)
+    sweep(page)
+    page.wait_for_timeout(700)
     assert frames(page) > before
     assert page.eval_on_selector("[data-hero]", SAME_AS_STORED) is rest
     assert errors == []
