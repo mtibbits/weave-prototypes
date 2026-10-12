@@ -30,20 +30,23 @@ export function makeCanvas(width, height = width) {
 
 // A fresh context's value for every settable property, read from the browser rather than listed by hand, so
 // a property a caller leaves behind can never leak into a paint. The transform and line dash are methods.
-const FRESH_STATE = (() => {
+// Built on first use, so importing this module needs no DOM.
+let freshState = null;
+function readFreshState() {
   const ctx = contextOf(makeCanvas(1));
   const state = {};
   for (const [name, d] of Object.entries(Object.getOwnPropertyDescriptors(CanvasRenderingContext2D.prototype))) {
     if (d.get && d.set) state[name] = ctx[name];
   }
   return state;
-})();
+}
 
 // Save, reset to a fresh context's state and clear; every painter pairs this with ctx.restore().
 export function beginPaint(canvas) {
   const ctx = contextOf(canvas);
+  freshState ??= readFreshState();
   ctx.save();
-  Object.assign(ctx, FRESH_STATE);
+  Object.assign(ctx, freshState);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.setLineDash([]);
   ctx.clearRect(0, 0, canvas.width, canvas.height);

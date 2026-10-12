@@ -97,13 +97,12 @@
       canvases.textures.forEach(({ canvas, paint }) => paint(canvas));
     }
 
-    // The test hook.
-    window.WEAVE_FACES = { paintAll, entries, textures: TEXTURES };
-
     let painted = 'error';
     try {
       const ok = await fontsReady();
       canvases = buildCanvases();
+      // The test hook, published once the canvases exist.
+      window.WEAVE_FACES = { paintAll, entries, textures: TEXTURES };
       paintAll();
       painted = ok ? 'fonts' : 'fallback';
     } finally {
