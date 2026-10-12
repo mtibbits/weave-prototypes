@@ -27,8 +27,9 @@ export function makeCanvas(width, height = width) {
   return canvas;
 }
 
-// Save, reset to a known state and clear; every painter pairs this with ctx.restore().
-export function beginPaint(canvas) {
+// Save, reset to a known state and clear (unless `clear` is false, for a layer drawn over a fresh paint);
+// every painter pairs this with ctx.restore().
+export function beginPaint(canvas, { clear = true } = {}) {
   const ctx = contextOf(canvas);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -38,7 +39,10 @@ export function beginPaint(canvas) {
   ctx.shadowBlur = 0;
   ctx.filter = 'none';
   ctx.setLineDash([]);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.lineDashOffset = 0;
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+  if (clear) ctx.clearRect(0, 0, canvas.width, canvas.height);
   return ctx;
 }
 
