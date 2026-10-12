@@ -29,3 +29,41 @@ export function fontsReady({ timeoutMs = 3000 } = {}) {
     });
   });
 }
+
+// --- The name rule, shared by faces and tiles. Sizes are at 512 px and scale by s = canvas.width / 512. ---
+
+export const NAME_PX = 48;
+export const NAME_MAX = 0.6; // of the block
+export const TILE_PAD = 40;
+export const TILE_NAME_PX = 40;
+export const TILE_NAME_MAX = 0.8; // of the tile's text column (the tile minus its padding)
+
+export const nameFont = (px) => `700 ${px}px "Instrument Sans", system-ui, sans-serif`;
+
+// The smallest size a name is ever set at; below it, the text is drawn compressed into its width.
+export const nameFloor = (basePx) => Math.max(8, Math.round(basePx / 4));
+
+// The one rule: a name that fits at basePx is one line; a single word is one line, shrunk; otherwise line 1
+// is the longest word prefix (at least one word) that fits at basePx and line 2 is the rest. px is the
+// largest whole size, no larger than basePx and no smaller than the floor, at which every line fits; both
+// lines share it. Measures with ctx and leaves its font as it was.
+export function fitName(ctx, name, maxWidth, basePx) {
+  const saved = ctx.font;
+  const width = (text, px) => {
+    ctx.font = nameFont(px);
+    return ctx.measureText(text).width;
+  };
+  const words = String(name).trim().split(/\s+/);
+  const whole = words.join(' ');
+  let lines = [whole];
+  if (words.length > 1 && width(whole, basePx) > maxWidth) {
+    let n = 1;
+    while (n < words.length - 1 && width(words.slice(0, n + 1).join(' '), basePx) <= maxWidth) n += 1;
+    lines = [words.slice(0, n).join(' '), words.slice(n).join(' ')];
+  }
+  const floor = nameFloor(basePx);
+  let px = basePx;
+  while (px > floor && lines.some((line) => width(line, px) > maxWidth)) px -= 1;
+  ctx.font = saved;
+  return { lines, px };
+}
