@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The tour · blazeAhead</title>
+  <meta name="description" content="Walk the blazeAhead trail: the continuity proxy, environment scaffolding, the knowledge base and the In Flight queue.">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="../fonts/Fraunces.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../css/site.css">
+  <script src="../site-config.js"></script>
+  <script src="../tour-content.js"></script>
+  <script type="importmap">
+    { "imports": { "three": "../vendor/three/build/three.module.min.js", "three/addons/": "../vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body class="tour-page" data-tour-index="-1" data-tour-walking="true">
+  <a class="skip-link" href="#tour-card">Skip to the tour card</a>
+
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="blazeAhead home">
+      <img src="../assets/favicon.svg" alt="" width="30" height="30">
+      <span class="brand-name">blazeAhead</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="../">Exit tour</a>
+      <a href="../help/">Help</a>
+    </nav>
+    <a class="btn btn-primary" data-link="download" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span data-cta>Download blazeAhead</span>
+    </a>
+  </header>
+
+  <main id="main">
+    <h1 class="visually-hidden">The blazeAhead tour</h1>
+    <div class="stage tour-stage" data-stage role="img" aria-label="A forest path at night, lit by torches.">
+      <img class="stage-still" width="1600" height="900" alt="">
+      <img class="stage-still is-hidden" width="1600" height="900" alt="">
+    </div>
+    <div class="kb-overlay" data-kb-overlay hidden></div>
+
+    <button class="sign-button" type="button" data-sign="left" aria-label="Back" hidden></button>
+    <button class="sign-button" type="button" data-sign="right" aria-label="Next" hidden></button>
+
+    <nav class="trail-map" data-trail-map aria-label="Tour stops">
+      <ol></ol>
+      <span class="map-label" data-map-label></span>
+    </nav>
+
+    <section class="tour-card" id="tour-card" data-tour-card aria-live="polite" data-hidden>
+      <p class="card-eyebrow" data-card-eyebrow></p>
+      <div data-card-body></div>
+      <div class="card-foot">
+        <span class="tour-hint">Use the signposts, or the ← → keys.</span>
+        <button class="btn btn-ghost kb-unfold" type="button" data-kb-unfold hidden>Unfold the map</button>
+        <span class="pager" data-pager hidden>
+          <button type="button" data-card-prev aria-label="Previous card">‹</button>
+          <span data-card-count></span>
+          <button type="button" data-card-next aria-label="Next card">›</button>
+        </span>
+      </div>
+    </section>
+
+    <dialog class="kb-sheet" data-kb-sheet aria-labelledby="kb-sheet-title">
+      <div class="kb-sheet-head">
+        <h2 id="kb-sheet-title">Knowledge base trail map</h2>
+        <button class="btn btn-ghost" type="button" data-kb-close>Close</button>
+      </div>
+      <div class="kb-sheet-map" data-kb-sheet-map></div>
+    </dialog>
+
+    <button class="btn btn-ghost stage-pause" type="button" data-pause aria-pressed="false" hidden>Pause motion</button>
+  </main>
+
+  <script type="module">
+    import { boot } from '../js/config.js';
+    boot();
+  </script>
+  <script type="module">
+    import { mountStage } from '../js/stage.js';
+    import { startTour } from '../js/tour.js';
+    const query = new URLSearchParams(location.search);
+    // The tour starts at once on stills; the 3D scene joins it when (and if) it has loaded.
+    const live = mountStage(document.querySelector('[data-stage]'), {
+      variant: 'tour',
+      assetsBase: '../assets/',
+      watchdog: !query.has('nowatchdog'),
+      watchdogLimitMs: query.has('watchdogLimitMs') ? Number(query.get('watchdogLimitMs')) : 45,
+    }).catch((err) => {
+      console.error('blazeAhead: the 3D scene failed to start.', err);
+      return null;
+    });
+    startTour({ live }).catch((err) => console.error('blazeAhead: the tour could not start.', err));
+  </script>
+</body>
+</html>
