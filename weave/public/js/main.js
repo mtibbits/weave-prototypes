@@ -91,8 +91,9 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     const height = stage.clientHeight;
     if (!width || !height) return;
     quilt.resize(width, height, Math.min(window.devicePixelRatio || 1, S.MAX_PIXEL_RATIO));
-    // Resizing clears the canvas; when no frame is coming (paused or idle), redraw the current pose, uncounted.
-    if (!rafId && !stopped) draw();
+    // Resizing clears the canvas, and a ResizeObserver runs after this frame's render and before it paints, so
+    // redraw the current pose now (uncounted), whether or not a frame is coming: else the quilt flickers to paper.
+    if (!stopped) draw();
   };
   const sizeObserver = new ResizeObserver(resize);
   sizeObserver.observe(stage);

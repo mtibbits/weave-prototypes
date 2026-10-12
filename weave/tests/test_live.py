@@ -68,6 +68,41 @@ def test_paused_quilt_redraws_after_a_resize(make_page, base_url):
     assert ink_fraction(page.screenshot(clip=clip)) > 0.05
 
 
+# Resizes the stage from a rAF callback, then reads the stage canvas's drawing buffer from a ResizeObserver created
+# after main.js's, so it runs after main.js's resize in the same rendering update and before that update paints.
+RESIZE_AND_READ = r"""el => new Promise((resolve) => {
+    const canvas = el.querySelector('canvas');
+    const width = canvas.width;
+    let armed = false;
+    const probe = new ResizeObserver(() => {
+      if (!armed) return;
+      probe.disconnect();
+      const copy = document.createElement('canvas');
+      copy.width = canvas.width;
+      copy.height = canvas.height;
+      const ctx = copy.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+      let ink = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i]) ink += 1;
+      resolve({ before: width, after: canvas.width, ink: ink / (data.length / 4) });
+    });
+    probe.observe(el);
+    requestAnimationFrame(() => { armed = true; el.style.width = `${Math.round(el.clientWidth * 0.8)}px`; });
+})"""
+
+
+def test_live_resize_redraws_before_the_frame_paints(make_page, base_url):
+    """A resize while the loop runs lands after that frame's render; without a redraw the cleared canvas would paint
+    as bare paper, so the quilt flickers on every resize step."""
+    page, errors = open_live(make_page, base_url)
+    assert rising(page, 300)
+    r = page.eval_on_selector("[data-hero]", RESIZE_AND_READ)
+    assert r["after"] != r["before"]  # the buffer really was resized, and so cleared
+    assert r["ink"] > 0.3, r
+    assert errors == []
+
+
 def test_hidden_tab_stops_the_loop(make_page, base_url):
     page, errors = open_live(make_page, base_url)
     assert rising(page, 300)
