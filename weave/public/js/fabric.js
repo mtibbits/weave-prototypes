@@ -37,11 +37,27 @@ export function beginPaint(canvas, { clear = true } = {}) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
   ctx.filter = 'none';
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'low';
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
+  ctx.miterLimit = 10;
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
+  ctx.font = '10px sans-serif';
+  ctx.direction = 'ltr';
   ctx.textAlign = 'start';
   ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = '0px';
+  ctx.wordSpacing = '0px';
+  ctx.fontKerning = 'auto';
+  ctx.fontStretch = 'normal';
+  ctx.fontVariantCaps = 'normal';
+  ctx.textRendering = 'auto';
   if (clear) ctx.clearRect(0, 0, canvas.width, canvas.height);
   return ctx;
 }

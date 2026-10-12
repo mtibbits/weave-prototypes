@@ -132,10 +132,16 @@ def open_paint(make_page, base_url, **context_args):
     helpers defined; returns run(body), with run.page and run.console (every (type, text) since before the wait)."""
     page = make_page(**context_args)
     messages = collect_console(page)
+    # A failed module or font fetch otherwise surfaces only as "Failed to fetch dynamically imported module".
+    failed = []
+    page.on("requestfailed", lambda request: failed.append(f"{request.url} {request.failure}"))
     page.goto(f"{base_url}/tests/blank.html")
-    ok = page.evaluate(f"async () => {{ {LINK_CSS} {SHA256_JS}"
-                       " return (await import('/public/js/tiles.js')).fontsReady(); }")
-    assert ok is True, font_warnings(messages)
+    try:
+        ok = page.evaluate(f"async () => {{ {LINK_CSS} {SHA256_JS}"
+                           " return (await import('/public/js/tiles.js')).fontsReady(); }")
+    except Exception as exc:
+        raise AssertionError(f"paint page setup failed; failed requests: {failed}") from exc
+    assert ok is True, (font_warnings(messages), failed)
 
     def run(body):
         return page.evaluate(f"async () => {{ {body} }}")

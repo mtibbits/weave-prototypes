@@ -231,3 +231,36 @@ def test_face_repaint_is_byte_identical(paint_js):
         return [first, await sha256Canvas(c), await faceHash(byId('manpower'), 'sewn')];
     """)
     assert len(set(hashes)) == 1
+
+
+# Context state a caller (#7, #10, #18) might leave behind outside save/restore.
+LEFT_BEHIND = {
+    "lineCap": "'round'", "lineJoin": "'round'", "miterLimit": "2", "lineWidth": "7", "direction": "'rtl'",
+    "letterSpacing": "'2px'", "wordSpacing": "'5px'", "shadowOffsetX": "9", "shadowOffsetY": "9",
+    "imageSmoothingEnabled": "false", "fontKerning": "'none'", "fontStretch": "'condensed'",
+    "fontVariantCaps": "'small-caps'", "textRendering": "'optimizeSpeed'", "font": "'30px serif'",
+}
+
+
+def test_paints_ignore_state_a_caller_left_behind(paint_js):
+    result = paint_js(SETUP + "const LEFT = {" + ", ".join(f"{k}: {v}" for k, v in LEFT_BEHIND.items()) + "};" + r"""
+        const dirty = (size) => { const c = F.makeCanvas(size); Object.assign(c.getContext('2d'), LEFT); return c; };
+        const paints = {
+          face: (c) => T.paintFace(c, byId('actions'), 'sewn'),
+          planned: (c) => T.paintFace(c, byId('promotions'), 'planned'),
+          tile: (c) => T.paintTile(c, byId('manpower')),
+          sashing: (c) => F.paintSashing(c, { cols: 4, rows: 3, block: 1, sashing: 0.14, border: 0.14 }),
+          wood: (c) => F.paintWood(c),
+        };
+        const out = {};
+        for (const [name, paint] of Object.entries(paints)) {
+          for (const size of [512, 300]) {
+            const clean = F.makeCanvas(size), messy = dirty(size);
+            paint(clean);
+            paint(messy);
+            out[`${name}@${size}`] = await sha256Canvas(clean) === await sha256Canvas(messy);
+          }
+        }
+        return out;
+    """)
+    assert all(result.values()), result

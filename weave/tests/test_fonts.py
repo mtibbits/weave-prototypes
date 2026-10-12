@@ -60,6 +60,10 @@ def test_delayed_sans_gives_the_undelayed_hashes(make_page, base_url, faces_base
     held, messages = [], []
     try:
         page, errors = open_held(make_page, base_url, held, messages)
+        for _ in range(100):  # wait (up to 5 s) for the Sans request itself, then hold it for 1 s
+            if held:
+                break
+            page.wait_for_timeout(50)
         page.wait_for_timeout(1000)
         assert len(held) == 1 and page.get_attribute("body", "data-painted") is None
         held.pop().continue_()
@@ -74,9 +78,10 @@ def test_delayed_sans_gives_the_undelayed_hashes(make_page, base_url, faces_base
 
 def test_aborted_sans_paints_in_the_fallback_with_a_warning(make_page, base_url, faces_baseline):
     messages = []
-    start = time.monotonic()
     page, errors = open_held(make_page, base_url, [], messages, abort=True)
-    painted, elapsed = painted_after(page, start)
+    # Timed from navigation commit, not from context creation (which a loaded machine can stretch past the
+    # bound). The warning text, not the clock, is what tells the abort path from the 3 s timer path.
+    painted, elapsed = painted_after(page, time.monotonic())
     assert painted == "fallback" and elapsed < 3.5, elapsed
     warnings = font_warnings(messages)
     assert len(warnings) == 1 and f"font {SANS_SPEC} could not load" in warnings[0], warnings
@@ -97,9 +102,8 @@ FIXED = "2026-10-09T09:00:00"
 def test_frozen_date_and_held_sans_paint_after_the_timer(make_page, base_url):
     held, messages = [], []
     try:
-        start = time.monotonic()
         page, errors = open_held(make_page, base_url, held, messages, clock=FIXED)
-        painted, elapsed = painted_after(page, start)
+        painted, elapsed = painted_after(page, time.monotonic())
         print(f"frozen-clock fallback after {elapsed:.2f} s")
         assert painted == "fallback" and 2.8 <= elapsed <= 6.0, elapsed
         warnings = font_warnings(messages)
