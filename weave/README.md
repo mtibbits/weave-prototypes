@@ -14,6 +14,8 @@ python tools/serve.py weave
 
 Then open <http://127.0.0.1:8000/public/>. This preview serves WEAVE on its own, so the "Coalesce" link there goes nowhere; the whole-site preview in the root `README.md` has both prototypes.
 
+The faces review page is at <http://127.0.0.1:8000/dev/faces.html> from the same command; it paints every block, tile and texture, and is never published. If port 8000 is taken, add `--port 8017` and use that port.
+
 ## Tests
 
 From the repo root, make a virtual environment and activate it first, so the install doesn't change your global `pytest`:
