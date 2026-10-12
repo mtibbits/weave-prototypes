@@ -30,6 +30,8 @@ export function makeCanvas(width, height = width) {
 
 // A fresh context's value for every settable property, read from the browser rather than listed by hand, so
 // a property a caller leaves behind can never leak into a paint. The transform and line dash are methods.
+// The clip region is the one state this cannot reset (only ctx.reset() can, which would also drop the
+// caller's save stack), so a caller that clips a painter's canvas must do it inside save/restore.
 // Built on first use, so importing this module needs no DOM.
 let freshState = null;
 function readFreshState() {

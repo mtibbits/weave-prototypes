@@ -46,6 +46,7 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
 ├── coalesce/                     the Coalesce repo, imported with history (git subtree)
 └── weave/
     ├── public/                   served at /weave/
+    ├── dev/                      dev-only review pages (faces.html); never published
     ├── tests/                    pytest + Playwright
     └── docs/superpowers/         this spec and the plan
 ```

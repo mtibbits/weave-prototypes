@@ -221,6 +221,15 @@ def test_face_kinds_follow_status(paint_js):
     assert null_kind == "filler" and unknown == "filler"
 
 
+def test_face_kind_defaults_to_the_entrys_status(paint_js):
+    result = run(paint_js, r"""
+        const same = async (id, kind) => await faceHash(byId(id)) === await faceHash(byId(id), kind);
+        return [await same('manpower', 'sewn'), await same('promotions', 'planned'), await same('suggest', 'suggest'),
+                await faceHash(byId('manpower'), 'bogus') === await faceHash(null, 'filler'), Object.isFrozen(T.FACE_KINDS)];
+    """)
+    assert result == [True, True, True, True, True]
+
+
 def test_face_repaint_is_byte_identical(paint_js):
     hashes = run(paint_js, r"""
         const c = fresh();
@@ -264,3 +273,21 @@ def test_paints_ignore_state_a_caller_left_behind(paint_js):
         return out;
     """)
     assert all(result.values()), result
+
+
+def test_a_caller_clip_is_the_one_state_painters_keep(paint_js):
+    """The documented exception to the reset (fabric.js): a clip set outside save/restore confines the paint,
+    and one set inside save/restore leaves no trace."""
+    result = run(paint_js, r"""
+        const clipped = (scoped) => {
+          const c = fresh(), ctx = c.getContext('2d');
+          if (scoped) ctx.save();
+          ctx.beginPath(); ctx.rect(0, 0, 100, 100); ctx.clip();
+          if (scoped) ctx.restore();
+          T.paintFace(c, byId('manpower'), 'sewn');
+          return sha256Canvas(c);
+        };
+        const clean = await faceHash(byId('manpower'), 'sewn');
+        return [await clipped(false) !== clean, await clipped(true) === clean];
+    """)
+    assert result == [True, True]

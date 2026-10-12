@@ -6,8 +6,8 @@ import { iconFor } from './icons.js';
 import { rngFor } from './random.js';
 
 // Every face font: the names and labels are Sans 700, and the chalk "?" is Serif Italic.
-export const FONT_SPECS = ['700 48px "Instrument Sans"', '400 48px "Instrument Serif"',
-  'italic 400 48px "Instrument Serif"'];
+export const FONT_SPECS = Object.freeze(['700 48px "Instrument Sans"', '400 48px "Instrument Serif"',
+  'italic 400 48px "Instrument Serif"']);
 
 // Resolves true once every face font has loaded, false when one fails or the wait runs out; never rejects.
 // It warns once, when the outcome is decided, and ignores whatever settles later. The timeout is a timer,
@@ -85,7 +85,7 @@ export function fitName(ctx, name, maxWidth, basePx) {
 
 // --- Faces and tiles. Both draw in a 512 design space scaled to the canvas. ---
 
-export const FACE_KINDS = ['sewn', 'planned', 'suggest', 'filler'];
+export const FACE_KINDS = Object.freeze(['sewn', 'planned', 'suggest', 'filler']);
 export const SAMPLE_CAPTION = 'sample';
 export const OPEN_CUE = 'Open →';
 export const TILE_SOON = 'Coming soon';
@@ -265,9 +265,9 @@ function paintSuggest(canvas, entry) {
   ctx.restore();
 }
 
-// Paints one block face. `kind` wins over the entry's status (#10's setFace); an unknown kind, or no entry,
-// paints as a filler, which is exactly paintFabric(canvas, 'muslin', 'filler').
-export function paintFace(canvas, entry, kind) {
+// Paints one block face. `kind` defaults to the entry's status and wins over it when given (#10's setFace); an
+// unknown kind, or no entry, paints as a filler, which is exactly paintFabric(canvas, 'muslin', 'filler').
+export function paintFace(canvas, entry, kind = faceKind(entry)) {
   const k = entry && FACE_KINDS.includes(kind) ? kind : 'filler';
   if (k === 'filler') {
     paintFabric(canvas, 'muslin', 'filler');

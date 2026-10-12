@@ -71,7 +71,8 @@
     }
 
     // The #20 contract: canvas[data-slot]:not([data-kind="tile"]) selects the faces, and canvas[data-texture]
-    // the textures. Every canvas comes from makeCanvas, so its bytes can be read back and hashed.
+    // the textures. Every canvas comes from makeCanvas, so its bytes can be read back and hashed. Hashes are
+    // comparable only within one machine and one Playwright/Chromium build.
     function buildCanvases() {
       const faces = entries.map((entry, slot) => {
         const kind = faceKind(entry);
