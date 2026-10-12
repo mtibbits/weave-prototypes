@@ -187,7 +187,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   // (with last reset), both observers, the document's visibilitychange listener, the Pause listener (Pause and the
   // controls row hidden again), the canvas with its pointer listeners, and the webglcontextlost listener (removed
   // before quilt.dispose() forces the context loss); then is-live, and setHeroState writes the still and #5's
-  // still hint.
+  // still hint, even if dispose throws.
   function stop(reason) {
     if (stopped) return;
     stopped = true;
@@ -200,8 +200,11 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     canvas.removeEventListener('webglcontextlost', onContextLost);
     canvas.remove();
     stage.classList.remove('is-live');
-    quilt.dispose();
-    setHeroState(stage, hint, 'still', reason);
+    try {
+      quilt.dispose();
+    } finally {
+      setHeroState(stage, hint, 'still', reason);
+    }
   }
 
   // The test and sibling-epic hooks; they outlive the teardown (stop is then a no-op and the clock frozen).

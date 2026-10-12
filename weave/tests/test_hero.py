@@ -244,7 +244,7 @@ def test_webgl_setup_failure_falls_back(make_page, base_url):
 
 def test_stop_hook_tears_down_once(make_page, base_url):
     page, errors = open_live(make_page, base_url)
-    page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('context-lost'); }")
+    page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('too-slow'); }")
     assert hero_result(page) == ["still", "context-lost"]
     assert_still_page(page)
     held = frames(page)

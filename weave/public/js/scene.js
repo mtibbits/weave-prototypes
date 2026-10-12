@@ -348,7 +348,8 @@ export function buildQuilt(renderer, { slots }) {
     textures.forEach((t) => t.dispose());
     if (textures.has(weaveNormal)) weaveNormal = null;
     renderer.dispose();
-    renderer.forceContextLoss();
+    // An already-lost context has no WEBGL_lose_context to call, and Three would warn.
+    if (!renderer.getContext().isContextLost()) renderer.forceContextLoss();
   }
 
   return {
