@@ -14,6 +14,8 @@ def test_build_assembles_the_front_page_and_both_prototypes(tmp_path):
     assert (out / "coalesce" / "help" / "index.html").is_file()
     assert (out / "coalesce" / "assets" / "coalesce.glb").is_file()
     assert (out / "weave" / "index.html").is_file()
+    assert (out / "weave" / "panels.js").is_file()
+    assert (out / "weave" / "assets" / "weave-still.jpg").is_file()
 
 
 def test_build_replaces_a_stale_output_folder(tmp_path):

@@ -1,0 +1,225 @@
+"""Shared test helpers. pytest puts tests/ on sys.path, so test modules import this directly."""
+import struct
+import zlib
+
+LINEN = (243, 238, 228)
+
+
+def collect_errors(page):
+    """Record uncaught page errors and console errors from now on; returns the live list."""
+    errors = []
+    page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
+    page.on("console", lambda msg: errors.append(f"console.error: {msg.text}") if msg.type == "error" else None)
+    return errors
+
+
+def hero_result(page, timeout=20000):
+    """Wait until the hero settles (live, or still for a reason other than loading); returns [state, reason]."""
+    page.wait_for_function(
+        "() => { const d = document.querySelector('[data-hero]')?.dataset;"
+        " return !!d && !!d.heroState && d.heroReason !== 'loading'; }",
+        timeout=timeout,
+    )
+    return page.eval_on_selector("[data-hero]", "el => [el.dataset.heroState, el.dataset.heroReason]")
+
+
+def png_rows(png):
+    """Decode an 8-bit RGB/RGBA, non-interlaced PNG (what Chromium screenshots are) into rows of bytes."""
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, header = 8, bytearray(), None
+    while pos < len(png):
+        length, kind = struct.unpack(">I4s", png[pos:pos + 8])
+        chunk = png[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", chunk)
+        elif kind == b"IDAT":
+            idat += chunk
+        elif kind == b"IEND":
+            break
+    width, height, depth, color, _, _, interlace = header
+    assert depth == 8 and color in (2, 6) and interlace == 0, header
+    bpp = 3 if color == 2 else 4
+    raw = zlib.decompress(bytes(idat))
+    stride = width * bpp
+    rows, prev, i = [], bytearray(stride), 0
+    for _ in range(height):
+        kind = raw[i]
+        line = bytearray(raw[i + 1:i + 1 + stride])
+        i += 1 + stride
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0
+            b = prev[x]
+            c = prev[x - bpp] if x >= bpp else 0
+            if kind == 1:
+                line[x] = (line[x] + a) & 255
+            elif kind == 2:
+                line[x] = (line[x] + b) & 255
+            elif kind == 3:
+                line[x] = (line[x] + (a + b) // 2) & 255
+            elif kind == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append(line)
+        prev = line
+    return width, height, bpp, rows
+
+
+def ink_fraction(png, background=LINEN, tolerance=40):
+    """Share of pixels in a screenshot that clearly differ from the page's linen paper colour."""
+    width, height, bpp, rows = png_rows(png)
+    differ = 0
+    for row in rows:
+        for x in range(0, width * bpp, bpp):
+            if abs(row[x] - background[0]) + abs(row[x + 1] - background[1]) + abs(row[x + 2] - background[2]) > tolerance:
+                differ += 1
+    return differ / (width * height)
+
+
+STATIC_LABEL = ("A quilt of twelve blocks, one for each WEAVE dashboard panel: "
+                "some sewn in, others pinned in place for later releases.")
+HOME = "/public/index.html"
+
+
+PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
+
+
+def hidden_by_attribute(locator):
+    """True when the element carries `hidden` AND that actually removes it from layout (not just an empty box)."""
+    return locator.evaluate("el => el.hidden === true && getComputedStyle(el).display === 'none'")
+
+
+def open_page(make_page, base_url, panels_body=None, warnings=None, **context_args):
+    """Open the WEAVE page, optionally with panels.js swapped for `panels_body`; returns (page, errors).
+
+    Pass a list as `warnings` to collect the panel-list console warnings (only those families) into it.
+    Reduced motion is the default, so list tests never request Three.js and test_hero.py alone owns the hero.
+    """
+    context_args.setdefault("reduced_motion", "reduce")
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    if warnings is not None:
+        page.on("console", lambda msg: warnings.append(msg.text)
+                if msg.type == "warning" and msg.text.startswith(PANEL_WARNING_PREFIXES) else None)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    page.goto(base_url + HOME)
+    page.wait_for_load_state("networkidle")
+    return page, errors
+
+
+# --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---
+
+W_OBJECT = "WEAVE: panels.js entry {n} was skipped: it is not an object."
+W_ID = "WEAVE: panels.js entry {n} was skipped: its id must be a non-empty string."
+W_NAME = "WEAVE: panels.js entry {n} was skipped: its name must be a non-empty string."
+W_STATUS = "WEAVE: panels.js entry {n} was skipped: its status must be 'live', 'planned' or 'suggest'."
+E1 = ("WEAVE: the panel list (window.WEAVE_PANELS from panels.js) is missing or is not an object. "
+      "Check panels.js for a syntax error.")
+E2 = "WEAVE: WEAVE_PANELS.panels in panels.js is not an array."
+W_DUP = "WEAVE: panels.js entry {n} was skipped: the id '{id}' is already used (the first one is kept)."
+W_SAMPLE = "WEAVE: the live panel '{id}' has no valid sample, so it reads \"No sample yet\"."
+W_MANY = "WEAVE: panels.js has {count} valid panels; the quilt draws the first 12."
+VALID = "{ id: 'ok', name: 'Okay', status: 'planned', sample: null }"
+
+# (id, JS literal of the bad entry, message template): one per malformed kind, pure and page.
+MALFORMED = [
+    ("object-null", "null", W_OBJECT),
+    ("object-number", "7", W_OBJECT),
+    ("object-string", "'x'", W_OBJECT),
+    ("object-array", "[]", W_OBJECT),
+    ("id-missing", "{ name: 'No id', status: 'live' }", W_ID),
+    ("id-blank", "{ id: '  ', name: 'Blank id', status: 'live' }", W_ID),
+    ("id-number", "{ id: 7, name: 'Seven', status: 'live' }", W_ID),
+    ("name-missing", "{ id: 'a', status: 'live' }", W_NAME),
+    ("name-blank", "{ id: 'a', name: '  ', status: 'live' }", W_NAME),
+    ("name-number", "{ id: 'a', name: 7, status: 'live' }", W_NAME),
+    ("status-unknown", "{ id: 'a', name: 'A', status: 'archived' }", W_STATUS),
+    ("status-case", "{ id: 'a', name: 'A', status: 'Live' }", W_STATUS),
+    ("status-missing", "{ id: 'a', name: 'A' }", W_STATUS),
+]
+
+
+# --- Focus and contrast checks (reused by later children, e.g. #10's tooltip and #14's badge). ---
+
+FOCUS_TARGETS = r"""() => {
+    const targets = [...document.querySelectorAll('a[href], button:not([disabled])')].filter((el) =>
+        el.getClientRects().length > 0 && !el.closest('[hidden]') && getComputedStyle(el).visibility !== 'hidden');
+    targets.forEach((el, i) => { el.dataset.focusProbe = String(i); });
+    if (document.activeElement) document.activeElement.blur();
+    return targets.map((el) => `${el.tagName.toLowerCase()} "${el.textContent.trim()}" ${el.getAttribute('href') ?? ''}`.trim());
+}"""
+
+FOCUSED = r"""() => {
+    const el = document.activeElement;
+    const style = getComputedStyle(el);
+    return [el.dataset.focusProbe ?? null, style.outlineStyle, parseFloat(style.outlineWidth) || 0];
+}"""
+
+
+def focus_failures(page):
+    """Tab through every rendered link and button; describe those with no visible (>= 2 px) outline or never reached."""
+    targets = page.evaluate(FOCUS_TARGETS)
+    assert targets, "no rendered link or button to tab through"
+    outlines = {}
+    for _ in range(len(targets) + 2):
+        page.keyboard.press("Tab")
+        probe, style, width = page.evaluate(FOCUSED)
+        if probe is not None:
+            outlines.setdefault(int(probe), (style, width))
+    failures = []
+    for i, description in enumerate(targets):
+        if i not in outlines:
+            failures.append(f"not reached by Tab: {description}")
+        elif outlines[i][0] == "none" or outlines[i][1] < 2:
+            failures.append(description)
+    return failures
+
+
+# Coalesce's CONTRAST luminance, background walk and opacity, over every element that directly holds text.
+CONTRAST = r"""() => {
+    const lum = (c) => {
+      const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+        v /= 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const background = (el) => {
+      for (let e = el; e; e = e.parentElement) {
+        const c = getComputedStyle(e).backgroundColor;
+        if (c !== 'transparent' && !c.startsWith('rgba(0, 0, 0, 0)')) return c;
+      }
+      return 'rgb(243, 238, 228)';
+    };
+    const opacity = (el) => {
+      let o = 1;
+      for (let e = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+      return o;
+    };
+    const holdsText = (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    const checked = [...document.body.querySelectorAll('*')].filter((el) => holdsText(el)
+      && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+    const failures = [];
+    for (const el of checked) {
+      const style = getComputedStyle(el);
+      const a = lum(style.color);
+      const b = lum(background(el));
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const size = parseFloat(style.fontSize);
+      const weight = Number(style.fontWeight);
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      if (opacity(el) < 1 || ratio < (large ? 3 : 4.5)) {
+        failures.push({ text: el.textContent.trim().slice(0, 60), ratio: Math.round(ratio * 100) / 100, size, weight });
+      }
+    }
+    return { checked: checked.length, failures };
+}"""
+
+
+def contrast_failures(page):
+    """Every rendered text element under 4.5:1 (3:1 when large), or not fully opaque; fails closed below 10 checked."""
+    result = page.evaluate(CONTRAST)
+    assert result["checked"] >= 10, f"only {result['checked']} text elements checked"
+    return result["failures"]

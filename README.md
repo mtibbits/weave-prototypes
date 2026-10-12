@@ -13,6 +13,8 @@ Two work-in-progress prototypes for one workforce tool, published with GitHub Pa
 site/index.html               the front page (links to both prototypes)
 coalesce/public/              the Coalesce site, served at /coalesce/
 weave/public/                 the WEAVE site, served at /weave/
+weave/tests/                  WEAVE's tests (pytest + Playwright)
+weave/README.md               WEAVE's own preview and test steps
 weave/docs/superpowers/       WEAVE design notes
 tools/build_site.py           assembles _site/ from the three folders above
 tools/serve.py                local preview server with correct MIME types
@@ -35,6 +37,8 @@ python -m pytest
 ```
 
 The tests need `pytest`. Coalesce's own tests also need Playwright (see `coalesce/README.md`), and you run them from inside `coalesce/`.
+
+WEAVE's tests also need Playwright, and you run them from inside `weave/`. The steps are in `weave/README.md`.
 
 ## Licenses
 
