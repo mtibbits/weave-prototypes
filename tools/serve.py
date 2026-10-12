@@ -39,6 +39,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 class _Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # socketserver's default listen backlog is 5; a page's module graph and fonts can arrive faster than the
+    # accept thread runs (it shares the GIL with the test process), and Windows refuses the overflow.
+    request_queue_size = 128
 
 
 def start(directory, port=0):
