@@ -84,6 +84,139 @@ HOME = "/public/index.html"
 
 PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 
+# --- Painting helpers (#6): console collection, font warnings, canvas hashing. ---
+
+FONT_WARNING_PREFIX = "WEAVE: the web font"
+
+
+def collect_console(page, messages=None):
+    """Record every console message from now on as (type, text) into `messages` (a new list if None); returns it."""
+    messages = [] if messages is None else messages
+    page.on("console", lambda msg: messages.append((msg.type, msg.text)))
+    return messages
+
+
+def font_warnings(messages):
+    """The font-wait warnings among collected (type, text) console messages."""
+    return [text for kind, text in messages if kind == "warning" and text.startswith(FONT_WARNING_PREFIX)]
+
+
+# Links weave.css (its @font-face rules) into a blank page and waits for the stylesheet.
+LINK_CSS = r"""
+    await new Promise((resolve, reject) => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/public/css/weave.css';
+      link.onload = resolve;
+      link.onerror = reject;
+      document.head.append(link);
+    });
+"""
+
+# The one definition of the canvas checks, for any evaluate body: sha256Canvas(c) hashes the canvas's RGBA bytes;
+# isUniform(c) is true when every pixel is equal; canvasKey(c) names a faces-page canvas as face:<slot> |
+# tile:<slot> | texture:<name>.
+CANVAS_JS = r"""
+    const sha256Canvas = async (c) => {
+      const bytes = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+    };
+    const isUniform = (c) => {
+      const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
+      return px.every((v) => v === px[0]);
+    };
+    const canvasKey = (c) => (c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
+      : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`);
+"""
+
+# The same checks as page globals, for paint_js bodies.
+SHA256_JS = CANVAS_JS + "window.sha256Canvas = sha256Canvas; window.isUniform = isUniform;"
+
+
+def open_paint(make_page, base_url, **context_args):
+    """A blank page in a fresh context with weave.css's fonts loaded (fontsReady() must say true) and the hash
+    helpers defined; returns run(body), with run.page and run.console (every (type, text) since before the wait)."""
+    page = make_page(**context_args)
+    messages = collect_console(page)
+    # A failed module or font fetch otherwise surfaces only as "Failed to fetch dynamically imported module".
+    failed = []
+    page.on("requestfailed", lambda request: failed.append(f"{request.url} {request.failure}"))
+    page.goto(f"{base_url}/tests/blank.html")
+    try:
+        ok = page.evaluate(f"async () => {{ {LINK_CSS} {SHA256_JS}"
+                           " return (await import('/public/js/tiles.js')).fontsReady(); }")
+    except Exception as exc:
+        raise AssertionError(f"paint page setup failed; failed requests: {failed}") from exc
+    assert ok is True, (font_warnings(messages), failed)
+
+    def run(body):
+        return page.evaluate(f"async () => {{ {body} }}")
+
+    run.page = page
+    run.console = messages
+    return run
+
+
+FACES = "/dev/faces.html"
+
+
+def open_faces(make_page, base_url, panels_body=None, wait_until="load", before_goto=None, messages=None,
+               wait_painted=True, **context_args):
+    """Open the dev faces page and wait until it has painted (body[data-painted]); returns (page, errors).
+
+    `panels_body` swaps panels.js as in open_page. `before_goto(page)` runs after that route and before
+    navigation: routes, clock.set_fixed_time and init scripts all go through this one door. Pass a list as
+    `messages` to collect every (type, text) console message into it. The font tests hold a font (which
+    blocks `load`), so they pass wait_until="commit" and wait_painted=False and time the paint themselves.
+    """
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    if messages is not None:
+        collect_console(page, messages)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    if before_goto is not None:
+        before_goto(page)
+    page.goto(base_url + FACES, wait_until=wait_until)
+    if wait_painted:
+        page.wait_for_selector("body[data-painted]", state="attached", timeout=15000)
+    return page, errors
+
+
+# Every painted canvas on the faces page as face:<slot> | tile:<slot> | texture:<name> -> SHA-256 of its bytes.
+PAGE_CANVASES = "[...document.querySelectorAll('canvas[data-slot], canvas[data-texture]')]"
+
+CANVAS_HASHES = f"""async () => {{ {CANVAS_JS}
+    const out = {{}};
+    for (const c of {PAGE_CANVASES}) out[canvasKey(c)] = await sha256Canvas(c);
+    return out;
+}}"""
+
+
+def canvas_hashes(page):
+    return page.evaluate(CANVAS_HASHES)
+
+
+def uniform_canvases(page):
+    """Keys (as canvas_hashes names them) of canvases whose every pixel is the same."""
+    return page.evaluate(f"() => {{ {CANVAS_JS} return {PAGE_CANVASES}.filter(isUniform).map(canvasKey); }}")
+
+
+# Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
+DEFAULTS_JS = r"""
+    if (!window.WEAVE_PANELS) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = '/public/panels.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.append(s);
+      });
+    }
+    const DEFAULTS = (await import('/public/js/catalog.js')).cleanPanels(window.WEAVE_PANELS).panels;
+"""
+
 
 def hidden_by_attribute(locator):
     """True when the element carries `hidden` AND that actually removes it from layout (not just an empty box)."""

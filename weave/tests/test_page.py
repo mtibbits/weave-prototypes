@@ -243,6 +243,9 @@ def test_sink_check_catches_every_html_sink():
 
 def test_no_module_writes_html():
     modules = sorted((PUBLIC / "js").glob("*.js"))
-    assert {p.name for p in modules} >= {"main.js", "dom.js", "catalog.js"}
-    found = {p.name: html_sinks(p.read_text(encoding="utf-8")) for p in modules}
+    assert {p.name for p in modules} >= {"main.js", "dom.js", "catalog.js", "random.js", "icons.js", "fabric.js",
+                                         "tiles.js"}
+    dev_pages = sorted((PUBLIC.parent / "dev").glob("*.html"))
+    assert dev_pages, "no dev page to scan"
+    found = {p.name: html_sinks(p.read_text(encoding="utf-8")) for p in modules + dev_pages}
     assert all(lines == [] for lines in found.values()), found

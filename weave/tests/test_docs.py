@@ -42,3 +42,21 @@ def test_every_tests_command_line_is_a_bare_command():
         assert activate in lines, activate
     # PowerShell refuses Activate.ps1 under the stock Restricted policy, and without the venv the install goes global.
     assert "Set-ExecutionPolicy -Scope Process Bypass" in lines, lines
+
+
+def test_faces_page_says_how_to_open_it():
+    html = (WEAVE / "dev" / "faces.html").read_text(encoding="utf-8")
+    body = re.sub(r"<script.*?</script>", "", re.search(r"<body>(.*)</body>", html, re.S).group(1), flags=re.S)
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
+    for phrase in ("repo root", "python tools/serve.py weave", "/dev/faces.html"):
+        assert phrase in text, phrase
+
+
+def test_weave_readme_preview_names_the_faces_page():
+    preview = section(WEAVE / "README.md", "Preview")
+    assert "/dev/faces.html" in preview and "--port" in preview
+
+
+def test_root_readme_layout_lists_weave_dev():
+    layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
+    assert "weave/dev/" in layout

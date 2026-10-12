@@ -15,6 +15,7 @@ site/index.html               the front page (links to every prototype)
 coalesce/public/              the Coalesce site, served at /coalesce/
 blazeahead/public/            the blazeAhead site, served at /blazeahead/
 weave/public/                 the WEAVE site, served at /weave/
+weave/dev/                    dev-only pages (faces.html); never published
 weave/tests/                  WEAVE's tests (pytest + Playwright)
 weave/README.md               WEAVE's own preview and test steps
 weave/docs/superpowers/       WEAVE design notes

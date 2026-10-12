@@ -39,3 +39,11 @@ def test_the_front_page_links_to_every_prototype_with_relative_urls():
     assert 'href="weave/"' in html
     assert 'href="coalesce/"' in html
     assert 'href="blazeahead/"' in html
+
+
+def test_dev_pages_never_reach_the_site(tmp_path):
+    # Precondition: there is a dev page to leave out (a guard over nothing would pass vacuously).
+    assert (ROOT / "weave" / "dev" / "faces.html").is_file()
+    out = build_site.build(tmp_path / "_site")
+    assert not (out / "weave" / "dev").exists()
+    assert list(out.rglob("faces.html")) == []
