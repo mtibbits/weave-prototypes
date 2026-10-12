@@ -60,3 +60,18 @@ def test_weave_readme_preview_names_the_faces_page():
 def test_root_readme_layout_lists_weave_dev():
     layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
     assert "weave/dev/" in layout
+
+
+def test_weave_readme_tests_says_how_to_run_verify():
+    tests = section(WEAVE / "README.md", "Tests")
+    lines = [line.strip() for fence in re.findall(r"```(.*?)```", tests, re.S) for line in fence.splitlines()]
+    assert "python weave/tools/verify.py" in lines
+    for phrase in ("repo root", "visible", "browser", "--headless", "weave/verify-output/report.json"):
+        assert phrase in tests, phrase
+    # It comes before the pytest steps, which run from inside weave/.
+    assert tests.index("python weave/tools/verify.py") < tests.index("cd weave")
+
+
+def test_root_readme_layout_lists_weave_tools():
+    layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
+    assert "weave/tools/" in layout and "verify.py" in layout

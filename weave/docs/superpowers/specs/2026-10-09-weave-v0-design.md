@@ -48,6 +48,7 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
     ├── public/                   served at /weave/
     ├── dev/                      dev-only review pages (faces.html); never published
     ├── tests/                    pytest + Playwright
+    ├── tools/                    verify.py: the budget and hero-state check
     └── docs/superpowers/         this spec and the plan
 ```
 
