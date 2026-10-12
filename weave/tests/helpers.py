@@ -127,6 +127,24 @@ SHA256_JS = r"""
 """
 
 
+def open_paint(make_page, base_url, **context_args):
+    """A blank page in a fresh context with weave.css's fonts loaded (fontsReady() must say true) and the hash
+    helpers defined; returns run(body), with run.page and run.console (every (type, text) since before the wait)."""
+    page = make_page(**context_args)
+    messages = collect_console(page)
+    page.goto(f"{base_url}/tests/blank.html")
+    ok = page.evaluate(f"async () => {{ {LINK_CSS} {SHA256_JS}"
+                       " return (await import('/public/js/tiles.js')).fontsReady(); }")
+    assert ok is True, font_warnings(messages)
+
+    def run(body):
+        return page.evaluate(f"async () => {{ {body} }}")
+
+    run.page = page
+    run.console = messages
+    return run
+
+
 # Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
 DEFAULTS_JS = r"""
     if (!window.WEAVE_PANELS) {

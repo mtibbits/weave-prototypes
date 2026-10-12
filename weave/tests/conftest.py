@@ -7,7 +7,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / "tools"))
 import serve  # noqa: E402
-from helpers import LINK_CSS, SHA256_JS, collect_console, font_warnings  # noqa: E402
+from helpers import open_paint  # noqa: E402
 
 GPU_ARGS = ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"]
 NO_WEBGL_ARGS = ["--disable-webgl", "--disable-webgl2", "--disable-3d-apis"]
@@ -72,16 +72,4 @@ def paint_js(make_page, base_url):
     """Like `js`, on a blank page with weave.css's real fonts loaded (fontsReady() must say true) and the
     canvas hash helpers defined. `run.page` is the page and `run.console` every (type, text) console message
     since before the font wait."""
-    page = make_page()
-    messages = collect_console(page)
-    page.goto(f"{base_url}/tests/blank.html")
-    ok = page.evaluate(f"async () => {{ {LINK_CSS} {SHA256_JS}"
-                       " return (await import('/public/js/tiles.js')).fontsReady(); }")
-    assert ok is True, font_warnings(messages)
-
-    def run(body):
-        return page.evaluate(f"async () => {{ {body} }}")
-
-    run.page = page
-    run.console = messages
-    return run
+    return open_paint(make_page, base_url)
