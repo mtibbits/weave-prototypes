@@ -7,6 +7,7 @@
 // canvas, making the same rngFor draws in the same order at every size, so one canvas is one block (or one
 // texture) at any resolution. Each starts from a cleared canvas and leaves its state as it found it, so a
 // repaint into the same canvas is byte-identical.
+import { deepFreeze } from './icons.js';
 import { rngFor } from './random.js';
 
 // The one context door, and the only getContext call in the painters. Chromium rasters a default 2D canvas
@@ -27,47 +28,35 @@ export function makeCanvas(width, height = width) {
   return canvas;
 }
 
-// Save, reset to a known state and clear (unless `clear` is false, for a layer drawn over a fresh paint);
-// every painter pairs this with ctx.restore().
-export function beginPaint(canvas, { clear = true } = {}) {
+// A fresh context's value for every settable property, read from the browser rather than listed by hand, so
+// a property a caller leaves behind can never leak into a paint. The transform and line dash are methods.
+const FRESH_STATE = (() => {
+  const ctx = contextOf(makeCanvas(1));
+  const state = {};
+  for (const [name, d] of Object.entries(Object.getOwnPropertyDescriptors(CanvasRenderingContext2D.prototype))) {
+    if (d.get && d.set) state[name] = ctx[name];
+  }
+  return state;
+})();
+
+// Save, reset to a fresh context's state and clear; every painter pairs this with ctx.restore().
+export function beginPaint(canvas) {
   const ctx = contextOf(canvas);
   ctx.save();
+  Object.assign(ctx, FRESH_STATE);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.filter = 'none';
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'low';
-  ctx.lineWidth = 1;
-  ctx.lineCap = 'butt';
-  ctx.lineJoin = 'miter';
-  ctx.miterLimit = 10;
   ctx.setLineDash([]);
-  ctx.lineDashOffset = 0;
-  ctx.font = '10px sans-serif';
-  ctx.direction = 'ltr';
-  ctx.textAlign = 'start';
-  ctx.textBaseline = 'alphabetic';
-  ctx.letterSpacing = '0px';
-  ctx.wordSpacing = '0px';
-  ctx.fontKerning = 'auto';
-  ctx.fontStretch = 'normal';
-  ctx.fontVariantCaps = 'normal';
-  ctx.textRendering = 'auto';
-  if (clear) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   return ctx;
 }
 
-function deepFreeze(value) {
-  if (value && typeof value === 'object') {
-    Object.values(value).forEach(deepFreeze);
-    Object.freeze(value);
-  }
-  return value;
+// Every face, tile and fabric draws in a DESIGN x DESIGN space scaled to the canvas.
+export const DESIGN = 512;
+
+export function beginDesign(canvas) {
+  const ctx = beginPaint(canvas);
+  ctx.scale(canvas.width / DESIGN, canvas.height / DESIGN);
+  return ctx;
 }
 
 export const FABRIC_KINDS = Object.freeze(['calico', 'gingham', 'dots', 'stripe', 'chambray', 'plaid', 'solid', 'people']);
@@ -93,7 +82,6 @@ export function fabricFor(name) {
   return typeof name === 'string' && Object.hasOwn(FABRICS, name) ? FABRICS[name] : FABRICS.muslin;
 }
 
-const DESIGN = 512;
 const TAU = Math.PI * 2;
 
 function disc(ctx, x, y, r) {
@@ -203,16 +191,19 @@ function weaveOverlay(ctx) {
   ctx.globalAlpha = 1;
 }
 
-// The cloth alone: the print plus the weave, with no icon or name (D1). Fixed name and signature for #18.
-export function paintFabric(canvas, fabric, seedId) {
+// The cloth in design space, onto a context begun with beginDesign; faces lay their felt and names over it.
+export function drawFabric(ctx, fabric, seedId) {
   const { kind, colors } = fabricFor(fabric);
-  const rng = rngFor(seedId, 'fabric');
-  const ctx = beginPaint(canvas);
-  ctx.scale(canvas.width / DESIGN, canvas.height / DESIGN);
   ctx.fillStyle = colors[0];
   ctx.fillRect(0, 0, DESIGN, DESIGN);
-  PRINTS[kind](ctx, colors, rng);
+  PRINTS[kind](ctx, colors, rngFor(seedId, 'fabric'));
   weaveOverlay(ctx);
+}
+
+// The cloth alone: the print plus the weave, with no icon or name (D1). Fixed name and signature for #18.
+export function paintFabric(canvas, fabric, seedId) {
+  const ctx = beginDesign(canvas);
+  drawFabric(ctx, fabric, seedId);
   ctx.restore();
 }
 
@@ -298,18 +289,27 @@ export function paintWeaveNormal(canvas) {
   const strength = 0.6;
   const ctx = beginPaint(canvas);
   const image = ctx.createImageData(w, h);
+  const { data } = image;
+  const cosA = new Float64Array(w);
+  const sinA = new Float64Array(w);
+  for (let px = 0; px < w; px += 1) {
+    const a = (TAU * periods * (px + 0.5)) / w + phase * TAU;
+    cosA[px] = Math.cos(a);
+    sinA[px] = Math.sin(a);
+  }
   for (let py = 0; py < h; py += 1) {
     const b = (TAU * periods * (py + 0.5)) / h;
+    const sinB = Math.sin(b);
+    const cosB = Math.cos(b);
     for (let px = 0; px < w; px += 1) {
-      const a = (TAU * periods * (px + 0.5)) / w + phase * TAU;
-      const gx = strength * Math.cos(a) * Math.sin(b);
-      const gy = strength * Math.sin(a) * Math.cos(b);
+      const gx = strength * cosA[px] * sinB;
+      const gy = strength * sinA[px] * cosB;
       const len = Math.hypot(gx, gy, 1);
       const i = (py * w + px) * 4;
-      image.data[i] = Math.round((-gx / len * 0.5 + 0.5) * 255);
-      image.data[i + 1] = Math.round((-gy / len * 0.5 + 0.5) * 255);
-      image.data[i + 2] = Math.round((1 / len * 0.5 + 0.5) * 255);
-      image.data[i + 3] = 255;
+      data[i] = Math.round((-gx / len * 0.5 + 0.5) * 255);
+      data[i + 1] = Math.round((-gy / len * 0.5 + 0.5) * 255);
+      data[i + 2] = Math.round((1 / len * 0.5 + 0.5) * 255);
+      data[i + 3] = 255;
     }
   }
   ctx.putImageData(image, 0, 0);

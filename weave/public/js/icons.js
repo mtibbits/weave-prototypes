@@ -6,7 +6,7 @@ const circle = (cx, cy, r) => `M${cx - r} ${cy} A${r} ${r} 0 1 0 ${cx + r} ${cy}
 
 const felt = (tone, d) => ({ d, tone });
 
-function deepFreeze(value) {
+export function deepFreeze(value) {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(deepFreeze);
     Object.freeze(value);

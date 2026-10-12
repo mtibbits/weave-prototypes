@@ -53,34 +53,35 @@
       document.querySelector(`[data-grid="${grid}"]`).append(fig);
     }
 
+    // [name, width, height, painter] for each scene texture.
+    const TEXTURES = [
+      ['sashing', ...sashingSize(GEOMETRY), (c) => paintSashing(c, GEOMETRY)],
+      ['wood', 1024, 256, paintWood],
+      ['weave-normal', 512, 512, paintWeaveNormal],
+      ['shadow', 512, 512, paintShadow],
+    ];
+
+    function slotCanvas(grid, slot, id, kind, caption) {
+      const canvas = makeCanvas(512);
+      canvas.setAttribute('data-slot', String(slot));
+      canvas.setAttribute('data-id', id);
+      canvas.setAttribute('data-kind', kind);
+      figure(grid, canvas, caption);
+      return canvas;
+    }
+
     // The #20 contract: canvas[data-slot]:not([data-kind="tile"]) selects the faces, and canvas[data-texture]
     // the textures. Every canvas comes from makeCanvas, so its bytes can be read back and hashed.
     function buildCanvases() {
       const faces = entries.map((entry, slot) => {
-        const canvas = makeCanvas(512);
-        canvas.setAttribute('data-slot', String(slot));
-        canvas.setAttribute('data-id', entry ? entry.id : '');
-        canvas.setAttribute('data-kind', faceKind(entry));
-        figure('faces', canvas, `${slot}: ${entry ? entry.name : 'filler'} (${faceKind(entry)})`);
-        return canvas;
+        const kind = faceKind(entry);
+        const caption = `${slot}: ${entry ? entry.name : 'filler'} (${kind})`;
+        return { canvas: slotCanvas('faces', slot, entry ? entry.id : '', kind, caption), entry, kind };
       });
-      const tiles = [];
-      entries.forEach((entry, slot) => {
-        if (!entry) return;
-        const canvas = makeCanvas(512);
-        canvas.setAttribute('data-slot', String(slot));
-        canvas.setAttribute('data-id', entry.id);
-        canvas.setAttribute('data-kind', 'tile');
-        figure('tiles', canvas, `${slot}: ${entry.name} (${entry.status})`);
-        tiles.push({ canvas, entry });
-      });
-      const [sashW, sashH] = sashingSize(GEOMETRY);
-      const textures = [
-        ['sashing', sashW, sashH, (c) => paintSashing(c, GEOMETRY)],
-        ['wood', 1024, 256, paintWood],
-        ['weave-normal', 512, 512, paintWeaveNormal],
-        ['shadow', 512, 512, paintShadow],
-      ].map(([name, width, height, paint]) => {
+      const tiles = entries.flatMap((entry, slot) => (entry
+        ? [{ canvas: slotCanvas('tiles', slot, entry.id, 'tile', `${slot}: ${entry.name} (${entry.status})`), entry }]
+        : []));
+      const textures = TEXTURES.map(([name, width, height, paint]) => {
         const canvas = makeCanvas(width, height);
         canvas.setAttribute('data-texture', name);
         figure('textures', canvas, `${name} (${width} x ${height})`);
@@ -91,13 +92,13 @@
 
     let canvases = null;
     function paintAll() {
-      canvases.faces.forEach((canvas, slot) => paintFace(canvas, entries[slot], faceKind(entries[slot])));
+      canvases.faces.forEach(({ canvas, entry, kind }) => paintFace(canvas, entry, kind));
       canvases.tiles.forEach(({ canvas, entry }) => paintTile(canvas, entry));
       canvases.textures.forEach(({ canvas, paint }) => paint(canvas));
     }
 
     // The test hook.
-    window.WEAVE_FACES = { paintAll, entries };
+    window.WEAVE_FACES = { paintAll, entries, textures: TEXTURES };
 
     let painted = 'error';
     try {

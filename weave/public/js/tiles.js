@@ -1,7 +1,7 @@
 // WEAVE's block faces and dashboard tiles, the name rule they share, and the wait for the web fonts.
 // Painters draw onto the canvas they are handed and nothing else; see fabric.js for the canvas rules.
 import { NO_SAMPLE } from './dom.js';
-import { beginPaint, contextOf, makeCanvas, paintFabric } from './fabric.js';
+import { beginDesign, contextOf, DESIGN, drawFabric, makeCanvas, paintFabric } from './fabric.js';
 import { iconFor } from './icons.js';
 import { rngFor } from './random.js';
 
@@ -42,10 +42,23 @@ export const TILE_PAD = 40;
 export const TILE_NAME_PX = 40;
 export const TILE_NAME_MAX = 0.8; // of the tile's text column (the tile minus its padding)
 
-export const nameFont = (px) => `700 ${px}px "Instrument Sans", system-ui, sans-serif`;
+const sans = (px, weight = 700) => `${weight} ${px}px "Instrument Sans", system-ui, sans-serif`;
+export const nameFont = (px) => sans(px);
 
 // The smallest size a name is ever set at; below it, the text is drawn compressed into its width.
-export const nameFloor = (basePx) => Math.max(8, Math.round(basePx / 4));
+const nameFloor = (basePx) => Math.max(8, Math.round(basePx / 4));
+
+// The largest whole size from basePx down to the floor at which every line fits in maxWidth, set in `font`.
+function shrinkToFit(ctx, lines, maxWidth, basePx, font) {
+  const floor = nameFloor(basePx);
+  let px = basePx;
+  const fits = () => {
+    ctx.font = font(px);
+    return lines.every((line) => ctx.measureText(line).width <= maxWidth);
+  };
+  while (px > floor && !fits()) px -= 1;
+  return px;
+}
 
 // The one rule: a name that fits at basePx is one line; a single word is one line, shrunk; otherwise line 1
 // is the longest word prefix (at least one word) that fits at basePx and line 2 is the rest. px is the
@@ -65,9 +78,7 @@ export function fitName(ctx, name, maxWidth, basePx) {
     while (n < words.length - 1 && width(words.slice(0, n + 1).join(' '), basePx) <= maxWidth) n += 1;
     lines = [words.slice(0, n).join(' '), words.slice(n).join(' ')];
   }
-  const floor = nameFloor(basePx);
-  let px = basePx;
-  while (px > floor && lines.some((line) => width(line, px) > maxWidth)) px -= 1;
+  const px = shrinkToFit(ctx, lines, maxWidth, basePx, nameFont);
   ctx.font = saved;
   return { lines, px };
 }
@@ -81,7 +92,6 @@ export const TILE_SOON = 'Coming soon';
 export const FACE_SOON = 'coming soon';
 export const SUGGEST_TEXT = 'Suggest a panel';
 
-const DESIGN = 512;
 const INK = '#1E2422';
 const MUTED = '#5C625F';
 const TEAL = '#1D5E5B';
@@ -93,7 +103,7 @@ const THREAD = '#2A2420';
 const FLOSS = '#F7F1E3';
 const FELT = { base: '#1D5E5B', accent: '#C4623A', light: '#F3EEE4' };
 const chalkMark = (px) => `italic 400 ${px}px "Instrument Serif", Georgia, serif`;
-const sans = (px, weight = 700) => `${weight} ${px}px "Instrument Sans", system-ui, sans-serif`;
+const NAME_LIMIT = NAME_MAX * DESIGN;
 
 // A face's kind from its entry's status: live is sewn, and no entry is a filler.
 export function faceKind(entry) {
@@ -106,12 +116,6 @@ export function faceKind(entry) {
 export function barHeights(id) {
   const rng = rngFor(id, 'bars');
   return Array.from({ length: 7 }, () => 0.25 + 0.75 * rng());
-}
-
-function startDesign(canvas, clear) {
-  const ctx = beginPaint(canvas, { clear });
-  ctx.scale(canvas.width / DESIGN, canvas.height / DESIGN);
-  return ctx;
 }
 
 // Draws fitName's lines from `top` (each line's em box stacked at 1.1 px). At the floor the text is drawn
@@ -128,31 +132,37 @@ function setLines(ctx, { lines, px }, x, top, maxWidth, basePx, font = nameFont)
 // One line, shrunk to fit by the name rule's floor; never wrapped. `y` is its baseline at basePx.
 function fitLine(ctx, text, x, y, maxWidth, basePx, weight = 700) {
   const font = (px) => sans(px, weight);
-  let px = basePx;
-  ctx.font = font(px);
-  while (px > nameFloor(basePx) && ctx.measureText(text).width > maxWidth) {
-    px -= 1;
-    ctx.font = font(px);
-  }
+  const px = shrinkToFit(ctx, [text], maxWidth, basePx, font);
   setLines(ctx, { lines: [text], px }, x, y - px * 0.9, maxWidth, basePx, font);
 }
 
-// The satin-stitch sheen laid over an embroidered name: fine diagonal floss.
+// The satin-stitch sheen laid over an embroidered name: fine diagonal floss, drawn once.
+let flossTile = null;
 function satin(ctx) {
-  const tile = makeCanvas(6);
-  const t = contextOf(tile);
-  t.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-  t.lineWidth = 1.2;
-  t.beginPath();
-  t.moveTo(-1, 7);
-  t.lineTo(7, -1);
-  t.stroke();
-  return ctx.createPattern(tile, 'repeat');
+  if (!flossTile) {
+    flossTile = makeCanvas(6);
+    const t = contextOf(flossTile);
+    t.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    t.lineWidth = 1.2;
+    t.beginPath();
+    t.moveTo(-1, 7);
+    t.lineTo(7, -1);
+    t.stroke();
+  }
+  return ctx.createPattern(flossTile, 'repeat');
+}
+
+// Icon paths are frozen strings, so each is parsed into a Path2D once.
+const PATHS = new Map();
+function path(d) {
+  if (!PATHS.has(d)) PATHS.set(d, new Path2D(d));
+  return PATHS.get(d);
 }
 
 // The felt appliqué: tone fills with a soft drop shadow, a blanket stitch round each piece, then the running
 // stitch. Shadows ignore the transform, so they are scaled by hand (k device pixels per icon unit).
-function drawFelt(ctx, icon, x, y, size, k, dashOffset) {
+function drawFelt(ctx, icon, x, y, size, dashOffset) {
+  const k = (ctx.canvas.width / DESIGN) * (size / 100);
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(size / 100, size / 100);
@@ -162,7 +172,7 @@ function drawFelt(ctx, icon, x, y, size, k, dashOffset) {
   ctx.shadowOffsetY = 1.6 * k;
   for (const { d, tone } of icon.felt) {
     ctx.fillStyle = FELT[tone];
-    ctx.fill(new Path2D(d));
+    ctx.fill(path(d));
   }
   ctx.shadowColor = 'transparent';
   ctx.strokeStyle = THREAD;
@@ -170,11 +180,11 @@ function drawFelt(ctx, icon, x, y, size, k, dashOffset) {
   ctx.lineWidth = 0.8;
   ctx.setLineDash([2.4, 1.8]);
   ctx.lineDashOffset = dashOffset;
-  for (const { d } of icon.felt) ctx.stroke(new Path2D(d));
+  for (const { d } of icon.felt) ctx.stroke(path(d));
   ctx.strokeStyle = FLOSS;
   ctx.lineWidth = 1.1;
   ctx.setLineDash([3.5, 2.5]);
-  for (const d of icon.stitch) ctx.stroke(new Path2D(d));
+  for (const d of icon.stitch) ctx.stroke(path(d));
   ctx.restore();
 }
 
@@ -191,7 +201,7 @@ function drawChalk(ctx, icon, x, y, size, rng) {
     for (const { d } of icon.felt) {
       ctx.save();
       ctx.translate((rng() - 0.5) * 1.4, (rng() - 0.5) * 1.4);
-      ctx.stroke(new Path2D(d));
+      ctx.stroke(path(d));
       ctx.restore();
     }
   }
@@ -202,9 +212,8 @@ const ICON_AT = { x: 156, y: 176, size: 240 };
 const NAME_AT = { x: 48, y: 44 };
 
 function paintSewn(canvas, entry, rng) {
-  paintFabric(canvas, entry.fabric, entry.id);
-  const ctx = startDesign(canvas, false);
-  const k = canvas.width / DESIGN;
+  const ctx = beginDesign(canvas);
+  drawFabric(ctx, entry.fabric, entry.id);
   ctx.strokeStyle = FLOSS;
   ctx.globalAlpha = 0.8;
   ctx.lineWidth = 2.5;
@@ -213,49 +222,46 @@ function paintSewn(canvas, entry, rng) {
   ctx.strokeRect(16, 16, DESIGN - 32, DESIGN - 32);
   ctx.globalAlpha = 1;
   ctx.setLineDash([]);
-  const limit = NAME_MAX * DESIGN;
-  const fit = fitName(ctx, entry.name, limit, NAME_PX);
+  const fit = fitName(ctx, entry.name, NAME_LIMIT, NAME_PX);
   ctx.font = nameFont(fit.px);
-  const widest = Math.min(limit, Math.max(...fit.lines.map((line) => ctx.measureText(line).width)));
+  const widest = Math.min(NAME_LIMIT, Math.max(...fit.lines.map((line) => ctx.measureText(line).width)));
   ctx.fillStyle = LABEL;
   ctx.beginPath();
   ctx.roundRect(NAME_AT.x - 14, NAME_AT.y - 10, widest + 28, fit.px * (fit.lines.length * 1.1 + 0.2) + 20, 8);
   ctx.fill();
   ctx.fillStyle = INK;
-  setLines(ctx, fit, NAME_AT.x, NAME_AT.y, limit, NAME_PX);
+  setLines(ctx, fit, NAME_AT.x, NAME_AT.y, NAME_LIMIT, NAME_PX);
   ctx.fillStyle = satin(ctx);
-  setLines(ctx, fit, NAME_AT.x, NAME_AT.y, limit, NAME_PX);
-  drawFelt(ctx, iconFor(entry.icon), ICON_AT.x, ICON_AT.y, ICON_AT.size, k * (ICON_AT.size / 100), rng() * 4);
+  setLines(ctx, fit, NAME_AT.x, NAME_AT.y, NAME_LIMIT, NAME_PX);
+  drawFelt(ctx, iconFor(entry.icon), ICON_AT.x, ICON_AT.y, ICON_AT.size, rng() * 4);
   ctx.restore();
 }
 
 function paintPlanned(canvas, entry, rng) {
-  paintFabric(canvas, entry.fabric, entry.id);
-  const ctx = startDesign(canvas, false);
+  const ctx = beginDesign(canvas);
+  drawFabric(ctx, entry.fabric, entry.id);
   ctx.fillStyle = MUSLIN;
   ctx.globalAlpha = 0.62;
   ctx.fillRect(0, 0, DESIGN, DESIGN);
   ctx.globalAlpha = 1;
   drawChalk(ctx, iconFor(entry.icon), ICON_AT.x, ICON_AT.y, ICON_AT.size, rng);
-  const limit = NAME_MAX * DESIGN;
   ctx.fillStyle = CHALK;
-  setLines(ctx, fitName(ctx, entry.name, limit, NAME_PX), NAME_AT.x, NAME_AT.y, limit, NAME_PX);
+  setLines(ctx, fitName(ctx, entry.name, NAME_LIMIT, NAME_PX), NAME_AT.x, NAME_AT.y, NAME_LIMIT, NAME_PX);
   ctx.font = nameFont(28);
   ctx.fillText(FACE_SOON, NAME_AT.x, 468);
   ctx.restore();
 }
 
 function paintSuggest(canvas, entry) {
-  paintFabric(canvas, 'muslin', entry.id);
-  const ctx = startDesign(canvas, false);
+  const ctx = beginDesign(canvas);
+  drawFabric(ctx, 'muslin', entry.id);
   ctx.fillStyle = CHALK;
   ctx.textAlign = 'center';
   ctx.globalAlpha = 0.85;
   ctx.font = chalkMark(240);
   ctx.fillText('?', DESIGN / 2, 320);
   ctx.globalAlpha = 1;
-  const limit = NAME_MAX * DESIGN;
-  setLines(ctx, fitName(ctx, SUGGEST_TEXT, limit, 36), DESIGN / 2, 372, limit, 36);
+  setLines(ctx, fitName(ctx, SUGGEST_TEXT, NAME_LIMIT, 36), DESIGN / 2, 372, NAME_LIMIT, 36);
   ctx.restore();
 }
 
@@ -292,15 +298,18 @@ function tileName(ctx, text, x = TILE_PAD, top = 176) {
   setLines(ctx, fitName(ctx, text, limit, TILE_NAME_PX), x, top, limit, TILE_NAME_PX);
 }
 
-function liveTile(ctx, canvas, entry) {
-  const swatch = makeCanvas(canvas.width);
+// The live tile's fabric strip is cut from a whole block painted on one reused scratch canvas.
+let swatch = null;
+function liveTile(ctx, entry) {
+  const { width } = ctx.canvas;
+  if (!swatch || swatch.width !== width) swatch = makeCanvas(width);
   paintFabric(swatch, entry.fabric, entry.id);
   ctx.drawImage(swatch, 0, 0, swatch.width, (swatch.width * 120) / DESIGN, 0, 0, DESIGN, 120);
   ctx.fillStyle = LABEL;
   ctx.beginPath();
   ctx.arc(TILE_PAD + 40, 120, 46, 0, Math.PI * 2);
   ctx.fill();
-  drawFelt(ctx, iconFor(entry.icon), TILE_PAD + 4, 84, 72, (canvas.width / DESIGN) * 0.72, 0);
+  drawFelt(ctx, iconFor(entry.icon), TILE_PAD + 4, 84, 72, 0);
   tileName(ctx, entry.name);
   if (entry.sample) {
     ctx.fillStyle = TEAL;
@@ -325,10 +334,10 @@ function liveTile(ctx, canvas, entry) {
   ctx.fillText(OPEN_CUE, DESIGN - TILE_PAD, 476);
 }
 
-function plannedTile(ctx, canvas, entry) {
+function plannedTile(ctx, entry) {
   dashedCard(ctx);
   ctx.globalAlpha = 0.55;
-  drawFelt(ctx, iconFor(entry.icon), TILE_PAD + 4, 60, 80, (canvas.width / DESIGN) * 0.8, 0);
+  drawFelt(ctx, iconFor(entry.icon), TILE_PAD + 4, 60, 80, 0);
   ctx.globalAlpha = 1;
   tileName(ctx, entry.name);
   ctx.fillStyle = MUTED;
@@ -350,7 +359,7 @@ const TILES = { live: liveTile, planned: plannedTile, suggest: suggestTile };
 // Paints one dashboard tile: a rounded card with transparent corners. No entry (or an unknown status) leaves
 // the canvas clear. Only the bars use fillRect.
 export function paintTile(canvas, entry) {
-  const ctx = startDesign(canvas, true);
+  const ctx = beginDesign(canvas);
   const paint = entry && Object.hasOwn(TILES, entry.status) ? TILES[entry.status] : null;
   if (paint) {
     const card = new Path2D();
@@ -358,7 +367,7 @@ export function paintTile(canvas, entry) {
     ctx.fillStyle = PAPER;
     ctx.fill(card);
     ctx.clip(card);
-    paint(ctx, canvas, entry);
+    paint(ctx, entry);
   }
   ctx.restore();
 }

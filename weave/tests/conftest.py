@@ -41,17 +41,20 @@ def browser_no_webgl(playwright_session):
     b.close()
 
 
-@pytest.fixture
-def make_page(browser):
-    contexts = []
-
-    def _make(target_browser=None, **context_args):
-        args = {"viewport": {"width": 1440, "height": 900}, **context_args}
-        ctx = (target_browser or browser).new_context(**args)
+def page_factory(browser, contexts):
+    """make(target_browser=None, **context_args): a page in a new 1440x900 context, recorded in `contexts`."""
+    def make(target_browser=None, **context_args):
+        ctx = (target_browser or browser).new_context(**{"viewport": {"width": 1440, "height": 900}, **context_args})
         contexts.append(ctx)
         return ctx.new_page()
 
-    yield _make
+    return make
+
+
+@pytest.fixture
+def make_page(browser):
+    contexts = []
+    yield page_factory(browser, contexts)
     for ctx in contexts:
         ctx.close()
 
@@ -79,15 +82,9 @@ def paint_js(make_page, base_url):
 def faces_baseline(browser, base_url):
     """The default faces page's canvas hashes, from one fresh context with the real fonts and no warnings."""
     contexts = []
-
-    def make(**context_args):
-        ctx = browser.new_context(**{"viewport": {"width": 1440, "height": 900}, **context_args})
-        contexts.append(ctx)
-        return ctx.new_page()
-
     messages = []
     try:
-        page, errors = open_faces(make, base_url, messages=messages)
+        page, errors = open_faces(page_factory(browser, contexts), base_url, messages=messages)
         assert errors == [] and font_warnings(messages) == []
         assert page.get_attribute("body", "data-painted") == "fonts"
         return canvas_hashes(page)

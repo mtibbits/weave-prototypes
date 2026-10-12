@@ -89,9 +89,9 @@ PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 FONT_WARNING_PREFIX = "WEAVE: the web font"
 
 
-def collect_console(page):
-    """Record every console message from now on as (type, text); returns the live list."""
-    messages = []
+def collect_console(page, messages=None):
+    """Record every console message from now on as (type, text) into `messages` (a new list if None); returns it."""
+    messages = [] if messages is None else messages
     page.on("console", lambda msg: messages.append((msg.type, msg.text)))
     return messages
 
@@ -113,18 +113,25 @@ LINK_CSS = r"""
     });
 """
 
-# Page globals: sha256Canvas(c) hashes the canvas's RGBA bytes; isUniform(c) is true when every pixel is equal.
-SHA256_JS = r"""
-    window.sha256Canvas = async (c) => {
+# The one definition of the canvas checks, for any evaluate body: sha256Canvas(c) hashes the canvas's RGBA bytes;
+# isUniform(c) is true when every pixel is equal; canvasKey(c) names a faces-page canvas as face:<slot> |
+# tile:<slot> | texture:<name>.
+CANVAS_JS = r"""
+    const sha256Canvas = async (c) => {
       const bytes = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
       return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
     };
-    window.isUniform = (c) => {
+    const isUniform = (c) => {
       const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
       return px.every((v) => v === px[0]);
     };
+    const canvasKey = (c) => (c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
+      : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`);
 """
+
+# The same checks as page globals, for paint_js bodies.
+SHA256_JS = CANVAS_JS + "window.sha256Canvas = sha256Canvas; window.isUniform = isUniform;"
 
 
 def open_paint(make_page, base_url, **context_args):
@@ -166,7 +173,7 @@ def open_faces(make_page, base_url, panels_body=None, wait_until="load", before_
     page = make_page(**context_args)
     errors = collect_errors(page)
     if messages is not None:
-        page.on("console", lambda msg: messages.append((msg.type, msg.text)))
+        collect_console(page, messages)
     if panels_body is not None:
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     if before_goto is not None:
@@ -178,17 +185,13 @@ def open_faces(make_page, base_url, panels_body=None, wait_until="load", before_
 
 
 # Every painted canvas on the faces page as face:<slot> | tile:<slot> | texture:<name> -> SHA-256 of its bytes.
-CANVAS_HASHES = r"""async () => {
-    const out = {};
-    for (const c of document.querySelectorAll('canvas[data-slot], canvas[data-texture]')) {
-      const key = c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
-        : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`;
-      const bytes = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-      out[key] = [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
-    }
+PAGE_CANVASES = "[...document.querySelectorAll('canvas[data-slot], canvas[data-texture]')]"
+
+CANVAS_HASHES = f"""async () => {{ {CANVAS_JS}
+    const out = {{}};
+    for (const c of {PAGE_CANVASES}) out[canvasKey(c)] = await sha256Canvas(c);
     return out;
-}"""
+}}"""
 
 
 def canvas_hashes(page):
@@ -197,11 +200,7 @@ def canvas_hashes(page):
 
 def uniform_canvases(page):
     """Keys (as canvas_hashes names them) of canvases whose every pixel is the same."""
-    return page.evaluate(r"""() => [...document.querySelectorAll('canvas[data-slot], canvas[data-texture]')]
-      .filter((c) => { const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
-                       return px.every((v) => v === px[0]); })
-      .map((c) => c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
-        : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`)""")
+    return page.evaluate(f"() => {{ {CANVAS_JS} return {PAGE_CANVASES}.filter(isUniform).map(canvasKey); }}")
 
 
 # Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
