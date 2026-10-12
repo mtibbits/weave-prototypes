@@ -8,6 +8,8 @@ const LOAD_FAILED = 'WEAVE: the 3D quilt could not load, so the still image stay
 const WEBGL_FAILED = 'WEAVE: WebGL setup failed, so the still image stays.';
 
 const hooks = readHooks(window.location.search);
+// ?frame=still: the capture recipe (D19) shows the stage alone, filling the viewport.
+if (hooks.still) document.documentElement.dataset.frame = 'still';
 const result = cleanPanels(window.WEAVE_PANELS);
 if (result.error) console.error(result.error);
 result.warnings.forEach((warning) => console.warn(warning));
@@ -98,7 +100,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   resize();
 
   function draw() {
-    quilt.setAmbient({ sway: M.swayAngle(clock), tiltX: tilt.x, tiltY: tilt.y });
+    quilt.setAmbient({ sway: hooks.rest ? 0 : M.swayAngle(clock), tiltX: tilt.x, tiltY: tilt.y });
     quilt.render();
   }
 
@@ -135,17 +137,21 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     last = 0;
   }
 
-  canvas.addEventListener('pointermove', (event) => {
-    const r = canvas.getBoundingClientRect();
-    const x = ((event.clientX - r.left) / r.width) * 2 - 1;
-    const y = 1 - ((event.clientY - r.top) / r.height) * 2;
-    tiltTarget.x = -y * M.AMBIENT.tiltX;
-    tiltTarget.y = x * M.AMBIENT.tiltY;
-  });
-  canvas.addEventListener('pointerleave', () => {
-    tiltTarget.x = 0;
-    tiltTarget.y = 0;
-  });
+  // ?pose=rest (D34) holds the quilt at rest: no sway, and the pointer is ignored, so the tilt stays 0. The loop
+  // and the watchdog run as usual.
+  if (!hooks.rest) {
+    canvas.addEventListener('pointermove', (event) => {
+      const r = canvas.getBoundingClientRect();
+      const x = ((event.clientX - r.left) / r.width) * 2 - 1;
+      const y = 1 - ((event.clientY - r.top) / r.height) * 2;
+      tiltTarget.x = -y * M.AMBIENT.tiltX;
+      tiltTarget.y = x * M.AMBIENT.tiltY;
+    });
+    canvas.addEventListener('pointerleave', () => {
+      tiltTarget.x = 0;
+      tiltTarget.y = 0;
+    });
+  }
   const onContextLost = (event) => {
     event.preventDefault();
     stop('context-lost');
