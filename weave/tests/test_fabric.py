@@ -28,9 +28,8 @@ def get_context_strays(text):
 
 def painter_sources():
     """The painters and the dev pages: every file that may create a canvas it reads back."""
-    files = sorted(JS.glob("random.js")) + sorted(JS.glob("icons.js")) + sorted(JS.glob("fabric.js")) \
-        + sorted(JS.glob("tiles.js")) + sorted(DEV.glob("*.html"))
-    assert JS / "fabric.js" in files
+    files = [JS / name for name in ("random.js", "icons.js", "fabric.js", "tiles.js")] + sorted(DEV.glob("*.html"))
+    assert all(path.is_file() for path in files) and DEV / "faces.html" in files, files
     return files
 
 

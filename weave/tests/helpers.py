@@ -145,6 +145,59 @@ def open_paint(make_page, base_url, **context_args):
     return run
 
 
+FACES = "/dev/faces.html"
+
+
+def open_faces(make_page, base_url, panels_body=None, wait_until="load", before_goto=None, messages=None,
+               wait_painted=True, **context_args):
+    """Open the dev faces page and wait until it has painted (body[data-painted]); returns (page, errors).
+
+    `panels_body` swaps panels.js as in open_page. `before_goto(page)` runs after that route and before
+    navigation: routes, clock.set_fixed_time and init scripts all go through this one door. Pass a list as
+    `messages` to collect every (type, text) console message into it. The font tests hold a font (which
+    blocks `load`), so they pass wait_until="commit" and wait_painted=False and time the paint themselves.
+    """
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    if messages is not None:
+        page.on("console", lambda msg: messages.append((msg.type, msg.text)))
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    if before_goto is not None:
+        before_goto(page)
+    page.goto(base_url + FACES, wait_until=wait_until)
+    if wait_painted:
+        page.wait_for_selector("body[data-painted]", state="attached", timeout=15000)
+    return page, errors
+
+
+# Every painted canvas on the faces page as face:<slot> | tile:<slot> | texture:<name> -> SHA-256 of its bytes.
+CANVAS_HASHES = r"""async () => {
+    const out = {};
+    for (const c of document.querySelectorAll('canvas[data-slot], canvas[data-texture]')) {
+      const key = c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
+        : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`;
+      const bytes = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      out[key] = [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    return out;
+}"""
+
+
+def canvas_hashes(page):
+    return page.evaluate(CANVAS_HASHES)
+
+
+def uniform_canvases(page):
+    """Keys (as canvas_hashes names them) of canvases whose every pixel is the same."""
+    return page.evaluate(r"""() => [...document.querySelectorAll('canvas[data-slot], canvas[data-texture]')]
+      .filter((c) => { const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
+                       return px.every((v) => v === px[0]); })
+      .map((c) => c.dataset.texture !== undefined ? `texture:${c.dataset.texture}`
+        : `${c.dataset.kind === 'tile' ? 'tile' : 'face'}:${c.dataset.slot}`)""")
+
+
 # Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
 DEFAULTS_JS = r"""
     if (!window.WEAVE_PANELS) {

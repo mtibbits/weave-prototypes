@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WEAVE faces (dev)</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/public/css/weave.css">
+  <style>
+    main { padding-block: 24px 48px; }
+    h1, h2 { font-family: var(--serif); font-weight: 400; }
+    h1 { font-size: 40px; margin: 0 0 8px; }
+    h2 { font-size: 28px; margin: 32px 0 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
+    .grid[data-grid="textures"] { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+    figure { margin: 0; }
+    canvas { display: block; width: 100%; height: auto; border-radius: 4px; background: repeating-conic-gradient(#e6e0d4 0 25%, #f6f2ea 0 50%) 0 0 / 16px 16px; }
+    figcaption { margin-top: 6px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  </style>
+  <script src="/public/panels.js"></script>
+</head>
+<body>
+  <main>
+    <h1>WEAVE faces (dev)</h1>
+    <p>From the repo root, run python tools/serve.py weave (add --port 8017 if 8000 is busy), then open /dev/faces.html. This page is dev-only and never ships.</p>
+    <h2>Block faces</h2>
+    <div class="grid" data-grid="faces"></div>
+    <h2>Dashboard tiles</h2>
+    <div class="grid" data-grid="tiles"></div>
+    <h2>Textures</h2>
+    <div class="grid" data-grid="textures"></div>
+  </main>
+  <script type="module">
+    import { cleanPanels } from '/public/js/catalog.js';
+    import { makeCanvas, paintSashing, paintShadow, paintWeaveNormal, paintWood, sashingSize } from '/public/js/fabric.js';
+    import { faceKind, fontsReady, paintFace, paintTile } from '/public/js/tiles.js';
+
+    // Until #7's LAYOUT, which carries these five names.
+    const GEOMETRY = { cols: 4, rows: 3, block: 1.0, sashing: 0.14, border: 0.14 };
+    const BLOCKS = 12;
+
+    const result = cleanPanels(window.WEAVE_PANELS);
+    if (result.error) console.error(result.error);
+    result.warnings.forEach((warning) => console.warn(warning));
+    const entries = result.panels.slice(0, BLOCKS);
+    while (entries.length < BLOCKS) entries.push(null);
+
+    function figure(grid, canvas, caption) {
+      const fig = document.createElement('figure');
+      const text = document.createElement('figcaption');
+      text.textContent = caption;
+      fig.append(canvas, text);
+      document.querySelector(`[data-grid="${grid}"]`).append(fig);
+    }
+
+    // The #20 contract: canvas[data-slot]:not([data-kind="tile"]) selects the faces, and canvas[data-texture]
+    // the textures. Every canvas comes from makeCanvas, so its bytes can be read back and hashed.
+    function buildCanvases() {
+      const faces = entries.map((entry, slot) => {
+        const canvas = makeCanvas(512);
+        canvas.setAttribute('data-slot', String(slot));
+        canvas.setAttribute('data-id', entry ? entry.id : '');
+        canvas.setAttribute('data-kind', faceKind(entry));
+        figure('faces', canvas, `${slot}: ${entry ? entry.name : 'filler'} (${faceKind(entry)})`);
+        return canvas;
+      });
+      const tiles = [];
+      entries.forEach((entry, slot) => {
+        if (!entry) return;
+        const canvas = makeCanvas(512);
+        canvas.setAttribute('data-slot', String(slot));
+        canvas.setAttribute('data-id', entry.id);
+        canvas.setAttribute('data-kind', 'tile');
+        figure('tiles', canvas, `${slot}: ${entry.name} (${entry.status})`);
+        tiles.push({ canvas, entry });
+      });
+      const [sashW, sashH] = sashingSize(GEOMETRY);
+      const textures = [
+        ['sashing', sashW, sashH, (c) => paintSashing(c, GEOMETRY)],
+        ['wood', 1024, 256, paintWood],
+        ['weave-normal', 512, 512, paintWeaveNormal],
+        ['shadow', 512, 512, paintShadow],
+      ].map(([name, width, height, paint]) => {
+        const canvas = makeCanvas(width, height);
+        canvas.setAttribute('data-texture', name);
+        figure('textures', canvas, `${name} (${width} x ${height})`);
+        return { canvas, paint };
+      });
+      return { faces, tiles, textures };
+    }
+
+    let canvases = null;
+    function paintAll() {
+      canvases.faces.forEach((canvas, slot) => paintFace(canvas, entries[slot], faceKind(entries[slot])));
+      canvases.tiles.forEach(({ canvas, entry }) => paintTile(canvas, entry));
+      canvases.textures.forEach(({ canvas, paint }) => paint(canvas));
+    }
+
+    // The test hook.
+    window.WEAVE_FACES = { paintAll, entries };
+
+    let painted = 'error';
+    try {
+      const ok = await fontsReady();
+      canvases = buildCanvases();
+      paintAll();
+      painted = ok ? 'fonts' : 'fallback';
+    } finally {
+      // Set even when painting throws, so a waiting test fails on the error rather than a timeout.
+      document.body.dataset.painted = painted;
+    }
+  </script>
+</body>
+</html>
