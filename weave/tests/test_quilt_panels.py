@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import open_live, weave
+from helpers import DEFAULT_IDS, open_live, weave
 
 SHIPPED = (Path(__file__).resolve().parents[1] / "public" / "panels.js").read_text(encoding="utf-8")
 EDITS = """
@@ -38,8 +38,6 @@ SLOT_BODIES = {
     "thirteen": SHIPPED + "\nwindow.WEAVE_PANELS.panels.push({ id: 'extra', name: 'Extra', status: 'planned', sample: null });\n",
     "broken": "window.WEAVE_PANELS = {",
 }
-DEFAULT_IDS = ["manpower", "hiring", "training", "awards", "promotions", "travel", "feedback", "actions",
-               "oversight", "access", "desks", "suggest"]
 
 
 @pytest.mark.parametrize("case", ["ten", "thirteen", "broken"])

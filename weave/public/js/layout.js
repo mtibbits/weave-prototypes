@@ -104,11 +104,10 @@ export function moveItem(order, from, to) {
 // The slot whose centre is nearest (x, y) in that mode's grid; ties go to the lower index, an unknown mode
 // counts as 'quilt', and a point that compares with nothing (NaN) gives 0, so the result is always 0-11.
 export function nearestSlot(x, y, mode = 'quilt') {
-  const grid = mode === 'tiles' ? 'tiles' : 'quilt';
   let best = 0;
   let bestD = Infinity;
   for (let i = 0; i < LAYOUT.slots; i += 1) {
-    const [cx, cy] = slotCentre(i, grid);
+    const [cx, cy] = slotCentre(i, mode);
     const d = (x - cx) ** 2 + (y - cy) ** 2;
     if (d < bestD) {
       best = i;

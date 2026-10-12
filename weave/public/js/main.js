@@ -30,8 +30,10 @@ async function startHero() {
   setHeroState(stage, hint, 'still', 'loading');
   let modules;
   try {
-    // Dynamic only: the still path must never request Three.js or the scene.
-    const [scene, motion, tiles] = await Promise.all([import('./scene.js'), import('./motion.js'), import('./tiles.js'),
+    // Dynamic only: the still path must never request Three.js or the scene. The font wait (which never rejects;
+    // false keeps the fallback font for the session, so a late font never repaints the faces) overlaps the rest.
+    const [scene, motion, tiles] = await Promise.all([import('./scene.js'), import('./motion.js'),
+      import('./tiles.js').then(async (module) => { await module.fontsReady(); return module; }),
       import('three'), import('./layout.js')]);
     modules = { scene, motion, tiles };
   } catch (err) {
@@ -39,8 +41,6 @@ async function startHero() {
     setHeroState(stage, hint, 'still', 'load-failed');
     return;
   }
-  // false keeps the fallback font for the session: a late font never repaints the faces.
-  await modules.tiles.fontsReady();
   startLive(modules, fillSlots(result.panels));
 }
 
@@ -91,9 +91,6 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     const height = stage.clientHeight;
     if (!width || !height) return;
     quilt.resize(width, height, Math.min(window.devicePixelRatio || 1, S.MAX_PIXEL_RATIO));
-    // Resizing clears the canvas, and a ResizeObserver runs after this frame's render and before it paints, so
-    // redraw the current pose now (uncounted), whether or not a frame is coming: else the quilt flickers to paper.
-    if (!stopped) draw();
   };
   const sizeObserver = new ResizeObserver(resize);
   sizeObserver.observe(stage);

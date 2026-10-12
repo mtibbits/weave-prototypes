@@ -130,16 +130,19 @@ def run(report, base, headless):
         browser.close()
 
 
+def budgets_for(measures):
+    """BUDGETS, with frame_median_ms set from the measured baseline when there is one."""
+    baseline = measures.get("baseline_frame_median_ms")
+    return dict(BUDGETS) if baseline is None else {**BUDGETS, "frame_median_ms": frame_budget(baseline)}
+
+
 def check(report):
     """Every failing row of `report`, named by its key; pure, and closed: a missing measure or state fails."""
     measures, states = report.get("measures", {}), report.get("states", {})
     failures = []
-    budgets = dict(BUDGETS)
-    baseline = measures.get("baseline_frame_median_ms")
-    if baseline is None:
+    budgets = budgets_for(measures)
+    if measures.get("baseline_frame_median_ms") is None:
         failures.append("baseline_frame_median_ms is missing, so frame_median_ms is checked against 16.7")
-    else:
-        budgets["frame_median_ms"] = frame_budget(baseline)
     idle = states.get("desktop_after_idle")
     idle_ok = isinstance(idle, dict) and idle.get("state") == "live" and idle.get("frames_rose") is True
     for key, limit in budgets.items():
@@ -171,9 +174,7 @@ def main():
         server.shutdown()
         server.server_close()
     report["measures"]["still_bytes"] = (PUBLIC / "assets" / "weave-still.jpg").stat().st_size
-    baseline = report["measures"].get("baseline_frame_median_ms")
-    report["budgets"] = {**BUDGETS, "frame_median_ms": frame_budget(baseline) if baseline is not None
-                         else BUDGETS["frame_median_ms"]}
+    report["budgets"] = budgets_for(report["measures"])
     report["failures"] = check(report)
     (OUT / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({"measures": report["measures"], "states": report["states"]}, indent=2))

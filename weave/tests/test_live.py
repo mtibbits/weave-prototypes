@@ -1,5 +1,5 @@
 """The live loop: Pause and Play, the one clock, and idling when the tab is hidden or the stage is off screen."""
-from helpers import contrast_failures, corner_z, focus_failures, frames, ink_fraction, open_live, weave
+from helpers import contrast_failures, corner_z, focus_failures, frames, ink_fraction, open_live, rising, weave
 
 FIXED = "2026-10-09T09:00:00"
 
@@ -18,12 +18,6 @@ SET_HIDDEN = r"""(hidden) => {
     document.dispatchEvent(new Event('visibilitychange'));
     return Number(document.querySelector('[data-hero]').dataset.heroFrames || 0);
 }"""
-
-
-def rising(page, wait=600):
-    before = frames(page)
-    page.wait_for_timeout(wait)
-    return frames(page) > before
 
 
 def test_pause_freezes_motion_and_play_resumes_without_a_jump(make_page, base_url):

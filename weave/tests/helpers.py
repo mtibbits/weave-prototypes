@@ -3,6 +3,9 @@ import struct
 import zlib
 
 LINEN = (243, 238, 228)
+# The shipped panels' ids, in file order.
+DEFAULT_IDS = ["manpower", "hiring", "training", "awards", "promotions", "travel", "feedback", "actions",
+               "oversight", "access", "desks", "suggest"]
 
 
 def collect_errors(page):
@@ -270,6 +273,13 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
 def frames(page):
     """The live loop's counted frames (data-hero-frames)."""
     return page.eval_on_selector("[data-hero]", "el => Number(el.dataset.heroFrames || 0)")
+
+
+def rising(page, wait=600):
+    """Whether the live loop counts more frames after `wait` ms."""
+    before = frames(page)
+    page.wait_for_timeout(wait)
+    return frames(page) > before
 
 
 def weave(page, expr):

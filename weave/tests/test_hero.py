@@ -1,12 +1,10 @@
 """The hero contract: the still path and its reasons, going live on desktop, the hooks, and every runtime fallback."""
 import pytest
 
-from helpers import (HOME, LOAD_FAILED, PAUSE_NAME, WEBGL_FAILED, collect_errors, frames, hero_result,
-                     hidden_by_attribute, ink_fraction, open_live, wait_for_reason, weave)
+from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, WEBGL_FAILED, collect_errors, frames, hero_result,
+                     hidden_by_attribute, ink_fraction, open_live, rising, wait_for_reason, weave)
 
 STILL_HINT = "Your browser shows a picture of the quilt. The panels below have everything."
-DEFAULT_IDS = ["manpower", "hiring", "training", "awards", "promotions", "travel", "feedback", "actions",
-               "oversight", "access", "desks", "suggest"]
 
 
 def assert_still_page(page):
@@ -67,9 +65,7 @@ def test_goes_live_on_desktop(make_page, base_url):
     canvas = page.locator("[data-hero] canvas")
     assert canvas.count() == 1 and canvas.get_attribute("aria-hidden") == "true"
     assert page.locator("[data-pause]").is_visible()
-    first = frames(page)
-    page.wait_for_timeout(600)
-    assert frames(page) > first
+    assert rising(page)
     assert page.evaluate("performance.getEntriesByName('weave:first-live-frame', 'mark').length") == 1
     assert page.eval_on_selector("[data-hero]", "el => el.classList.contains('is-live')") is True
     page.wait_for_function("getComputedStyle(document.querySelector('.hero-still')).opacity === '0'", timeout=5000)

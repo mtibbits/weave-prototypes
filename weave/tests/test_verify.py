@@ -27,7 +27,7 @@ def verify():
         sys.path[:] = saved
 
 
-def good_report(verify):
+def good_report():
     """A report that passes every row, built from the bars themselves."""
     return {
         "measures": {"baseline_frame_median_ms": 16.6, "home_transfer_bytes": 950_000, "first_live_frame_ms": 900.0,
@@ -60,30 +60,36 @@ def test_frame_budget_is_the_display_floor_or_baseline_plus_one(verify):
     assert verify.frame_budget(17.5) == 18.5
 
 
+def test_budgets_for_takes_the_frame_median_from_the_baseline(verify):
+    assert verify.budgets_for({}) == verify.BUDGETS
+    budgets = verify.budgets_for({"baseline_frame_median_ms": 17.5})
+    assert budgets == {**verify.BUDGETS, "frame_median_ms": 18.5}
+
+
 def test_check_flags_each_failing_row(verify):
-    assert verify.check(good_report(verify)) == []
+    assert verify.check(good_report()) == []
     for key, limit in verify.BUDGETS.items():
-        report = good_report(verify)
+        report = good_report()
         bar = verify.frame_budget(report["measures"]["baseline_frame_median_ms"]) if key == "frame_median_ms" else limit
         report["measures"][key] = bar * 1.5 + 1
         failures = verify.check(report)
         assert len(failures) == 1 and key in failures[0], (key, failures)
     for key in [*verify.BUDGETS, "baseline_frame_median_ms", "still_size"]:
-        report = good_report(verify)
+        report = good_report()
         del report["measures"][key]
         assert any(key in failure for failure in verify.check(report)), key
-    report = good_report(verify)
+    report = good_report()
     report["measures"]["still_size"] = [1599, 1000]
     assert any("still_size" in failure for failure in verify.check(report))
-    report = good_report(verify)
+    report = good_report()
     report["states"]["desktop"] = ["still", "too-slow"]
     assert any("desktop" in failure for failure in verify.check(report))
-    report = good_report(verify)
+    report = good_report()
     report["states"]["phone_no_horizontal_scroll"] = False
     assert any("phone" in failure for failure in verify.check(report))
     for idle in ({"state": "still", "reason": "too-slow", "frames_rose": False},
                  {"state": "live", "reason": "ok", "frames_rose": False}, None):
-        report = good_report(verify)
+        report = good_report()
         report["states"]["desktop_after_idle"] = idle
         failures = verify.check(report)
         # w302: the hook outlives the teardown, so the frame rows count only on a quilt still live and running.

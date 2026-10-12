@@ -266,10 +266,14 @@ export function buildQuilt(renderer, { slots }) {
     group.position.copy(pivot).applyQuaternion(group.quaternion).negate().add(pivot);
   }
 
+  // Resizing clears the canvas, so the current pose is redrawn at once (uncounted): a ResizeObserver runs after
+  // the frame's render and before the paint, and without this the quilt flickers to paper on a live resize.
   function resize(width, height, pixelRatio) {
-    renderer.setPixelRatio(pixelRatio);
+    // setPixelRatio resizes the buffer itself, so it runs only when the ratio changes.
+    if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height, false);
     fitCamera(camera, width / height);
+    render();
   }
 
   function render() {
