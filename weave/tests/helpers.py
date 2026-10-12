@@ -84,6 +84,20 @@ HOME = "/public/index.html"
 
 PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 
+# Loads the shipped panels.js (once per page) and binds DEFAULTS to its entries through #5's cleanPanels.
+DEFAULTS_JS = r"""
+    if (!window.WEAVE_PANELS) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = '/public/panels.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.append(s);
+      });
+    }
+    const DEFAULTS = (await import('/public/js/catalog.js')).cleanPanels(window.WEAVE_PANELS).panels;
+"""
+
 
 def hidden_by_attribute(locator):
     """True when the element carries `hidden` AND that actually removes it from layout (not just an empty box)."""
