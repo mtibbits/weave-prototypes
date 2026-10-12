@@ -14,6 +14,7 @@ FRONT_PAGE = ROOT / "site"
 PROTOTYPES = {
     "coalesce": ROOT / "coalesce" / "public",
     "weave": ROOT / "weave" / "public",
+    "blazeahead": ROOT / "blazeahead" / "public",
 }
 
 
@@ -29,7 +30,7 @@ def build(out):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Assemble the Pages site from the front page and both prototypes.")
+    parser = argparse.ArgumentParser(description="Assemble the Pages site from the front page and every prototype.")
     parser.add_argument("--out", default=str(ROOT / "_site"))
     args = parser.parse_args()
     out = build(args.out)

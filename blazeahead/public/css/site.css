@@ -1,0 +1,201 @@
+/* blazeAhead site: one dark night-forest theme. Fraunces for display, Figtree for text. */
+@font-face { font-family: 'Fraunces'; src: url('../fonts/Fraunces.woff2') format('woff2'); font-weight: 300 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Fraunces'; src: url('../fonts/Fraunces-Italic.woff2') format('woff2'); font-weight: 300 700; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('../fonts/Figtree.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
+
+:root {
+  --ink: #0C171B;
+  --ink-deep: #081013;
+  --panel: #13232A;
+  --panel-2: #172B33;
+  --line: #28404A;
+  --text: #EEE7D8;
+  --muted: #A9B8B5;
+  --amber: #FFB23F;
+  --amber-hot: #FFC76E;
+  --blue: #4AA8FF;
+  --fog: #0E1C24;
+  --radius: 12px;
+  --display: 'Fraunces', Georgia, serif;
+  --body: 'Figtree', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--ink); }
+body { margin: 0; background: var(--ink); color: var(--text); font-family: var(--body); font-size: 17px; line-height: 1.55; }
+a { color: var(--amber); }
+a:hover { color: var(--amber-hot); }
+:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+img { max-width: 100%; }
+code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 0.92em; background: var(--panel-2); padding: 0.1em 0.35em; border-radius: 5px; }
+
+.skip-link { position: absolute; left: 12px; top: -48px; z-index: 50; background: var(--amber); color: var(--ink); padding: 8px 14px; border-radius: 8px; font-weight: 600; text-decoration: none; }
+.skip-link:focus { top: 12px; }
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- header, buttons, footer */
+.site-header { display: flex; align-items: center; gap: 28px; padding: 14px clamp(20px, 3vw, 40px); background: var(--ink); border-bottom: 1px solid var(--line); position: relative; z-index: 20; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+.brand svg { width: 30px; height: 30px; flex: none; }
+.brand-name { font-family: var(--display); font-weight: 600; font-size: 23px; letter-spacing: -0.01em; }
+.brand:hover { color: var(--text); }
+.site-nav { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
+.site-nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
+.site-nav a:hover, .site-nav a[aria-current=page] { color: var(--text); }
+.site-nav a.is-missing { cursor: default; opacity: 0.6; }
+
+.btn { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; padding: 10px 18px; border-radius: 10px; font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid transparent; cursor: pointer; font-family: var(--body); }
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn-primary { background: var(--amber); color: #1B1204; }
+.btn-primary:hover { background: var(--amber-hot); color: #1B1204; }
+.btn-ghost { border-color: var(--line); color: var(--text); background: rgba(12, 23, 27, 0.55); }
+.btn-ghost:hover { border-color: var(--amber); color: var(--text); }
+.btn.is-missing, .card.is-missing { cursor: default; opacity: 0.65; }
+.btn-primary.is-missing:hover { background: var(--amber); }
+
+.site-footer { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; padding: 28px clamp(20px, 3vw, 40px); color: var(--muted); border-top: 1px solid var(--line); font-size: 15px; }
+.site-footer nav { display: flex; gap: 22px; }
+.site-footer a { color: var(--muted); }
+
+/* ---- the 3D stage (live canvas or still image) */
+.stage { position: relative; overflow: hidden; background: var(--fog); }
+.stage > img.stage-still, .stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.stage > canvas { z-index: 1; }
+.stage-pause { position: absolute; top: 14px; right: 14px; z-index: 6; min-height: 36px; padding: 6px 12px; font-size: 14px; }
+.stage-tip { position: absolute; z-index: 7; pointer-events: none; background: rgba(8, 16, 19, 0.92); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 14px; white-space: nowrap; transform: translate(-50%, calc(-100% - 12px)); }
+
+/* ---- home and help heroes */
+.hero { position: relative; }
+.hero .stage { width: 100%; height: min(76vh, 56.25vw); min-height: 440px; }
+.hero::after { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background: linear-gradient(90deg, rgba(8, 16, 19, 0.88) 0%, rgba(8, 16, 19, 0.62) 34%, rgba(8, 16, 19, 0) 58%),
+              linear-gradient(0deg, var(--ink) 0%, rgba(12, 23, 27, 0) 22%); }
+.hero-help::after { background: linear-gradient(0deg, var(--ink) 0%, rgba(12, 23, 27, 0) 24%); }
+.hero-copy { position: absolute; z-index: 3; left: clamp(20px, 5vw, 80px); top: 50%; transform: translateY(-50%); width: min(520px, 44vw); }
+.hero-copy .eyebrow { margin: 0 0 12px; color: var(--amber); font-weight: 700; letter-spacing: 0.14em; font-size: 13px; }
+.hero-copy h1 { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(40px, 4.4vw, 64px); line-height: 1.04; letter-spacing: -0.015em; }
+.hero-copy h1 em { color: var(--amber); font-style: italic; }
+.hero-copy .lede { margin: 18px 0 26px; color: #D8D2C4; font-size: 18.5px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.release-line { margin: 16px 0 0; color: var(--muted); font-size: 15px; }
+
+/* ---- sections */
+.section { padding: clamp(48px, 6vw, 88px) clamp(20px, 5vw, 80px); max-width: 1320px; margin: 0 auto; }
+.section-head { margin-bottom: 28px; }
+.section-head h2 { margin: 0 0 8px; font-family: var(--display); font-weight: 500; font-size: clamp(30px, 3vw, 40px); letter-spacing: -0.01em; }
+.section-head p { margin: 0; color: var(--muted); }
+.steps { list-style: none; counter-reset: step; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 0; margin: 0; }
+.steps > li { counter-increment: step; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+.steps > li::before { content: counter(step); display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: var(--amber); color: #1B1204; font-weight: 700; margin-bottom: 12px; }
+.steps h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 500; font-size: 23px; }
+.steps p { margin: 0; color: #D6D0C2; }
+.note { margin: 20px 0 0; color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.card { display: flex; flex-direction: column; gap: 10px; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); text-decoration: none; transition: border-color 0.15s, transform 0.15s; }
+.card:hover { border-color: var(--amber); color: var(--text); }
+.card .icon { width: 30px; height: 30px; color: var(--amber); }
+.card-title { font-family: var(--display); font-size: 24px; font-weight: 500; }
+.card-text { color: var(--muted); flex-grow: 1; }
+.card-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--amber); font-weight: 600; }
+.card-cta svg { width: 16px; height: 16px; }
+.help-head { padding-bottom: 0; }
+.help-head .eyebrow { margin: 0 0 10px; color: var(--amber); font-weight: 700; letter-spacing: 0.14em; font-size: 13px; }
+.help-head h1 { margin: 0 0 12px; font-family: var(--display); font-weight: 500; font-size: clamp(40px, 4.4vw, 58px); line-height: 1.05; }
+.help-head h1 em { color: var(--amber); }
+.help-head .lede { margin: 0; color: #D8D2C4; font-size: 18.5px; max-width: 720px; }
+.help-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* ---- the tour page */
+.tour-page { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+.tour-page .site-header { padding-top: 10px; padding-bottom: 10px; gap: 18px; }
+.tour-page main { position: relative; flex: 1 1 auto; min-height: 0; }
+.tour-stage { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, #14262E 0%, var(--fog) 55%, var(--ink-deep) 100%); }
+.tour-stage > img.stage-still { inset: auto; left: 50%; top: 50%; width: min(100%, calc((100vh - 60px) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; object-fit: cover; transform: translate(-50%, -50%); transition: opacity 0.4s ease; }
+.tour-stage > img.stage-still.is-hidden { opacity: 0; }
+/* under the trail map: stop 1's torch fills the top-left, and in narrow windows the card spans the bottom */
+.tour-page .stage-pause { top: 64px; right: 18px; }
+.sign-button { position: absolute; z-index: 8; background: transparent; border: 0; border-radius: 10px; cursor: pointer; padding: 0; }
+.sign-button:hover { box-shadow: 0 0 0 2px rgba(255, 178, 63, 0.55), 0 0 24px rgba(255, 178, 63, 0.35); }
+.sign-button:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+.sign-button[disabled] { pointer-events: none; }
+.tour-card { position: absolute; z-index: 9; left: 50%; bottom: clamp(14px, 3vh, 28px); transform: translateX(-50%); width: min(640px, calc(100% - 32px)); max-height: 46%; overflow: auto; background: rgba(10, 20, 24, 0.9); border: 1px solid var(--line); border-radius: 14px; padding: 18px 24px 16px; backdrop-filter: blur(6px); transition: opacity 0.3s ease, transform 0.3s ease; }
+.tour-card[data-hidden] { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
+.tour-card .card-eyebrow { margin: 0 0 4px; color: var(--amber); font-weight: 700; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; }
+.tour-card .card-title { display: block; margin: 0 0 8px; font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; }
+.tour-card .card-title:focus { outline: none; }
+.tour-card p { margin: 0 0 10px; color: #D8D2C4; }
+.tour-card .card-points { margin: 0 0 8px; padding-left: 20px; color: #D8D2C4; }
+.tour-card .kb-chips { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 4px 0 8px; padding: 0; }
+.tour-card .kb-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 14px; font-weight: 600; }
+.tour-card .kb-blaze { display: inline-block; width: 9px; height: 15px; border-radius: 2px; background: var(--trail); flex: none; }
+.tour-card .kb-trail { margin: 8px 0 6px; padding: 12px 14px; background: var(--panel-2); border-left: 4px solid var(--trail); border-radius: 8px; }
+.tour-card .kb-trail h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 6px; font-size: 17px; }
+.tour-card .kb-trail h3 .kb-blaze { width: 12px; height: 20px; }
+.tour-card .kb-dests { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; list-style: none; margin: 0; padding: 0; }
+.tour-card .kb-dests a { color: var(--text); text-decoration: underline; text-decoration-color: rgba(238, 231, 216, 0.35); text-underline-offset: 3px; }
+.tour-card .kb-dests a:hover { text-decoration-color: var(--amber); }
+.tour-card .kb-plain { color: var(--muted); }
+.tour-card .kb-then { color: var(--muted); margin: 0 6px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; color: var(--muted); font-size: 14px; }
+.pager { display: inline-flex; align-items: center; gap: 8px; }
+.pager button { min-width: 36px; min-height: 36px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; font-size: 18px; line-height: 1; }
+.pager button:hover:not([disabled]) { border-color: var(--amber); }
+.pager button[disabled] { opacity: 0.4; cursor: default; }
+.trail-map { position: absolute; z-index: 9; top: 14px; right: 18px; display: flex; align-items: center; gap: 0; background: rgba(10, 20, 24, 0.78); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
+.trail-map ol { display: flex; align-items: center; list-style: none; margin: 0; padding: 0; }
+.trail-map li { display: flex; align-items: center; }
+.trail-map li + li::before { content: ''; width: 16px; height: 2px; background: var(--line); }
+.trail-map button { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; background: transparent; cursor: pointer; padding: 0; }
+.trail-map button::after { content: ''; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--line); transition: background 0.2s, transform 0.2s; }
+.trail-map button:hover::after { background: var(--muted); }
+.trail-map button[aria-current=step]::after { background: var(--amber); transform: scale(1.35); box-shadow: 0 0 10px rgba(255, 178, 63, 0.8); }
+.trail-map .map-label { margin-left: 10px; color: var(--text); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.tour-hint { color: var(--muted); }
+.kb-unfold { min-height: 36px; padding: 6px 14px; font-size: 15px; }
+/* the map fills the height the sheet has left under its header (92vh less 36 px of padding and a 44 + 8 px header),
+   keeping its shape and a 960 px minimum width; where even that is too tall, the map scrolls under a fixed header */
+.kb-sheet { --kb-map-h: calc(92vh - 88px); width: min(1300px, calc(100vw - 32px)); max-height: 92vh; padding: 16px 20px 20px; border: 0; border-radius: 12px; background: #E6D6AE; color: #2A1A0F; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+.kb-sheet::backdrop { background: rgba(5, 10, 12, 0.78); }
+.kb-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; margin: 0 0 8px; }
+.kb-sheet-head h2 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 28px; line-height: 1.2; }
+.kb-sheet-head .btn-ghost { color: #2A1A0F; border-color: #6B5640; background: transparent; }
+.kb-sheet-map { max-height: var(--kb-map-h); overflow: auto; }
+.kb-sheet-map svg { display: block; width: min(100%, calc(var(--kb-map-h) * 1380 / 880)); min-width: 960px; height: auto; margin: 0 auto; }
+.kb-sheet-map a:focus-visible { outline: 3px solid #B8452A; outline-offset: 2px; }
+.kb-sheet-map a:hover text { fill: #7A2A20; }
+.kb-overlay { position: absolute; z-index: 1; left: 0; top: 0; width: 1380px; height: 880px; transform-origin: 0 0; mix-blend-mode: multiply; cursor: pointer; }
+.kb-overlay svg { display: block; width: 100%; height: 100%; }
+
+/* ---- smaller desktops */
+@media (max-width: 1100px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .steps { grid-template-columns: 1fr; }
+  .hero-copy { width: min(520px, 60vw); }
+}
+/* short windows (a 1080p screen at 125 % leaves about 730 px): a tighter card hides less of the stop */
+@media (max-height: 820px) {
+  .tour-card { width: min(580px, calc(100% - 32px)); padding: 12px 20px 10px; font-size: 15.5px; }
+  .tour-card .card-eyebrow { margin-bottom: 2px; }
+  .tour-card .card-title { margin-bottom: 4px; font-size: 22px; }
+  .tour-card p { margin-bottom: 6px; line-height: 1.45; }
+  .tour-card .card-points { margin-bottom: 6px; }
+  /* so the card clears the lower trails lit on the kiosk: the trail's name goes beside its destinations, which flow
+     in rows instead of two columns */
+  .tour-card .kb-trail { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px 16px; margin: 4px 0 2px; padding: 8px 12px; }
+  .tour-card .kb-trail h3 { margin: 0; line-height: 24px; }
+  .tour-card .kb-dests { display: flex; flex-wrap: wrap; flex: 1 1 240px; gap: 2px 16px; }
+  .tour-card .card-foot { margin-top: 4px; }
+  .tour-card .kb-unfold, .tour-card .pager button { min-height: 32px; }
+}
+@media (max-width: 760px) {
+  .site-header { flex-wrap: wrap; gap: 12px; }
+  .site-nav { margin-left: 0; }
+  .help-cards, .cards { grid-template-columns: 1fr; }
+  .hero-copy { width: auto; right: 20px; }
+  .trail-map .map-label { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-stage > img.stage-still, .tour-card { transition: none; }
+}

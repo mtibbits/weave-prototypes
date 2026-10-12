@@ -1,0 +1,11 @@
+# Publishes the public/ folder with GitLab Pages, exactly as it is (no build step).
+# Only needed if your project doesn't already have a "pages" job.
+pages:
+  stage: deploy
+  script:
+    - echo "Publishing public/ as-is"
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
