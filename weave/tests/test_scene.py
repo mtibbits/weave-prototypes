@@ -1,7 +1,7 @@
 """scene.js: the Three.js reuse exports (part 1) and buildQuilt with its snapshot/project contract (part 2)."""
 import pytest
 
-from helpers import DEFAULTS_JS
+from helpers import DEFAULTS_JS, TILE_GEOMETRY_JS, assert_tile_geometry
 
 SCENE_JS = "const THREE = await import('three'); const S = await import('/public/js/scene.js');"
 
@@ -386,32 +386,6 @@ def test_tile_planes_back_every_non_filler_block(paint_js):
                         "painted": True}
         assert tile["z"] < 0
     assert r[10:] == [None, None]
-
-
-# The four geometry checks per block from one snapshot: flat (one z), flipped (the first triangle faces away from the
-# camera), square (corners 0/40 share y, 0/1640 share x) and centred (the corner mean against the tile slot).
-TILE_GEOMETRY_JS = r"""
-    const tileGeometry = (snap, centreOf) => snap.blocks.map((b, i) => {
-      const p = b.positions;
-      const v = (j) => p.slice(3 * j, 3 * j + 3);
-      const zs = []; for (let j = 2; j < p.length; j += 3) zs.push(p[j]);
-      const [a, bb, c] = [0, 1, 2].map((k) => v(b.indices[k]));
-      const u = a.map((x, k) => bb[k] - x); const w = a.map((x, k) => c[k] - x);
-      const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
-      const facing = n.reduce((s, x, k) => s + x * (snap.camera.position[k] - a[k]), 0);
-      const corners = [0, 40, 1640, 1680].map(v);
-      const mean = [0, 1, 2].map((k) => corners.reduce((s, q) => s + q[k], 0) / 4);
-      const want = [...centreOf(i), 0];
-      return { flat: Math.max(...zs) - Math.min(...zs), facing,
-               square: Math.max(Math.abs(corners[0][1] - corners[1][1]), Math.abs(corners[0][0] - corners[2][0])),
-               centre: Math.max(...mean.map((x, k) => Math.abs(x - want[k]))) };
-    });
-"""
-
-
-def assert_tile_geometry(blocks):
-    for i, g in enumerate(blocks):
-        assert g["flat"] <= 1e-6 and g["facing"] < 0 and g["square"] <= 1e-6 and g["centre"] <= 1e-6, (i, g)
 
 
 def test_tile_pose_is_flat_flipped_and_square(paint_js):

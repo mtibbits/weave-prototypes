@@ -1,7 +1,9 @@
 // WEAVE's boot module: the panel lists first, then the hero. The load-time decision picks the still or the live
 // quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
 import { cleanPanels } from './catalog.js';
-import { fillSlots, readHooks, renderPanels, setHeroState, setPaused, setStageLabel, showLiveControls } from './dom.js';
+import {
+  fillSlots, readHooks, renderPanels, setDataMode, setHeroState, setPaused, setStageLabel, setToggle, showLiveControls,
+} from './dom.js';
 import { decideMode, FrameWatchdog, readEnvironment } from './eligibility.js';
 
 const LOAD_FAILED = 'WEAVE: the 3D quilt could not load, so the still image stays.';
@@ -17,6 +19,7 @@ const stage = document.querySelector('[data-hero]');
 const hint = document.querySelector('[data-hint]');
 const controls = document.querySelector('[data-controls]');
 const pause = document.querySelector('[data-pause]');
+const toggle = document.querySelector('[data-toggle]');
 renderPanels(document.getElementById('panels'), result);
 // A broken file keeps the static label from the HTML.
 if (!result.error) setStageLabel(stage, result.panels);
@@ -32,10 +35,10 @@ async function startHero() {
   try {
     // Dynamic only: the still path must never request Three.js or the scene. The font wait (which never rejects;
     // false keeps the fallback font for the session, so a late font never repaints the faces) overlaps the rest.
-    const [scene, motion, tiles] = await Promise.all([import('./scene.js'), import('./motion.js'),
+    const [scene, motion, tiles, , layout] = await Promise.all([import('./scene.js'), import('./motion.js'),
       import('./tiles.js').then(async (module) => { await module.fontsReady(); return module; }),
       import('three'), import('./layout.js')]);
-    modules = { scene, motion, tiles };
+    modules = { scene, motion, tiles, layout };
   } catch (err) {
     console.warn(LOAD_FAILED, err);
     setHeroState(stage, hint, 'still', 'load-failed');
@@ -44,7 +47,7 @@ async function startHero() {
   startLive(modules, fillSlots(result.panels));
 }
 
-function startLive({ scene: S, motion: M, tiles }, slots) {
+function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   const canvas = document.createElement('canvas');
   // Before createRenderer: the stage canvas is hidden from assistive tech, and U4's test keys on it.
   canvas.setAttribute('aria-hidden', 'true');
@@ -69,8 +72,17 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
 
   const order = slots.map((entry) => (entry ? entry.id : null));
   const dog = hooks.watchdog ? new FrameWatchdog({ limitMs: hooks.limitMs }) : null;
-  // The block springs: #8 and #9 set their targets; Pause jumps them to the end.
-  const springs = new M.SpringSet(slots.length);
+  // The director (#8) owns the blocks' springs and the mode. The quilt pose is each block's build pose, read once
+  // here (scene.js keeps the planned lift to itself); the tile pose is the tile grid, flat and flipped.
+  const quiltPoses = quilt.blocks.map((block) => ({ position: block.position.toArray(), rotY: 0,
+    rotZ: block.rotation.z, morph: 0 }));
+  const director = new M.Director({
+    count: slots.length,
+    quiltPose: (i) => quiltPoses[i],
+    tilePose: (i) => ({ position: [...L.slotCentre(i, 'tiles'), 0], rotY: Math.PI, rotZ: 0, morph: 1 }),
+    isTile: (i) => quilt.blocks[i].userData.face !== 'filler',
+    onEnter,
+  });
   let tilt = { x: 0, y: 0 };
   const tiltTarget = { x: 0, y: 0 };
   let stopped = false;
@@ -81,10 +93,12 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   let clock = 0;
   let lastDt = 0;
   let frames = 0;
+  // __weave.mode after a teardown: the director's mode at that moment, even if a transition was mid-flight.
+  let stoppedMode = null;
 
   stage.append(canvas);
   stage.classList.add('is-live');
-  showLiveControls(controls, [pause], true);
+  showLiveControls(controls, [pause, toggle], true);
 
   const resize = () => {
     const width = stage.clientWidth;
@@ -97,9 +111,30 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   // Synchronously too, as Coalesce does, so the first live frame already has the right buffer and aspect.
   resize();
 
+  // The director's pose, fade and ambient weight into the scene, without rendering. The sway and tilt are scaled
+  // by the ambient weight, which is exactly 0 in tiles mode.
+  function sync() {
+    for (let i = 0; i < slots.length; i += 1) quilt.setBlockPose(i, director.pose(i));
+    quilt.setFade(director.fade);
+    const a = director.ambient;
+    quilt.setAmbient({ sway: (hooks.rest ? 0 : M.swayAngle(clock)) * a, tiltX: tilt.x * a, tiltY: tilt.y * a });
+  }
+
   function draw() {
-    quilt.setAmbient({ sway: hooks.rest ? 0 : M.swayAngle(clock), tiltX: tilt.x, tiltY: tilt.y });
+    if (stopped) return;
+    sync();
     quilt.render();
+  }
+
+  // Every state the director enters (D39): the scene first, so a handler's snapshot() sees the pose; data-mode
+  // only when the mode is settled; the label and hint on every entry, so they change on press; then weave:mode.
+  // After a teardown (a weave:mode handler may call stop) nothing is written and nothing fires.
+  function onEnter(mode, from) {
+    if (stopped) return;
+    sync();
+    if (M.SETTLED.includes(mode)) setDataMode(stage, mode);
+    setToggle(toggle, hint, mode);
+    stage.dispatchEvent(new CustomEvent('weave:mode', { detail: { mode, from } }));
   }
 
   // D8: time comes only from rAF timestamps, never from Date.
@@ -115,7 +150,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     const h = M.capDt(dtMs / 1000);
     clock += h;
     lastDt = h;
-    springs.advance(h);
+    director.advance(h);
     tilt = M.followTilt(tilt, tiltTarget, h);
     draw();
     frames += 1;
@@ -156,12 +191,13 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   };
   canvas.addEventListener('webglcontextlost', onContextLost);
 
-  // Pausing jumps any running sequence to its end, stops the loop and draws that pose once (uncounted).
-  const onPause = () => {
+  // Pausing jumps a running transition to its end, stops the loop and draws that pose once (uncounted). Every
+  // `now` the director sees is the event's timeStamp (D8).
+  const onPause = (event) => {
     paused = !paused;
     setPaused(pause, paused);
+    director.setPaused(paused, event.timeStamp);
     if (paused) {
-      springs.snap();
       unschedule();
       draw();
     } else {
@@ -169,6 +205,17 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     }
   };
   pause.addEventListener('click', onPause);
+
+  // The toggle and a click on the canvas (at ?pose=rest too). While paused a press snaps, so it is drawn at once.
+  const onToggle = (event) => {
+    director.toggle(event.timeStamp);
+    if (paused) draw();
+  };
+  toggle.addEventListener('click', onToggle);
+  const onCanvasClick = (event) => {
+    if (director.click(quilt.pick(event.clientX, event.clientY), event.timeStamp) && paused) draw();
+  };
+  canvas.addEventListener('click', onCanvasClick);
 
   // Off screen or in a hidden tab, the pending frame is cancelled too (coalesce/public/js/hero.js), so none runs.
   const visibility = new IntersectionObserver((entries) => {
@@ -184,22 +231,28 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
   document.addEventListener('visibilitychange', onVisibilityChange);
 
   // The only teardown: the watchdog, a lost context and the hook all come here, once. It releases the rAF handle
-  // (with last reset), both observers, the document's visibilitychange listener, the Pause listener (Pause and the
-  // controls row hidden again), the canvas with its pointer listeners, and the webglcontextlost listener (removed
-  // before quilt.dispose() forces the context loss); then is-live, and setHeroState writes the still and #5's
-  // still hint, even if dispose throws.
+  // (with last reset), both observers, the document's visibilitychange listener, the Pause and toggle listeners
+  // (both buttons and the controls row hidden again), the canvas with its pointer and click listeners, and the
+  // webglcontextlost listener (removed before quilt.dispose() forces the context loss); then is-live and
+  // data-mode, and setHeroState writes the still and #5's still hint, even if dispose throws. The director's
+  // in-flight transition is abandoned: nothing advances it again, onEnter writes and fires nothing, and
+  // __weave.mode keeps the mode it had here.
   function stop(reason) {
     if (stopped) return;
     stopped = true;
+    stoppedMode = director.mode;
     unschedule();
     sizeObserver.disconnect();
     visibility.disconnect();
     document.removeEventListener('visibilitychange', onVisibilityChange);
     pause.removeEventListener('click', onPause);
-    showLiveControls(controls, [pause], false);
+    toggle.removeEventListener('click', onToggle);
+    showLiveControls(controls, [pause, toggle], false);
+    canvas.removeEventListener('click', onCanvasClick);
     canvas.removeEventListener('webglcontextlost', onContextLost);
     canvas.remove();
     stage.classList.remove('is-live');
+    setDataMode(stage, null);
     try {
       quilt.dispose();
     } finally {
@@ -209,7 +262,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
 
   // The test and sibling-epic hooks; they outlive the teardown (stop is then a no-op and the clock frozen).
   stage.__weave = {
-    get mode() { return 'quilt'; },
+    get mode() { return stopped ? stoppedMode : director.mode; },
     get order() { return order.slice(); },
     get slots() {
       return slots.map((entry) => ({ id: entry ? entry.id : null, name: entry ? entry.name : null,
@@ -222,8 +275,12 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     snapshot: () => quilt.snapshot(),
     // Test-only.
     project: (point) => quilt.project(point),
+    // Test-only: the faded parts' { opacity, visible }.
+    fades: () => quilt.fades(),
   };
   setHeroState(stage, hint, 'live', 'ok');
+  // The first weave:mode (from null) fires here, after __weave exists and before the first frame.
+  director.start('quilt');
   schedule();
 }
 
