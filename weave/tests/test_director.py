@@ -313,3 +313,26 @@ def test_ambient_eases_to_zero_and_back(js):
     assert r["monotone"] is True
     assert r["at04"] < 1
     assert r["tiles"] == ["tiles", 0] and r["quilt"] == ["quilt", 1]
+
+
+def test_reversal_before_the_stagger_turns_back_without_a_lift(js):
+    """A Sew it back one frame into an Unstitch (a double-press): blocks still waiting on their stagger have not
+    moved, so turning back must not lift them on a fresh arc; a full unstitch still lifts (control)."""
+    r = step(js, r"""
+        const peak = (dir, mode) => {
+          let top = 0;
+          for (let n = 0; n < 600 && dir.mode !== mode; n += 1) {
+            dir.advance(1 / 60);
+            for (let i = 0; i < 12; i += 1) top = Math.max(top, lift(dir, i));
+          }
+          return top;
+        };
+        d.start(); d.toggle(0); d.advance(1 / 60); d.toggle(1);
+        const reversed = peak(d, 'quilt');
+        const c = make().director;
+        c.start(); c.toggle(0);
+        return { reversed, full: peak(c, 'tiles'), mode: d.mode };
+    """)
+    assert r["mode"] == "quilt"
+    assert r["full"] > 0.1, r
+    assert r["reversed"] < 0.02, r

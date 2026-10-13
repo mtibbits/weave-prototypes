@@ -222,7 +222,8 @@ export class Director {
       const u = Math.min(1, Math.max(0, (this.time - path.t0) / pathDur));
       const e = ease.inout(u);
       for (let d = 0; d < 3; d += 1) target[d] = path.from.p[d] + (path.to.p[d] - path.from.p[d]) * e;
-      target[2] += lift * Math.sin(Math.PI * e);
+      // The arc scales with the flip the path has left, so a block turned back before it moved does not lift.
+      target[2] += lift * Math.abs(path.to.s - path.from.s) * Math.sin(Math.PI * e);
       this.springs.setTarget(i, target);
       this.springs.setGains(i, this.time >= path.t0 ? follow : null);
       this.s[i] = path.from.s + (path.to.s - path.from.s) * e;
