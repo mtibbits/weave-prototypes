@@ -156,6 +156,22 @@ def test_director_reads_no_clock(js):
     assert r == "quilt"
 
 
+def test_toggle_inside_the_tiles_entry_sews_back(js):
+    """verify.py's window presses the toggle from its weave:mode handler on tiles: the settle has already cleared
+    the leg, so this is a fresh sew-back (not a reversal) that settles on the quilt pose."""
+    r = run(js, r"""
+        const log = [];
+        const dir = new M.Director({ count: 12, quiltPose, tilePose, isTile: () => true,
+          onEnter: (mode, from) => { log.push([mode, from, dir.mode]); if (mode === 'tiles') dir.toggle(0); } });
+        dir.start(); dir.toggle(0);
+        for (let i = 0; i < 400; i += 1) dir.advance(1 / 60);
+        return { log, home: allAt(dir, quiltPose) };
+    """)
+    assert r["log"] == [["quilt", None, "quilt"], ["unstitching", "quilt", "unstitching"], ["tiles", "unstitching", "tiles"],
+                        ["restitching", "tiles", "restitching"], ["quilt", "restitching", "quilt"]]
+    assert r["home"] is True
+
+
 # --- Task 3: paths, stagger, fade, settle and snap, stepped at 60 fps. ---
 
 # untilMode(dir, mode) advances 1/60 s at a time (at most 600 frames) until dir.mode is `mode`; returns the

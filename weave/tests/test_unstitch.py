@@ -91,6 +91,14 @@ def test_toggle_unstitches_and_sews_back(make_page, base_url, query):
     assert errors == []
 
 
+def test_pause_holds_its_place_when_the_label_changes(make_page, base_url):
+    page, _ = open_live(make_page, base_url, query=REST)
+    pause = page.locator("[data-pause]")
+    before = pause.bounding_box()["x"]
+    press(page, UNSTITCH_NAME)
+    assert pause.bounding_box()["x"] == before
+
+
 def test_toggle_sits_outside_the_stage(make_page, base_url):
     page, _ = open_live(make_page, base_url)
     toggle = page.get_by_role("button", name=UNSTITCH_NAME, exact=True)
@@ -339,22 +347,26 @@ def test_live_hint_follows_the_toggle(make_page, base_url):
     assert errors == []
 
 
+# The stopped page's watch and the no-stop control share one window, so the control proves the window long enough
+# (generous: capDt slows the scene clock against the wall clock on a loaded machine).
+STOP_WINDOW_MS = 5000
+
+
 def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
     page, errors = open_live(make_page, base_url, before_goto=log_modes)
     press(page, UNSTITCH_NAME)
     page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('too-slow'); }")
     assert_still_page(page)
     logged = len(modes(page))
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(STOP_WINDOW_MS)
     assert len(modes(page)) == logged == 2
     assert hero_result(page) == ["still", "context-lost"]
     assert weave(page, ".mode") == "unstitching"
     assert errors == []
-    # Control: without the stop, the same press does reach tiles (a generous bound: capDt slows the scene clock
-    # against the wall clock on a loaded machine, and this only has to show the window can see tiles).
+    # Control: without the stop, the same press reaches tiles inside the same window.
     control, _ = open_live(make_page, base_url, before_goto=log_modes)
     press(control, UNSTITCH_NAME)
-    wait_for_data_mode(control, "tiles", timeout=5000)
+    wait_for_data_mode(control, "tiles", timeout=STOP_WINDOW_MS)
     assert ("tiles", "unstitching") in modes(control)
 
 
@@ -362,6 +374,30 @@ def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
 STOP_IN_HANDLER = r"""
     window.__onMode = (event, el) => { if (event.detail.mode === 'unstitching') el.__weave.stop('context-lost'); };
 """
+
+
+# A weave:mode handler that tears the scene down on the tiles entry (an unpaused settle, inside the frame's advance),
+# recording the frame count it saw.
+STOP_ON_TILES = r"""
+    window.__onMode = (event, el) => {
+      if (event.detail.mode !== 'tiles') return;
+      window.__framesAtStop = el.dataset.heroFrames;
+      el.__weave.stop('context-lost');
+    };
+"""
+
+
+def test_a_settle_that_stops_counts_no_frame(make_page, base_url):
+    def before(page):
+        log_modes(page)
+        page.add_init_script(STOP_ON_TILES)
+    page, errors = open_live(make_page, base_url, before_goto=before)
+    press(page, UNSTITCH_NAME)
+    page.wait_for_function("() => window.__framesAtStop !== undefined", timeout=5000)
+    page.wait_for_timeout(300)
+    assert hero_result(page) == ["still", "context-lost"]
+    assert page.eval_on_selector("[data-hero]", "el => el.dataset.heroFrames") == page.evaluate("window.__framesAtStop")
+    assert errors == []
 
 
 def test_stop_inside_a_mode_handler_halts_the_cycle(make_page, base_url):

@@ -35,8 +35,9 @@ EXPECTED_STATES = {"desktop": ["live", "ok"], "reduced_motion": ["still", "reduc
 SETTLE_AFTER_LIVE_MS = 2500
 # The modes one Unstitch and one Sew it back must pass through, in order, for the window to count (#8).
 EXPECTED_CYCLE = ["unstitching", "tiles", "restitching", "quilt"]
-# Recorded beside the pooled frame rows, not budgeted, so a slow transition stays visible.
-CYCLE_MEASURES = ("cycle_frame_median_ms", "cycle_frame_p95_ms")
+# Recorded beside the pooled frame rows, not budgeted, so a slow transition stays visible; the max catches a single
+# long frame (the first flip's tile shader compile and texture uploads) that no p95 can see.
+CYCLE_MEASURES = ("cycle_frame_median_ms", "cycle_frame_p95_ms", "cycle_frame_max_ms")
 
 FRAME_TIMES = """() => new Promise((resolve) => {
   const deltas = []; let last = performance.now(); const end = last + 5000;
@@ -124,8 +125,8 @@ def frame_stats(deltas):
 
 def window_stats(idle, cycle):
     """(pooled, cycle_only) for #8's window: the idle and cycle deltas pooled as one loop (only the very first
-    delta dropped), and the cycle's own (median, p95)."""
-    return frame_stats(idle + cycle), median_p95(cycle)
+    delta dropped), and the cycle's own (median, p95, max)."""
+    return frame_stats(idle + cycle), (*median_p95(cycle), round(max(cycle), 2))
 
 
 def run(report, base, headless):
@@ -153,7 +154,7 @@ def run(report, base, headless):
             window = page.evaluate(WINDOW_TIMES)
             pooled, cycle = window_stats(window["idle"], window["cycle"])
             measures["frame_median_ms"], measures["frame_p95_ms"] = pooled
-            measures["cycle_frame_median_ms"], measures["cycle_frame_p95_ms"] = cycle
+            measures["cycle_frame_median_ms"], measures["cycle_frame_p95_ms"], measures["cycle_frame_max_ms"] = cycle
             states["desktop_cycle"] = window["modes"]
             # The hook outlives a teardown (w302), so the window counts only if the quilt is still live and running.
             state, reason = page.eval_on_selector("[data-hero]", HERO)

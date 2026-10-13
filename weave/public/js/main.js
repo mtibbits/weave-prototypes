@@ -151,6 +151,8 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
     clock += h;
     lastDt = h;
     director.advance(h);
+    // A weave:mode handler run from the advance may have torn the scene down: the still counts no frame.
+    if (stopped) return;
     tilt = M.followTilt(tilt, tiltTarget, h);
     draw();
     frames += 1;

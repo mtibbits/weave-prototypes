@@ -187,7 +187,9 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   restores the still.
 - `weave:mode` is an event on the stage with `detail: { mode, from }`, dispatched every time the director enters a
   state, its first state included (`from: null`), from its single state-change path (D39). When it fires,
-  `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped.
+  `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped. A handler that
+  toggles synchronously starts the next transition inside the dispatch, so listeners after it read that newer
+  state (verify.py's window does this on `tiles`); after a teardown nothing is written and no `weave:mode` fires.
 
 ## 10. Testing
 

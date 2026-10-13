@@ -42,6 +42,8 @@ h1 em { color: var(--terra); }
 .hero-stage.is-live > .hero-still { opacity: 0; }
 .hero-pause, .hero-toggle { min-height: 44px; padding: 0 20px; border: 1px solid var(--line); border-radius: 999px; background: #FFFDF8; color: var(--ink); font: 600 15px/1 var(--sans); cursor: pointer; }
 .hero-pause:hover, .hero-toggle:hover { border-color: var(--teal); }
+/* Wide enough for "Sew it back", so the label change never moves Pause beside it. */
+.hero-toggle { min-width: 8.5em; }
 /* ?frame=still (D19): the stage alone, filling the viewport, for the captured still; anything later stays hidden
    without being named. */
 html[data-frame="still"], html[data-frame="still"] body { overflow: hidden; }

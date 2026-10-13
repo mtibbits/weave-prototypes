@@ -81,9 +81,9 @@ export class SpringSet {
 // The state names are a contract for #10 (intro) and E2's #15 and #16 (sewing); data-mode reads only SETTLED.
 export const MODES = Object.freeze(['intro', 'quilt', 'unstitching', 'tiles', 'restitching', 'sewing']);
 export const SETTLED = Object.freeze(['quilt', 'tiles']);
-// pathDur (s) and lift shape Coalesce's path, tuned with stagger (s per scene unit from the origin) so a cycle
-// settles in about 1.6 s (U1); follow is Coalesce's path gains, held from a path's start until the settle;
-// settleEps is D40's settle (scene units and radians); pausedClickMs is the paused click guard.
+// pathDur (s) and lift shape Coalesce's path, tuned with stagger (s per scene unit from the origin) so a
+// transition (one leg) settles in about 1.6 s (U1); follow is Coalesce's path gains, held from a path's start until
+// the settle; settleEps is D40's settle (scene units and radians); pausedClickMs is the paused click guard.
 export const DIRECTOR = Object.freeze({
   pathDur: 1.0, stagger: 0.06, lift: 0.25, fadeDur: 0.8, follow: Object.freeze({ k: 70, zeta: 0.8 }),
   settleEps: 1e-3, pausedClickMs: 400,
