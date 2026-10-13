@@ -1,4 +1,6 @@
 """motion.js: the fixed-step springs (Coalesce's) and the ambient sway and tilt, all on one clock."""
+import math
+
 MOTION_JS = "const m = await import('/public/js/motion.js');"
 
 
@@ -48,6 +50,37 @@ def test_snap_jumps_to_the_targets(js):
     assert r["moving"] is True
     assert r["p"] == [[0, 0, 0], [0, 0, 0], [1, 2, 3]]
     assert r["v"] == [[0, 0, 0]] * 3 and r["settled"] is True
+
+
+def test_set_gains_overrides_one_spring(js):
+    """#8's path springs: one index on the follower gains, the rest (and null) on the constructor's."""
+    r = run(js, r"""
+        const displace = (s) => { for (let i = 0; i < 2; i += 1) { s.p[i] = [1, 0, 0]; s.v[i] = [0, 0, 0]; } s.acc = 0; };
+        const s = new m.SpringSet(2);
+        const plain = new m.SpringSet(2);
+        s.setGains(1, { k: 70, zeta: 0.8 });
+        displace(s); displace(plain);
+        for (let i = 0; i < 12; i += 1) { s.advance(1 / 60); plain.advance(1 / 60); }
+        const differ = s.p[0][0] !== s.p[1][0];
+        const untouched = s.p[0][0] === plain.p[0][0] && s.v[0][0] === plain.v[0][0];
+        s.setGains(1, null);
+        displace(s);
+        for (let i = 0; i < 12; i += 1) s.advance(1 / 60);
+        return { differ, untouched, match: s.p[0][0] === s.p[1][0] && s.v[0][0] === s.v[1][0], defaults: [s.k, s.c] };
+    """)
+    assert r["differ"] is True and r["untouched"] is True
+    assert r["match"] is True
+    assert r["defaults"] == [38, 2 * math.sqrt(38) * 0.5]
+
+
+def test_inout_ease_is_coalesces(js):
+    r = run(js, r"""
+        const e = m.ease.inout;
+        const samples = Array.from({ length: 101 }, (_, i) => e(i / 100));
+        return { ends: [e(0), e(1), e(0.5)], monotone: samples.every((v, i) => i === 0 || v >= samples[i - 1]) };
+    """)
+    assert r["ends"] == [0, 1, 0.5]
+    assert r["monotone"] is True
 
 
 def test_sway_is_a_pure_function_of_the_clock(js):

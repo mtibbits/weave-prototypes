@@ -11,6 +11,9 @@ export function capDt(dt) {
   return Number.isFinite(dt) ? Math.min(MAX_DT, Math.max(0, dt)) : 0;
 }
 
+// Coalesce's in-out cubic (coalesce/public/js/motion.js:35-38).
+export const ease = { inout: (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2) };
+
 // `count` damped springs, each pulling p toward target; stepped at a fixed STEP like Coalesce's stepPhysics.
 export class SpringSet {
   constructor(count, { dims = 3, k = 38, zeta = 0.5 } = {}) {
@@ -21,7 +24,14 @@ export class SpringSet {
     this.p = zeros();
     this.v = zeros();
     this.target = zeros();
+    // Per-index { k, c } overrides (#8's path followers); null keeps the constructor's k and c.
+    this.gains = new Array(count).fill(null);
     this.acc = 0;
+  }
+
+  // Spring i's own gains ({ k, zeta }), or null for the constructor's.
+  setGains(i, gains) {
+    this.gains[i] = gains ? { k: gains.k, c: 2 * Math.sqrt(gains.k) * gains.zeta } : null;
   }
 
   setTarget(i, vec) {
@@ -37,8 +47,9 @@ export class SpringSet {
         const p = this.p[i];
         const v = this.v[i];
         const t = this.target[i];
+        const { k, c } = this.gains[i] ?? this;
         for (let d = 0; d < this.dims; d += 1) {
-          v[d] += (this.k * (t[d] - p[d]) - this.c * v[d]) * STEP;
+          v[d] += (k * (t[d] - p[d]) - c * v[d]) * STEP;
           p[d] += v[d] * STEP;
         }
       }
