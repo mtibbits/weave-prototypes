@@ -78,10 +78,11 @@ export class SpringSet {
 // The state names are a contract for #10 (intro) and E2's #15 and #16 (sewing); data-mode reads only SETTLED.
 export const MODES = Object.freeze(['intro', 'quilt', 'unstitching', 'tiles', 'restitching', 'sewing']);
 export const SETTLED = Object.freeze(['quilt', 'tiles']);
-// pathDur and lift are Coalesce's path shape (s); stagger is s per scene unit from the origin; follow is
-// Coalesce's path gains; settleEps is D40's settle (scene units and radians); pausedClickMs is the paused guard.
+// pathDur (s) and lift shape Coalesce's path, tuned with stagger (s per scene unit from the origin) so a cycle
+// settles in about 1.6 s (U1); follow is Coalesce's path gains, held from a path's start until the settle;
+// settleEps is D40's settle (scene units and radians); pausedClickMs is the paused click guard.
 export const DIRECTOR = Object.freeze({
-  pathDur: 1.2, stagger: 0.08, lift: 0.25, fadeDur: 0.8, follow: Object.freeze({ k: 70, zeta: 0.8 }),
+  pathDur: 1.0, stagger: 0.06, lift: 0.25, fadeDur: 0.8, follow: Object.freeze({ k: 70, zeta: 0.8 }),
   settleEps: 1e-3, pausedClickMs: 400,
 });
 
@@ -172,16 +173,77 @@ export class Director {
     return true;
   }
 
+  // One frame of h seconds (#7's capped dt). D40: the settle is checked before stepping, so a settled transition
+  // snaps and enters its mode at most once per call.
   advance(h) {
+    if (this.leg) {
+      const error = this.settleError();
+      if (error <= DIRECTOR.settleEps) {
+        this.lastSettleError = error;
+        this.finish();
+        return;
+      }
+    }
     this.time += h;
+    if (this.leg) this.follow();
     this.springs.advance(h);
   }
 
   // --- Internals. ---
 
+  // Starts a transition from the current pose. From a settled mode each block's path waits stagger x its distance
+  // from origin (Coalesce's burst); a reversal starts every path now and keeps the springs' velocities.
   begin(next, origin) {
-    this.leg = { ...LEGS[next], origin };
+    const reversal = this.leg !== null;
+    const end = LEGS[next];
+    const { pathDur, stagger, fadeDur } = DIRECTOR;
+    const paths = this.isTile.map((tile, i) => {
+      if (!tile) return null;
+      const p = this.springs.p[i].slice();
+      const wait = reversal ? 0 : stagger * Math.hypot(p[0] - origin[0], p[1] - origin[1]);
+      return { t0: this.time + wait, from: { p, s: this.s[i] },
+        to: { p: (end.s ? this.tile : this.quilt)[i].position, s: end.s } };
+    });
+    const fade = { t0: this.time, dur: fadeDur, from: this.g, to: end.g };
+    this.leg = { ...end, paths, fade, ends: Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0))) };
     this.enter(next);
+  }
+
+  // Each path's spring target at this.time: from -> to along the eased path, lifted on Coalesce's arc
+  // (coalesce/public/js/motion.js pathPoint). The follower gains hold from the path's start until the settle:
+  // switching to the home gains (k 38, zeta 0.5) at the path's end, as Coalesce does, adds about 1.1 s before 1e-3.
+  follow() {
+    const { pathDur, lift, follow } = DIRECTOR;
+    const target = [0, 0, 0];
+    this.leg.paths.forEach((path, i) => {
+      if (!path) return;
+      const u = Math.min(1, Math.max(0, (this.time - path.t0) / pathDur));
+      const e = ease.inout(u);
+      for (let d = 0; d < 3; d += 1) target[d] = path.from.p[d] + (path.to.p[d] - path.from.p[d]) * e;
+      target[2] += lift * Math.sin(Math.PI * e);
+      this.springs.setTarget(i, target);
+      this.springs.setGains(i, this.time >= path.t0 ? follow : null);
+      this.s[i] = path.from.s + (path.to.s - path.from.s) * e;
+    });
+    const { fade } = this.leg;
+    const u = Math.min(1, Math.max(0, (this.time - fade.t0) / fade.dur));
+    this.g = fade.from + (fade.to - fade.from) * ease.inout(u);
+  }
+
+  // The largest distance from the endpoint, in position (per axis) or rotation, once every path and the fade have
+  // run their course; Infinity before then.
+  settleError() {
+    if (this.time < this.leg.ends) return Infinity;
+    let worst = 0;
+    this.leg.paths.forEach((path, i) => {
+      if (!path) return;
+      const p = this.springs.p[i];
+      for (let d = 0; d < 3; d += 1) worst = Math.max(worst, Math.abs(p[d] - path.to.p[d]));
+      const pose = this.pose(i);
+      const end = (path.to.s ? this.tile : this.quilt)[i];
+      worst = Math.max(worst, Math.abs(pose.rotY - end.rotY), Math.abs(pose.rotZ - end.rotZ));
+    });
+    return worst;
   }
 
   snapIfPaused(now) {
@@ -198,6 +260,7 @@ export class Director {
       this.s[i] = s;
     }
     this.springs.snap();
+    for (let i = 0; i < this.count; i += 1) this.springs.setGains(i, null);
     this.g = g;
     this.leg = null;
   }

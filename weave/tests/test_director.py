@@ -154,3 +154,162 @@ def test_director_reads_no_clock(js):
         return d.mode;
     """)
     assert r in ("quilt", "restitching")
+
+
+# --- Task 3: paths, stagger, fade, settle and snap, stepped at 60 fps. ---
+
+# untilMode(dir, mode) advances 1/60 s at a time (at most 600 frames) until dir.mode is `mode`; returns the
+# frames taken, or -1.
+STEP_JS = r"""
+    const untilMode = (dir, mode) => {
+      for (let n = 1; n <= 600; n += 1) { dir.advance(1 / 60); if (dir.mode === mode) return n; }
+      return -1;
+    };
+    const lift = (dir, i) => dir.pose(i).position[2] - quiltPose(i).position[2];
+"""
+
+
+def step(js, body):
+    return js(DIRECTOR_JS + STEP_JS + body)
+
+
+def test_unstitch_settles_in_about_1_6_s(js):
+    """U1: the issue's ~1.6 s, from the button (centre), from a corner click, and for the sew-back."""
+    r = step(js, r"""
+        const a = make(); a.director.start(); a.director.toggle(0);
+        const fromButton = untilMode(a.director, 'tiles');
+        const back = (a.director.toggle(1), untilMode(a.director, 'quilt'));
+        const b = make(); b.director.start(); b.director.click({ part: 'block', slot: 0, point: [-2.2, 1.6] }, 0);
+        return { fromButton, back, fromCorner: untilMode(b.director, 'tiles') };
+    """)
+    print(r)
+    for frames in r.values():
+        assert 1.3 <= frames / 60 <= 2.1, r
+
+
+def test_settle_snaps_exactly(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0);
+        const frames = untilMode(d, 'tiles');
+        const atTiles = allAt(d, tilePose);
+        const still = d.springs.v.every((v) => v.every((x) => x === 0));
+        const faded = [d.fade, d.ambient];
+        const err = d.lastSettleError;
+        const r2 = make(); const e = r2.director;
+        e.start(); e.toggle(0);
+        for (let n = 0; n < 30; n += 1) e.advance(1 / 60);
+        e.toggle(1);
+        const reversed = untilMode(e, 'quilt');
+        const atQuilt = allAt(e, quiltPose);
+        const err2 = e.lastSettleError;
+        const held = JSON.stringify(Array.from({ length: 12 }, (_, i) => e.pose(i)));
+        for (let n = 0; n < 60; n += 1) e.advance(1 / 60);
+        return { frames, atTiles, still, faded, err, reversed, atQuilt, err2,
+                 unchanged: held === JSON.stringify(Array.from({ length: 12 }, (_, i) => e.pose(i))) };
+    """)
+    assert r["frames"] > 0 and r["atTiles"] is True and r["still"] is True
+    assert r["faded"] == [0, 0]
+    assert 0 < r["err"] <= 1e-3
+    assert r["reversed"] > 0 and r["atQuilt"] is True
+    assert 0 < r["err2"] <= 1e-3
+    assert r["unchanged"] is True
+
+
+def test_sew_back_snaps_to_the_quilt_pose(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0); untilMode(d, 'tiles'); d.toggle(1);
+        const frames = untilMode(d, 'quilt');
+        return { frames, atQuilt: allAt(d, quiltPose), fade: d.fade, ambient: d.ambient };
+    """)
+    assert r == {"frames": r["frames"], "atQuilt": True, "fade": 1, "ambient": 1} and r["frames"] > 0
+
+
+def test_stagger_starts_from_the_origin(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0);
+        for (let n = 0; n < 12; n += 1) d.advance(1 / 60);
+        const button = [lift(d, 5), lift(d, 0)];
+        const c = make().director;
+        c.start(); c.click({ part: 'block', slot: 0, point: L.slotCentre(0) }, 0);
+        for (let n = 0; n < 12; n += 1) c.advance(1 / 60);
+        return { button, click: [lift(c, 5), lift(c, 0)] };
+    """)
+    centre, corner = r["button"]
+    assert centre > corner, r
+    centre, corner = r["click"]
+    assert corner > centre, r
+
+
+def test_pause_finishes_a_transition(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0);
+        d.advance(0.3);
+        const mid = d.mode;
+        d.setPaused(true, 5);
+        const after = [d.mode, allAt(d, tilePose), enters.length];
+        d.setPaused(true, 6);
+        return { mid, after, again: enters.length, click: d.click(HITS.none, 5.3), mode: d.mode,
+                 tail: enters.map(([m]) => m) };
+    """)
+    assert r["mid"] == "unstitching"
+    assert r["after"] == ["tiles", True, 3]
+    assert r["again"] == 3
+    assert r["click"] is False and r["mode"] == "tiles"
+    assert r["tail"] == ["quilt", "unstitching", "tiles"]
+
+
+def test_toggle_reverses_from_the_current_pose(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0);
+        for (let n = 0; n < 30; n += 1) d.advance(1 / 60);
+        d.toggle(1);
+        let move = 0; let turn = 0;
+        let prev = Array.from({ length: 12 }, (_, i) => d.pose(i));
+        for (let n = 0; n < 30; n += 1) {
+          d.advance(1 / 60);
+          const now = Array.from({ length: 12 }, (_, i) => d.pose(i));
+          now.forEach((p, i) => {
+            move = Math.max(move, Math.hypot(...p.position.map((v, k) => v - prev[i].position[k])));
+            turn = Math.max(turn, Math.abs(p.rotY - prev[i].rotY));
+          });
+          prev = now;
+        }
+        untilMode(d, 'quilt');
+        return { move, turn, modes: enters.map(([m]) => m) };
+    """)
+    assert r["move"] < 0.05 and r["turn"] < 0.15, r
+    assert r["modes"] == ["quilt", "unstitching", "restitching", "quilt"]
+
+
+def test_fillers_only_fade(js):
+    r = step(js, r"""
+        const { director: f } = make({ isTile: (i) => i < 10 });
+        f.start(); f.toggle(0);
+        let moved = 0;
+        const check = () => { if (![10, 11].every((i) => same(f.pose(i), quiltPose(i)))) moved += 1; };
+        for (let n = 0; n < 600 && f.mode !== 'tiles'; n += 1) { f.advance(1 / 60); check(); }
+        const fadeAtTiles = [f.mode, f.fade];
+        f.toggle(1);
+        for (let n = 0; n < 600 && f.mode !== 'quilt'; n += 1) { f.advance(1 / 60); check(); }
+        return { moved, fadeAtTiles, end: f.mode };
+    """)
+    assert r == {"moved": 0, "fadeAtTiles": ["tiles", 0], "end": "quilt"}
+
+
+def test_ambient_eases_to_zero_and_back(js):
+    r = step(js, r"""
+        d.start(); d.toggle(0);
+        const seen = [d.ambient];
+        let at04 = null;
+        for (let n = 1; n <= 600 && d.mode === 'unstitching'; n += 1) {
+          d.advance(1 / 60);
+          if (d.mode === 'unstitching') seen.push(d.ambient);
+          if (n === 24) at04 = d.ambient;
+        }
+        const tiles = [d.mode, d.ambient];
+        d.toggle(1); untilMode(d, 'quilt');
+        return { monotone: seen.every((v, k) => k === 0 || v <= seen[k - 1]), at04, tiles, quilt: [d.mode, d.ambient] };
+    """)
+    assert r["monotone"] is True
+    assert r["at04"] < 1
+    assert r["tiles"] == ["tiles", 0] and r["quilt"] == ["quilt", 1]
