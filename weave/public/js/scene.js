@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { makeCanvas, paintSashing, paintShadow, paintWeaveNormal, paintWood, sashingSize } from './fabric.js';
 import { foldZ, LAYOUT, puffZ, slotCentre } from './layout.js';
 import { rngFor } from './random.js';
-import { faceKind, paintFace } from './tiles.js';
+import { faceKind, paintFace, paintTile } from './tiles.js';
 
 // Coalesce's cap (coalesce/public/js/hero.js).
 export const MAX_PIXEL_RATIO = 1.75;
@@ -47,12 +47,14 @@ export function weaveNormalMap() {
 }
 
 // Cotton: rough, with a warm sheen. The face is colour (sRGB) and the normal map is data (no colour space).
-export function fabricMaterial({ map, normalMap = weaveNormalMap() } = {}) {
+// `transparent` is for the parts #8 fades; it is set at build, since toggling it later recompiles the shader.
+export function fabricMaterial({ map, normalMap = weaveNormalMap(), transparent = false } = {}) {
   if (map) map.colorSpace = THREE.SRGBColorSpace;
   normalMap.colorSpace = THREE.NoColorSpace;
   return new THREE.MeshPhysicalMaterial({
     map: map ?? null,
     normalMap,
+    transparent,
     roughness: 0.9,
     sheen: 1,
     sheenRoughness: 0.8,
@@ -98,6 +100,8 @@ const SEGMENTS = LAYOUT.segments;
 const TILT_MAX = (LAYOUT.maxTiltDeg * Math.PI) / 180;
 // A planned block sits this far above the sashing, so its tilted corners never z-fight the muslin under them.
 const PLANNED_LIFT = 0.01;
+// A block's tile face sits this far behind it, facing the other way, so the flip reveals it.
+const TILE_OFFSET = 0.005;
 
 function canvasTexture(canvas) {
   const texture = new THREE.CanvasTexture(canvas);
@@ -105,8 +109,23 @@ function canvasTexture(canvas) {
   return texture;
 }
 
+// The dashboard face on a block's back (#8): #6's tile, rotated pi about y, hidden until the block flips. Unlit, so
+// the tile reads as painted; alphaTest drops its transparent corners.
+function buildTile(slot, entry) {
+  const canvas = makeCanvas(512);
+  paintTile(canvas, entry);
+  const tile = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: canvasTexture(canvas), alphaTest: 0.5, toneMapped: false }));
+  tile.rotation.y = Math.PI;
+  tile.position.z = -TILE_OFFSET;
+  tile.visible = false;
+  tile.userData = { slot, part: 'tile' };
+  return tile;
+}
+
 // One block: a 40 x 40 plane at its slot, puffed and folded (foldZ is evaluated where each vertex really hangs,
-// so a tilted block follows the fold under it), with a flat morph target 0 at influence 0 for #10's lift.
+// so a tilted block follows the fold under it), with a flat morph target 0 at influence 0 for #10's lift and #8's
+// flatten. A filler is built transparent, since it fades; every other block carries its tile face.
 function buildBlock(slot, entry, renderer) {
   const face = faceKind(entry);
   const [cx, cy] = slotCentre(slot);
@@ -131,12 +150,13 @@ function buildBlock(slot, entry, renderer) {
   paintFace(canvas, entry, face);
   const map = canvasTexture(canvas);
   map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  const mesh = new THREE.Mesh(geometry, fabricMaterial({ map }));
+  const mesh = new THREE.Mesh(geometry, fabricMaterial({ map, transparent: face === 'filler' }));
   mesh.updateMorphTargets();
   mesh.morphTargetInfluences[0] = 0;
   mesh.position.set(cx, cy, face === 'planned' ? PLANNED_LIFT : 0);
   mesh.rotation.z = tilt;
   mesh.userData = { slot, id: entry ? entry.id : null, status: entry ? entry.status : null, face };
+  if (face !== 'filler') mesh.add(buildTile(slot, entry));
   return mesh;
 }
 
@@ -191,7 +211,7 @@ function buildSashing(blocks) {
   // The weave keeps the blocks' scale in scene units: a block is 1 unit, the sheet W x H.
   const normalMap = weaveNormalMap().clone();
   normalMap.repeat.set(W * WEAVE_REPEAT, H * WEAVE_REPEAT);
-  return new THREE.Mesh(geometry, fabricMaterial({ map: canvasTexture(canvas), normalMap }));
+  return new THREE.Mesh(geometry, fabricMaterial({ map: canvasTexture(canvas), normalMap, transparent: true }));
 }
 
 // The hanging rod: a wooden pole just above the top edge, with ball ends larger than the pole.
@@ -199,7 +219,7 @@ function buildRod() {
   const { y, radius, capRadius, halfLength } = LAYOUT.rod;
   const canvas = makeCanvas(1024, 256);
   paintWood(canvas);
-  const material = new THREE.MeshStandardMaterial({ map: canvasTexture(canvas), roughness: 0.55 });
+  const material = new THREE.MeshStandardMaterial({ map: canvasTexture(canvas), roughness: 0.55, transparent: true });
   const rod = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 2 * halfLength, 24, 1, true), material);
   pole.rotation.z = Math.PI / 2;
@@ -210,7 +230,7 @@ function buildRod() {
   });
   rod.add(pole, ...caps);
   rod.position.y = y;
-  return { rod, caps };
+  return { rod, caps, material };
 }
 
 // The soft shadow on the wall behind, down and right of the quilt (the key light is upper left).
@@ -247,10 +267,12 @@ export function buildQuilt(renderer, { slots }) {
   const group = new THREE.Group();
   const blocks = slots.map((entry, slot) => buildBlock(slot, entry, renderer));
   const sashing = buildSashing(blocks);
-  const { rod, caps } = buildRod();
+  const { rod, caps, material: rodMaterial } = buildRod();
   const shadow = buildShadow();
   group.add(sashing, ...blocks, rod);
   scene.add(group, shadow);
+  const tiles = blocks.map((b) => b.children.find((c) => c.userData.part === 'tile') ?? null);
+  const fillers = blocks.filter((b) => b.userData.face === 'filler');
 
   const pivot = new THREE.Vector3(0, LAYOUT.rod.y, 0);
   const aboutX = new THREE.Quaternion();
@@ -264,6 +286,69 @@ export function buildQuilt(renderer, { slots }) {
     aboutY.setFromAxisAngle(Y, tiltY);
     group.quaternion.multiplyQuaternions(aboutY, aboutX);
     group.position.copy(pivot).applyQuaternion(group.quaternion).negate().add(pivot);
+  }
+
+  // Block i's pose (#8's director): position, rotY (the flip), rotZ (the seeded tilt) and morph (the flatten).
+  // Euler XYZ makes the rotation Ry(rotY) Rz(rotZ). Its tile face draws only once the block starts to flip.
+  function setBlockPose(i, { position, rotY, rotZ, morph }) {
+    const mesh = blocks[i];
+    mesh.position.fromArray(position);
+    mesh.rotation.y = rotY;
+    mesh.rotation.z = rotZ;
+    mesh.morphTargetInfluences[0] = morph;
+    if (tiles[i]) tiles[i].visible = morph > 0;
+  }
+
+  // The faded parts as [object, material]: the rod's meshes share one material, so its group is what hides.
+  const faded = [[sashing, sashing.material], [rod, rodMaterial], [shadow, shadow.material],
+    ...fillers.map((b) => [b, b.material])];
+
+  // The fade (#8): 1 shown ... 0 gone, on the sashing, rod, shadow and fillers; at 0 they are not drawn at all.
+  function setFade(f) {
+    for (const [object, material] of faded) {
+      material.opacity = f;
+      object.visible = f > 0;
+    }
+  }
+
+  // Test-only: each faded part's { opacity, visible }.
+  function fades() {
+    const of = (object, material) => ({ opacity: material.opacity, visible: object.visible });
+    return { sashing: of(sashing, sashing.material), rod: of(rod, rodMaterial), shadow: of(shadow, shadow.material),
+      fillers: fillers.map((b) => ({ slot: b.userData.slot, ...of(b, b.material) })) };
+  }
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const ray = new THREE.Ray();
+  const ground = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const targets = [sashing, ...blocks, ...tiles.filter(Boolean)];
+  const shown = (object) => {
+    for (let o = object; o; o = o.parent) if (!o.visible) return false;
+    return true;
+  };
+
+  // What is under a client (CSS pixel) point: the nearest drawn block, sashing or tile face (the rod and shadow
+  // are never targets; a flipped block or an unflipped tile faces away, so FrontSide skips it), and the point in
+  // the group's space: the hit, or for 'none' where the ray meets the group's z = 0 plane. A block is known by
+  // its place in `blocks`, so the snapshot's userData stays as it is; only a tile carries { slot, part }.
+  function pick(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, 1 - ((clientY - rect.top) / rect.height) * 2);
+    scene.updateMatrixWorld();
+    raycaster.setFromCamera(pointer, camera);
+    // The Raycaster ignores `visible`, so a hidden or faded part is filtered here.
+    const hit = raycaster.intersectObjects(targets, false).find((h) => shown(h.object));
+    if (hit) {
+      const [x, y] = group.worldToLocal(hit.point.clone()).toArray();
+      const slot = blocks.indexOf(hit.object);
+      if (hit.object === sashing) return { part: 'sashing', slot: null, point: [x, y] };
+      if (slot >= 0) return { part: 'block', slot, point: [x, y] };
+      return { part: 'tile', slot: hit.object.userData.slot, point: [x, y] };
+    }
+    ray.copy(raycaster.ray).applyMatrix4(group.matrixWorld.clone().invert());
+    const at = ray.intersectPlane(ground, new THREE.Vector3());
+    return { part: 'none', slot: null, point: at ? [at.x, at.y] : [0, 0] };
   }
 
   // Resizing clears the canvas, so the current pose is redrawn at once (uncounted): a ResizeObserver runs after
@@ -353,6 +438,7 @@ export function buildQuilt(renderer, { slots }) {
   }
 
   return {
-    scene, camera, renderer, group, blocks, sashing, rod, shadow, setAmbient, resize, render, snapshot, project, dispose,
+    scene, camera, renderer, group, blocks, sashing, rod, shadow, setAmbient, setBlockPose, setFade, fades, pick, resize,
+    render, snapshot, project, dispose,
   };
 }

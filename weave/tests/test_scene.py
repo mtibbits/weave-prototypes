@@ -359,3 +359,120 @@ def test_filler_slots_draw_filler_blocks(paint_js):
     """)
     assert r[10] == [10, None, None, "filler"] and r[11] == [11, None, None, "filler"]
     assert r[0] == [0, "manpower", "live", "sewn"]
+
+
+# --- #8: the tile faces, the block poses, the fades and pick. ---
+
+# tilePose(i) / quiltPose(q, i) as the director's contract reads them; tileOf(q, i) is block i's tile child.
+POSE_JS = r"""
+    const tilePose = (i) => ({ position: [...L.slotCentre(i, 'tiles'), 0], rotY: Math.PI, rotZ: 0, morph: 1 });
+    const quiltPose = (q, i) => ({ position: q.blocks[i].position.toArray(), rotY: 0, rotZ: q.blocks[i].rotation.z,
+                                   morph: 0 });
+    const tileOf = (q, i) => q.blocks[i].children.find((c) => c.userData.part === 'tile') ?? null;
+"""
+
+
+def test_tile_planes_back_every_non_filler_block(paint_js):
+    r = build(paint_js, POSE_JS + r"""
+        const q = build(slotsOf(10));
+        return q.blocks.map((b, i) => {
+          const t = tileOf(q, i);
+          return t && { slot: t.userData.slot, part: t.userData.part, parent: t.parent === b, rotY: t.rotation.y === Math.PI,
+                        z: t.position.z, alphaTest: t.material.alphaTest, painted: !isUniform(t.material.map.image) };
+        });
+    """)
+    for i, tile in enumerate(r[:10]):
+        assert tile == {"slot": i, "part": "tile", "parent": True, "rotY": True, "z": tile["z"], "alphaTest": 0.5,
+                        "painted": True}
+        assert tile["z"] < 0
+    assert r[10:] == [None, None]
+
+
+# The four geometry checks per block from one snapshot: flat (one z), flipped (the first triangle faces away from the
+# camera), square (corners 0/40 share y, 0/1640 share x) and centred (the corner mean against the tile slot).
+TILE_GEOMETRY_JS = r"""
+    const tileGeometry = (snap, centreOf) => snap.blocks.map((b, i) => {
+      const p = b.positions;
+      const v = (j) => p.slice(3 * j, 3 * j + 3);
+      const zs = []; for (let j = 2; j < p.length; j += 3) zs.push(p[j]);
+      const [a, bb, c] = [0, 1, 2].map((k) => v(b.indices[k]));
+      const u = a.map((x, k) => bb[k] - x); const w = a.map((x, k) => c[k] - x);
+      const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+      const facing = n.reduce((s, x, k) => s + x * (snap.camera.position[k] - a[k]), 0);
+      const corners = [0, 40, 1640, 1680].map(v);
+      const mean = [0, 1, 2].map((k) => corners.reduce((s, q) => s + q[k], 0) / 4);
+      const want = [...centreOf(i), 0];
+      return { flat: Math.max(...zs) - Math.min(...zs), facing,
+               square: Math.max(Math.abs(corners[0][1] - corners[1][1]), Math.abs(corners[0][0] - corners[2][0])),
+               centre: Math.max(...mean.map((x, k) => Math.abs(x - want[k]))) };
+    });
+"""
+
+
+def assert_tile_geometry(blocks):
+    for i, g in enumerate(blocks):
+        assert g["flat"] <= 1e-6 and g["facing"] < 0 and g["square"] <= 1e-6 and g["centre"] <= 1e-6, (i, g)
+
+
+def test_tile_pose_is_flat_flipped_and_square(paint_js):
+    r = build(paint_js, POSE_JS + TILE_GEOMETRY_JS + r"""
+        const q = build();
+        q.blocks.forEach((_, i) => q.setBlockPose(i, tilePose(i)));
+        return tileGeometry(q.snapshot(), (i) => L.slotCentre(i, 'tiles'));
+    """)
+    assert len(r) == 12
+    assert_tile_geometry(r)
+
+
+def test_set_fade_hides_and_restores(paint_js):
+    r = build(paint_js, r"""
+        const q = build(slotsOf(10));
+        q.setFade(0);
+        const gone = q.fades();
+        const blocks = q.blocks.slice(0, 10).map((b) => b.visible);
+        q.setFade(1);
+        return { gone, blocks, back: q.fades() };
+    """)
+    for state, want in (("gone", {"opacity": 0, "visible": False}), ("back", {"opacity": 1, "visible": True})):
+        f = r[state]
+        assert [f["sashing"], f["rod"], f["shadow"]] == [want] * 3, (state, f)
+        assert f["fillers"] == [{"slot": 10, **want}, {"slot": 11, **want}], (state, f)
+    assert r["blocks"] == [True] * 10
+
+
+def test_pick_names_what_is_under_the_pointer(paint_js):
+    r = build(paint_js, POSE_JS + r"""
+        const q = build();
+        const at = (p) => { const [x, y] = q.project(p); return q.pick(x, y); };
+        const snap = q.snapshot();
+        const centre5 = snap.blocks[5].positions.slice(3 * 840, 3 * 841);
+        const { quiltW } = L.LAYOUT;
+        const quilt = [at(centre5), at([0, 0, L.foldZ(0, 0)]), at([-(quiltW / 2 + 0.3), 0, 0]),
+                       at([0, L.LAYOUT.rod.y, 0])];
+        q.blocks.forEach((_, i) => q.setBlockPose(i, tilePose(i)));
+        q.setFade(0);
+        const tiles = [at([...L.slotCentre(5, 'tiles'), 0]), at([0, 0, 0])];
+        return { quilt, tiles };
+    """)
+    block, sashing, beside, rod = r["quilt"]
+    assert (block["part"], block["slot"]) == ("block", 5)
+    assert sashing["part"] == "sashing"
+    assert beside["part"] == "none" and rod["part"] == "none"
+    tile, gutter = r["tiles"]
+    assert (tile["part"], tile["slot"]) == ("tile", 5)
+    assert gutter["part"] == "none" and gutter["slot"] is None
+    assert all(abs(c) <= 0.02 for c in gutter["point"]), gutter
+
+
+def test_tile_planes_hide_in_the_quilt_pose(paint_js):
+    r = build(paint_js, POSE_JS + r"""
+        const q = build();
+        const home = q.blocks.map((_, i) => quiltPose(q, i));
+        const seen = () => q.blocks.map((_, i) => tileOf(q, i).visible);
+        const built = seen();
+        q.blocks.forEach((_, i) => q.setBlockPose(i, tilePose(i)));
+        const tiled = seen();
+        q.blocks.forEach((_, i) => q.setBlockPose(i, home[i]));
+        return { built, tiled, back: seen() };
+    """)
+    assert r == {"built": [False] * 12, "tiled": [True] * 12, "back": [False] * 12}
