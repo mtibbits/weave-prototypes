@@ -177,7 +177,16 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   1600 × 1000 and a device pixel ratio of 1.
 - `?nowatchdog` turns the frame watchdog off; `?watchdogLimitMs=N` sets its limit (an absent key keeps 45).
 - `stage.__weave` on the `[data-hero]` element: `mode`, `order`, `slots`, `clock`, `stop(reason)` and `snapshot()`
-  (the scene's world-space geometry as JSON-safe arrays). `lastDt` and `project([x, y, z])` are test-only.
+  (the scene's world-space geometry as JSON-safe arrays). `lastDt`, `project([x, y, z])` and `fades()` (each faded
+  part's `{ opacity, visible }`: the sashing, rod, shadow and fillers) are test-only.
+- `__weave.mode` is the director's state: `quilt`, `unstitching`, `tiles` or `restitching` (#8), with `intro` (#10)
+  and `sewing` (#16) reserved. After a fallback it keeps the value it had at the teardown, which may be
+  `unstitching` or `restitching`; on the still path the signal is that `data-mode` is absent.
+- `data-mode` on the stage is the settled mode, `quilt` or `tiles`. It is set on the live path only, flips when a
+  transition settles (never on press), and is removed when a fallback restores the still.
+- `weave:mode` is an event on the stage with `detail: { mode, from }`, dispatched every time the director enters a
+  state, its first state included (`from: null`), from its single state-change path (D39). When it fires,
+  `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped.
 
 ## 10. Testing
 

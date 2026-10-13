@@ -66,7 +66,8 @@ def test_weave_readme_tests_says_how_to_run_verify():
     tests = section(WEAVE / "README.md", "Tests")
     lines = [line.strip() for fence in re.findall(r"```(.*?)```", tests, re.S) for line in fence.splitlines()]
     assert "python weave/tools/verify.py" in lines
-    for phrase in ("repo root", "visible", "browser", "--headless", "weave/verify-output/report.json"):
+    for phrase in ("repo root", "visible", "browser", "--headless", "weave/verify-output/report.json",
+                   "one unstitch and sew-back cycle"):
         assert phrase in tests, phrase
     # It comes before the pytest steps, which run from inside weave/.
     assert tests.index("python weave/tools/verify.py") < tests.index("cd weave")
@@ -75,3 +76,11 @@ def test_weave_readme_tests_says_how_to_run_verify():
 def test_root_readme_layout_lists_weave_tools():
     layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
     assert "weave/tools/" in layout and "verify.py" in layout
+
+
+def test_spec_lists_the_mode_hooks():
+    """#8's hooks ship on the public page, so the design spec's hook list names them (Issue-7's lesson)."""
+    spec = (WEAVE / "docs" / "superpowers" / "specs" / "2026-10-09-weave-v0-design.md").read_text(encoding="utf-8")
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
+    for phrase in ("data-mode", "weave:mode", "restitching", "fades()"):
+        assert phrase in hooks, phrase
