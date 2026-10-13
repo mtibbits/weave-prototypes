@@ -153,7 +153,7 @@ def test_director_reads_no_clock(js):
         }
         return d.mode;
     """)
-    assert r in ("quilt", "restitching")
+    assert r == "quilt"
 
 
 # --- Task 3: paths, stagger, fade, settle and snap, stepped at 60 fps. ---

@@ -313,3 +313,18 @@ def test_set_toggle_and_data_mode_write_their_targets(js):
         return { pressed, set, cleared: stage.hasAttribute('data-mode') };
     """)
     assert r == {"pressed": [SEW_NAME, TILES_HINT], "set": "tiles", "cleared": False}
+
+
+def test_set_toggle_keeps_an_unchanged_hint(js):
+    """The hint is aria-live: a settle that keeps its text (unstitching -> tiles) must not write it again."""
+    r = js(DOM_JS + r"""
+        const button = document.createElement('button'); const hint = document.createElement('p');
+        D.setToggle(button, hint, 'unstitching');
+        const seen = new MutationObserver(() => {});
+        seen.observe(hint, { childList: true, characterData: true, subtree: true });
+        D.setToggle(button, hint, 'tiles');
+        const settle = seen.takeRecords().length;
+        D.setToggle(button, hint, 'restitching');
+        return { settle, press: seen.takeRecords().length > 0, text: hint.textContent };
+    """)
+    assert r == {"settle": 0, "press": True, "text": QUILT_HINT}

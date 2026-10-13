@@ -183,7 +183,8 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   and `sewing` (#16) reserved. After a fallback it keeps the value it had at the teardown, which may be
   `unstitching` or `restitching`; on the still path the signal is that `data-mode` is absent.
 - `data-mode` on the stage is the settled mode, `quilt` or `tiles`. It is set on the live path only, flips when a
-  transition settles (never on press), and is removed when a fallback restores the still.
+  transition settles (never on an unpaused press; a paused press settles at once), and is removed when a fallback
+  restores the still.
 - `weave:mode` is an event on the stage with `detail: { mode, from }`, dispatched every time the director enters a
   state, its first state included (`from: null`), from its single state-change path (D39). When it fires,
   `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped.

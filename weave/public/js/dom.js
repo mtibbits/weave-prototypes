@@ -82,10 +82,12 @@ export function setHeroState(stage, hint, state, reason) {
   else hint.textContent = reason !== 'loading' ? STILL_HINT : '';
 }
 
-// The one writer of the toggle's label and the live hint, together, on every mode the director enters.
+// The one writer of the toggle's label and the live hint, together, on every mode the director enters. The hint is
+// aria-live, so it is rewritten only when its text changes: a settle that keeps the text is not announced again.
 export function setToggle(button, hint, mode) {
   button.textContent = toggleLabel(mode);
-  hint.textContent = liveHint(mode);
+  const text = liveHint(mode);
+  if (hint.textContent !== text) hint.textContent = text;
 }
 
 // The one writer of data-mode: the settled mode on the live path; null removes it (the still path has none).
