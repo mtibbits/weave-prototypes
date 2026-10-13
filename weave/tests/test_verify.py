@@ -31,8 +31,10 @@ def good_report():
     """A report that passes every row, built from the bars themselves."""
     return {
         "measures": {"baseline_frame_median_ms": 16.6, "home_transfer_bytes": 950_000, "first_live_frame_ms": 900.0,
-                     "frame_median_ms": 16.7, "frame_p95_ms": 18.0, "still_bytes": 200_000, "still_size": [1600, 1000]},
+                     "frame_median_ms": 16.7, "frame_p95_ms": 18.0, "still_bytes": 200_000, "still_size": [1600, 1000],
+                     "cycle_frame_median_ms": 16.8, "cycle_frame_p95_ms": 20.0},
         "states": {"desktop": ["live", "ok"], "desktop_after_idle": {"state": "live", "reason": "ok", "frames_rose": True},
+                   "desktop_cycle": ["unstitching", "tiles", "restitching", "quilt"],
                    "reduced_motion": ["still", "reduced-motion"], "phone": ["still", "no-hover"],
                    "phone_no_horizontal_scroll": True},
     }
@@ -74,7 +76,8 @@ def test_check_flags_each_failing_row(verify):
         report["measures"][key] = bar * 1.5 + 1
         failures = verify.check(report)
         assert len(failures) == 1 and key in failures[0], (key, failures)
-    for key in [*verify.BUDGETS, "baseline_frame_median_ms", "still_size"]:
+    for key in [*verify.BUDGETS, "baseline_frame_median_ms", "still_size", "cycle_frame_median_ms",
+                "cycle_frame_p95_ms"]:
         report = good_report()
         del report["measures"][key]
         assert any(key in failure for failure in verify.check(report)), key
@@ -94,6 +97,26 @@ def test_check_flags_each_failing_row(verify):
         failures = verify.check(report)
         # w302: the hook outlives the teardown, so the frame rows count only on a quilt still live and running.
         assert any("frame_median_ms" in f for f in failures) and any("frame_p95_ms" in f for f in failures), idle
+    for cycle in (["unstitching"], None):
+        report = good_report()
+        report["states"]["desktop_cycle"] = cycle
+        failures = verify.check(report)
+        # #8: the pooled window counts only if it really held one unstitch and sew-back cycle.
+        assert any(f.startswith("frame_median_ms") for f in failures), cycle
+        assert any(f.startswith("frame_p95_ms") for f in failures), cycle
+
+
+def test_window_stats_pools_idle_and_cycle(verify):
+    assert verify.window_stats([0, 10, 10, 10], [30, 30]) == ((10, 30), (30, 30))
+
+
+def test_baseline_uses_the_plain_frame_loop(verify):
+    """The empty page has no toggle, so its baseline must keep #7's plain loop, not the cycle window."""
+    lines = [line for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+             if 'measures["baseline_frame_median_ms"]' in line and "=" in line.split('measures["baseline', 1)[1][:30]]
+    assert len(lines) == 1 and "evaluate(FRAME_TIMES)" in lines[0], lines
+    assert "data-toggle" not in verify.FRAME_TIMES
+    assert "data-toggle" in verify.WINDOW_TIMES
 
 
 def test_gpu_args_match_the_suites(verify):
