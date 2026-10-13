@@ -73,6 +73,136 @@ export class SpringSet {
   }
 }
 
+// --- The director (#8): the hero's state machine. ---
+
+// The state names are a contract for #10 (intro) and E2's #15 and #16 (sewing); data-mode reads only SETTLED.
+export const MODES = Object.freeze(['intro', 'quilt', 'unstitching', 'tiles', 'restitching', 'sewing']);
+export const SETTLED = Object.freeze(['quilt', 'tiles']);
+// pathDur and lift are Coalesce's path shape (s); stagger is s per scene unit from the origin; follow is
+// Coalesce's path gains; settleEps is D40's settle (scene units and radians); pausedClickMs is the paused guard.
+export const DIRECTOR = Object.freeze({
+  pathDur: 1.2, stagger: 0.08, lift: 0.25, fadeDur: 0.8, follow: Object.freeze({ k: 70, zeta: 0.8 }),
+  settleEps: 1e-3, pausedClickMs: 400,
+});
+
+// Where each transition goes: the settled mode it ends in, and the flip (s) and fade (g) it ends at.
+const LEGS = Object.freeze({
+  unstitching: Object.freeze({ settle: 'tiles', s: 1, g: 0 }),
+  restitching: Object.freeze({ settle: 'quilt', s: 0, g: 1 }),
+});
+
+// The blocks' poses between the quilt (s = 0) and the tiles (s = 1), the fade of everything that is not a tile,
+// and the mode. Pure like the rest of this module: time arrives only through advance(h), and `now` (an event's
+// timeStamp, D8) only for the paused click guard. onEnter(mode, from) runs from enter(), the one writer of mode.
+export class Director {
+  constructor({ count, quiltPose, tilePose, isTile, onEnter }) {
+    this.count = count;
+    this.quilt = Array.from({ length: count }, (_, i) => quiltPose(i));
+    this.tile = Array.from({ length: count }, (_, i) => tilePose(i));
+    this.isTile = Array.from({ length: count }, (_, i) => isTile(i));
+    this.onEnter = onEnter;
+    this.springs = new SpringSet(count);
+    // SpringSet starts at the origin; every block starts at its quilt pose.
+    for (let i = 0; i < count; i += 1) {
+      this.springs.setTarget(i, this.quilt[i].position);
+      this.springs.p[i] = this.quilt[i].position.slice();
+    }
+    this.s = new Array(count).fill(0);
+    this.g = 1;
+    this.leg = null;
+    this.time = 0;
+    this.paused = false;
+    this.lastSnapAt = -Infinity;
+    this.lastSettleError = null;
+    this.current = null;
+  }
+
+  get mode() { return this.current; }
+
+  get fade() { return this.g; }
+
+  get ambient() { return this.g; }
+
+  enter(next) {
+    const from = this.current;
+    this.current = next;
+    this.onEnter(next, from);
+  }
+
+  start(first = 'quilt') {
+    this.enter(first);
+  }
+
+  // Block i's pose: position from its spring, the rest blended by its flip s (the ends exactly).
+  pose(i) {
+    const q = this.quilt[i];
+    const t = this.tile[i];
+    const s = this.s[i];
+    const mix = (key) => (s === 0 ? q[key] : s === 1 ? t[key] : q[key] + (t[key] - q[key]) * s);
+    return { position: this.springs.p[i].slice(), rotY: mix('rotY'), rotZ: mix('rotZ'), morph: mix('morph') };
+  }
+
+  toggle(now, origin = [0, 0]) {
+    const next = { quilt: 'unstitching', tiles: 'restitching', unstitching: 'restitching', restitching: 'unstitching' };
+    if (!(this.current in next)) return false;
+    this.begin(next[this.current], origin);
+    return this.snapIfPaused(now);
+  }
+
+  // hit is what scene.js's pick returns; true when the click acted.
+  click(hit, now) {
+    if (this.paused && now - this.lastSnapAt < DIRECTOR.pausedClickMs) return false;
+    if (this.current === 'quilt' && (hit.part === 'block' || hit.part === 'sashing')) this.begin('unstitching', hit.point);
+    else if (this.current === 'tiles' && hit.part === 'none') this.begin('restitching', hit.point);
+    else return false;
+    return this.snapIfPaused(now);
+  }
+
+  setPaused(paused, now) {
+    this.paused = paused;
+    if (paused && this.finish()) this.lastSnapAt = now;
+  }
+
+  // A transition jumps to its end: snap, then enter its settled mode. False when none is running.
+  finish() {
+    if (!this.leg) return false;
+    const { settle } = this.leg;
+    this.snap();
+    this.enter(settle);
+    return true;
+  }
+
+  advance(h) {
+    this.time += h;
+    this.springs.advance(h);
+  }
+
+  // --- Internals. ---
+
+  begin(next, origin) {
+    this.leg = { ...LEGS[next], origin };
+    this.enter(next);
+  }
+
+  snapIfPaused(now) {
+    if (this.paused && this.finish()) this.lastSnapAt = now;
+    return true;
+  }
+
+  // The endpoint itself, never the arc's value at u = 1: positions, flips and the fade land exactly.
+  snap() {
+    const { s, g } = this.leg;
+    for (let i = 0; i < this.count; i += 1) {
+      if (!this.isTile[i]) continue;
+      this.springs.setTarget(i, (s ? this.tile : this.quilt)[i].position);
+      this.s[i] = s;
+    }
+    this.springs.snap();
+    this.g = g;
+    this.leg = null;
+  }
+}
+
 // The ambient motion. Sway rotates the quilt about the rod's own axis (x through the rod's centre); the pointer
 // tilt rotates about y (left/right, up to tiltY) and, less, about x (up to tiltX), composed after the sway at the
 // same pivot. The amplitudes are LAYOUT's ceilings, which the shadow plane is placed to clear.
