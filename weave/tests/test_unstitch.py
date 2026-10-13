@@ -4,8 +4,9 @@ import pytest
 
 from helpers import (QUILT_HINT, SEW_NAME, STILL_HINT, TILE_GEOMETRY_JS, TILES_HINT, UNSTITCH_NAME, assert_tile_geometry,
                      click_world, frames, hero_result, ink_fraction, log_modes, modes, open_live, wait_for_data_mode,
-                     weave)
+                     wait_for_mode, weave)
 from test_hero import assert_still_page
+from test_pose import SAME_AS_STORED, STORE
 from test_quilt_panels import SLOT_BODIES
 
 REST = "?pose=rest&nowatchdog"
@@ -64,11 +65,6 @@ def unstitch(page):
     wait_for_data_mode(page, "tiles")
 
 
-def wait_for_mode(page, mode, timeout=10000):
-    page.wait_for_function("(mode) => document.querySelector('[data-hero]').__weave.mode === mode", arg=mode,
-                           timeout=timeout)
-
-
 def held_for(page, mode, ms=800):
     """Whether __weave.mode stays `mode` and no weave:mode fires for `ms`."""
     before = len(modes(page))
@@ -120,9 +116,9 @@ def test_tiles_mode_is_flat_flipped_square_and_still(make_page, base_url):
     unstitch(page)
     assert_tile_geometry(tile_geometry(page))
     assert all_faded(fades(page), GONE), fades(page)
-    page.eval_on_selector("[data-hero]", "el => { window.__snap = JSON.stringify(el.__weave.snapshot()); }")
+    page.eval_on_selector("[data-hero]", STORE)
     page.wait_for_timeout(1000)
-    assert page.eval_on_selector("[data-hero]", "el => JSON.stringify(el.__weave.snapshot()) === window.__snap") is True
+    assert page.eval_on_selector("[data-hero]", SAME_AS_STORED) is True
     assert errors == []
 
 
@@ -357,7 +353,7 @@ def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
     # Control: without the stop, the same press reaches tiles inside the same 2 s window.
     control, _ = open_live(make_page, base_url, before_goto=log_modes)
     press(control, UNSTITCH_NAME)
-    control.wait_for_timeout(2000)
+    wait_for_data_mode(control, "tiles", timeout=2000)
     assert ("tiles", "unstitching") in modes(control)
 
 

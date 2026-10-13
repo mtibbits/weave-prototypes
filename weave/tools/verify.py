@@ -199,10 +199,12 @@ def check(report):
         value = measures.get(key)
         if value is None or value > limit:
             failures.append(f"{key} = {value} (budget {limit})")
-        elif key.startswith("frame_") and not idle_ok:
-            failures.append(f"{key} = {value} was not measured on a live, running quilt (after the window: {idle})")
-        elif key.startswith("frame_") and cycle != EXPECTED_CYCLE:
-            failures.append(f"{key} = {value} was not measured over one unstitch and sew-back cycle (modes: {cycle})")
+        elif key.startswith("frame_"):
+            if not idle_ok:
+                failures.append(f"{key} = {value} was not measured on a live, running quilt (after the window: {idle})")
+            elif cycle != EXPECTED_CYCLE:
+                failures.append(f"{key} = {value} was not measured over one unstitch and sew-back cycle"
+                                f" (modes: {cycle})")
     for key in CYCLE_MEASURES:
         if measures.get(key) is None:
             failures.append(f"{key} is missing")

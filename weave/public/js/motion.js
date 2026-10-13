@@ -14,13 +14,16 @@ export function capDt(dt) {
 // Coalesce's in-out cubic (coalesce/public/js/motion.js:35-38).
 export const ease = { inout: (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2) };
 
+const damping = (k, zeta) => 2 * Math.sqrt(k) * zeta;
+const progress = (t, t0, dur) => Math.min(1, Math.max(0, (t - t0) / dur));
+
 // `count` damped springs, each pulling p toward target; stepped at a fixed STEP like Coalesce's stepPhysics.
 export class SpringSet {
   constructor(count, { dims = 3, k = 38, zeta = 0.5 } = {}) {
     const zeros = () => Array.from({ length: count }, () => new Array(dims).fill(0));
     this.dims = dims;
     this.k = k;
-    this.c = 2 * Math.sqrt(k) * zeta;
+    this.c = damping(k, zeta);
     this.p = zeros();
     this.v = zeros();
     this.target = zeros();
@@ -31,7 +34,7 @@ export class SpringSet {
 
   // Spring i's own gains ({ k, zeta }), or null for the constructor's.
   setGains(i, gains) {
-    this.gains[i] = gains ? { k: gains.k, c: 2 * Math.sqrt(gains.k) * gains.zeta } : null;
+    this.gains[i] = gains ? { k: gains.k, c: damping(gains.k, gains.zeta) } : null;
   }
 
   setTarget(i, vec) {
@@ -162,7 +165,7 @@ export class Director {
 
   setPaused(paused, now) {
     this.paused = paused;
-    if (paused && this.finish()) this.lastSnapAt = now;
+    this.snapIfPaused(now);
   }
 
   // A transition jumps to its end: snap, then enter its settled mode. False when none is running.
@@ -203,7 +206,7 @@ export class Director {
       const p = this.springs.p[i].slice();
       const wait = reversal ? 0 : stagger * Math.hypot(p[0] - origin[0], p[1] - origin[1]);
       return { t0: this.time + wait, from: { p, s: this.s[i] },
-        to: { p: (end.s ? this.tile : this.quilt)[i].position, s: end.s } };
+        to: { p: this.endPoses(end.s)[i].position, s: end.s } };
     });
     const fade = { t0: this.time, dur: fadeDur, from: this.g, to: end.g };
     const ends = Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0)));
@@ -219,8 +222,7 @@ export class Director {
     const target = [0, 0, 0];
     this.leg.paths.forEach((path, i) => {
       if (!path) return;
-      const u = Math.min(1, Math.max(0, (this.time - path.t0) / pathDur));
-      const e = ease.inout(u);
+      const e = ease.inout(progress(this.time, path.t0, pathDur));
       for (let d = 0; d < 3; d += 1) target[d] = path.from.p[d] + (path.to.p[d] - path.from.p[d]) * e;
       // The arc scales with the flip the path has left, so a block turned back before it moved does not lift.
       target[2] += lift * Math.abs(path.to.s - path.from.s) * Math.sin(Math.PI * e);
@@ -229,8 +231,7 @@ export class Director {
       this.s[i] = path.from.s + (path.to.s - path.from.s) * e;
     });
     const { fade } = this.leg;
-    const u = Math.min(1, Math.max(0, (this.time - fade.t0) / fade.dur));
-    this.g = fade.from + (fade.to - fade.from) * ease.inout(u);
+    this.g = fade.from + (fade.to - fade.from) * ease.inout(progress(this.time, fade.t0, fade.dur));
   }
 
   // The largest distance from the endpoint, in position (per axis) or rotation, once every path and the fade have
@@ -243,10 +244,15 @@ export class Director {
       const p = this.springs.p[i];
       for (let d = 0; d < 3; d += 1) worst = Math.max(worst, Math.abs(p[d] - path.to.p[d]));
       const pose = this.pose(i);
-      const end = (path.to.s ? this.tile : this.quilt)[i];
+      const end = this.endPoses(path.to.s)[i];
       worst = Math.max(worst, Math.abs(pose.rotY - end.rotY), Math.abs(pose.rotZ - end.rotZ));
     });
     return worst;
+  }
+
+  // The end poses a flip of s lands on: the tiles at 1, the quilt at 0.
+  endPoses(s) {
+    return s ? this.tile : this.quilt;
   }
 
   snapIfPaused(now) {
@@ -259,11 +265,11 @@ export class Director {
     const { s, g } = this.leg;
     for (let i = 0; i < this.count; i += 1) {
       if (!this.isTile[i]) continue;
-      this.springs.setTarget(i, (s ? this.tile : this.quilt)[i].position);
+      this.springs.setTarget(i, this.endPoses(s)[i].position);
+      this.springs.setGains(i, null);
       this.s[i] = s;
     }
     this.springs.snap();
-    for (let i = 0; i < this.count; i += 1) this.springs.setGains(i, null);
     this.g = g;
     this.leg = null;
   }

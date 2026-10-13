@@ -301,6 +301,11 @@ def wait_for_data_mode(page, mode, timeout=10000):
                            timeout=timeout)
 
 
+def wait_for_mode(page, mode, timeout=10000):
+    page.wait_for_function("(mode) => document.querySelector('[data-hero]').__weave.mode === mode", arg=mode,
+                           timeout=timeout)
+
+
 def click_world(page, xyz):
     """Click the canvas where the world point `xyz` projects (through __weave.project)."""
     x, y = page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", xyz)
