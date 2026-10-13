@@ -153,7 +153,8 @@ export class Director {
   // hit is what scene.js's pick returns; true when the click acted.
   click(hit, now) {
     if (this.paused && now - this.lastSnapAt < DIRECTOR.pausedClickMs) return false;
-    if (this.current === 'quilt' && (hit.part === 'block' || hit.part === 'sashing')) this.begin('unstitching', hit.point);
+    const onQuilt = hit.part === 'block' || hit.part === 'sashing';
+    if (this.current === 'quilt' && onQuilt) this.begin('unstitching', hit.point);
     else if (this.current === 'tiles' && hit.part === 'none') this.begin('restitching', hit.point);
     else return false;
     return this.snapIfPaused(now);
@@ -205,7 +206,8 @@ export class Director {
         to: { p: (end.s ? this.tile : this.quilt)[i].position, s: end.s } };
     });
     const fade = { t0: this.time, dur: fadeDur, from: this.g, to: end.g };
-    this.leg = { ...end, paths, fade, ends: Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0))) };
+    const ends = Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0)));
+    this.leg = { ...end, paths, fade, ends };
     this.enter(next);
   }
 
