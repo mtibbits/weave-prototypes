@@ -33,11 +33,10 @@
   <script type="module">
     import { cleanPanels } from '/public/js/catalog.js';
     import { makeCanvas, paintSashing, paintShadow, paintWeaveNormal, paintWood, sashingSize } from '/public/js/fabric.js';
+    import { LAYOUT } from '/public/js/layout.js';
     import { faceKind, fontsReady, paintFace, paintTile } from '/public/js/tiles.js';
 
-    // Until #7's LAYOUT, which carries these five names.
-    const GEOMETRY = { cols: 4, rows: 3, block: 1.0, sashing: 0.14, border: 0.14 };
-    const BLOCKS = 12;
+    const BLOCKS = LAYOUT.slots;
 
     const result = cleanPanels(window.WEAVE_PANELS);
     if (result.error) console.error(result.error);
@@ -55,7 +54,7 @@
 
     // [name, width, height, painter] for each scene texture.
     const TEXTURES = [
-      ['sashing', ...sashingSize(GEOMETRY), (c) => paintSashing(c, GEOMETRY)],
+      ['sashing', ...sashingSize(LAYOUT), (c) => paintSashing(c, LAYOUT)],
       ['wood', 1024, 256, paintWood],
       ['weave-normal', 512, 512, paintWeaveNormal],
       ['shadow', 512, 512, paintShadow],

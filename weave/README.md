@@ -2,7 +2,7 @@
 
 The home page for WEAVE, the Workforce Engagement, Actions & Visibility Environment: the planned web dashboard that grows out of the Coalesce Excel add-in. It is a work in progress, and every number on it is sample data.
 
-The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. The hero shows a still picture of the quilt for now; the 3D quilt is being built.
+The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. On desktop the hero is the live 3D quilt, hanging from its rod and swaying gently, with a Pause button beside it. Phones, reduced motion and any browser where the 3D scene can't run get a still picture of the quilt instead.
 
 ## Preview
 
@@ -55,6 +55,12 @@ Then install the test tools:
 ```
 python -m pip install -r weave/requirements-dev.txt
 python -m playwright install chromium
+```
+
+To check the page's budgets (transfer size, time to the first live frame, idle frame times and the still) and its hero states, run `verify.py` from the repo root with the venv active. It opens a visible browser, so the frame times use the real GPU; keep that window in front until it closes. `--headless` is only a smoke run, never evidence for the frame times. The report lands in `weave/verify-output/report.json`.
+
+```
+python weave/tools/verify.py
 ```
 
 Then run the tests from inside `weave/`. This is the one command not run from the repo root:

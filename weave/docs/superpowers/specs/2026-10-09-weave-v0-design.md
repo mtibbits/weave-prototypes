@@ -48,6 +48,7 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
     ├── public/                   served at /weave/
     ├── dev/                      dev-only review pages (faces.html); never published
     ├── tests/                    pytest + Playwright
+    ├── tools/                    verify.py: the budget and hero-state check
     └── docs/superpowers/         this spec and the plan
 ```
 
@@ -160,9 +161,23 @@ All motion is springs toward per-block targets plus a few scripted timelines.
   - no hover;
   - save-data;
   - a slow frame watchdog.
+- Once live, the scene is torn down and the still restored when the frame watchdog finds it too slow (`too-slow`), a
+  module or asset fails to load (`load-failed`), WebGL setup fails (`webgl-failed`) or the context is lost
+  (`context-lost`).
 - The still is a JPEG captured from the live render.
 - The panel lists carry the content in plain HTML, so nothing depends on the canvas.
-- The controls are real buttons. The canvas gets a descriptive `aria-label`.
+- The controls are real buttons. The stage (`role="img"`) carries the descriptive `aria-label`, and the canvas is
+  `aria-hidden`.
+
+### URL and page hooks
+
+These ship on the public page; the tests, the capture tools and the sibling epics use them.
+- `?pose=rest` holds the quilt at rest (no sway, the pointer ignored); the loop and the watchdog keep running.
+- `?frame=still` shows only the stage, filling the viewport. With `?pose=rest` it is the capture recipe, at
+  1600 × 1000 and a device pixel ratio of 1.
+- `?nowatchdog` turns the frame watchdog off; `?watchdogLimitMs=N` sets its limit (an absent key keeps 45).
+- `stage.__weave` on the `[data-hero]` element: `mode`, `order`, `slots`, `clock`, `stop(reason)` and `snapshot()`
+  (the scene's world-space geometry as JSON-safe arrays). `lastDt` and `project([x, y, z])` are test-only.
 
 ## 10. Testing
 
