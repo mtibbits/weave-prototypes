@@ -250,6 +250,15 @@ def open_page(make_page, base_url, panels_body=None, warnings=None, **context_ar
 LOAD_FAILED = "WEAVE: the 3D quilt could not load, so the still image stays."
 WEBGL_FAILED = "WEAVE: WebGL setup failed, so the still image stays."
 PAUSE_NAME = "Pause motion"
+STILL_HINT = "Your browser shows a picture of the quilt. The panels below have everything."
+
+# --- The toggle and the live hint (#8): literals from the issue, never imported from dom.js, so a reworded
+# constant fails here. ---
+
+UNSTITCH_NAME = "Unstitch"
+SEW_NAME = "Sew it back"
+QUILT_HINT = "Click the quilt, or press Unstitch, to lay its blocks out as a dashboard."
+TILES_HINT = "Click the background, or press Sew it back, to sew the quilt together again."
 
 
 def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before_goto=None, **context_args):

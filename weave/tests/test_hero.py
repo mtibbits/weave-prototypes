@@ -1,15 +1,14 @@
 """The hero contract: the still path and its reasons, going live on desktop, the hooks, and every runtime fallback."""
 import pytest
 
-from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, WEBGL_FAILED, collect_errors, frames, hero_result,
-                     hidden_by_attribute, ink_fraction, open_live, rising, wait_for_reason, weave)
-
-STILL_HINT = "Your browser shows a picture of the quilt. The panels below have everything."
+from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, QUILT_HINT, SEW_NAME, STILL_HINT, TILES_HINT,
+                     UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result, hidden_by_attribute, ink_fraction,
+                     open_live, rising, wait_for_reason, weave)
 
 
 def assert_still_page(page):
     """The still is showing, both lists rendered, the still hint is written, and nothing live is left: no canvas,
-    Pause and the controls row hidden, no is-live."""
+    Pause, the toggle and the controls row hidden, no is-live and no data-mode."""
     still = page.locator(".hero-still")
     assert still.is_visible()
     assert still.evaluate("img => [img.complete, img.naturalWidth]") == [True, 1600]
@@ -22,7 +21,10 @@ def assert_still_page(page):
     assert page.locator("[data-hero] canvas").count() == 0
     pause = page.locator("[data-pause]")
     assert pause.count() == 1 and pause.evaluate("el => el.hidden") is True
+    toggle = page.locator("[data-toggle]")
+    assert toggle.count() == 1 and toggle.evaluate("el => el.hidden") is True
     assert page.eval_on_selector("[data-hero]", "el => el.classList.contains('is-live')") is False
+    assert page.eval_on_selector("[data-hero]", "el => el.hasAttribute('data-mode')") is False
 
 
 def warnings_of(page):
@@ -255,15 +257,59 @@ def test_stop_hook_tears_down_once(make_page, base_url):
     assert errors == []
 
 
-@pytest.mark.parametrize("planted", ["unhidden-row", "canvas-left"])
+LEFTOVERS = {
+    "unhidden-row": ("[data-controls]", "el => { el.hidden = false; }"),
+    "canvas-left": ("[data-hero]", "el => el.append(document.createElement('canvas'))"),
+    "toggle-shown": ("[data-toggle]", "el => { el.hidden = false; }"),
+    "data-mode-left": ("[data-hero]", "el => { el.dataset.mode = 'quilt'; }"),
+}
+
+
+@pytest.mark.parametrize("planted", list(LEFTOVERS))
 def test_still_check_fails_on_a_live_leftover(make_page, base_url, planted):
-    """Planted controls: a controls row that shows, or a canvas left in the stage, must fail assert_still_page."""
+    """Planted controls: a controls row or toggle that shows, a canvas left in the stage, or a data-mode left on it
+    must fail assert_still_page."""
     page = make_page(reduced_motion="reduce")
     page.goto(f"{base_url}{HOME}")
     hero_result(page)
-    if planted == "unhidden-row":
-        page.locator("[data-controls]").evaluate("el => { el.hidden = false; }")
-    else:
-        page.locator("[data-hero]").evaluate("el => el.append(document.createElement('canvas'))")
+    selector, plant = LEFTOVERS[planted]
+    page.locator(selector).evaluate(plant)
     with pytest.raises(AssertionError):
         assert_still_page(page)
+
+
+DOM_JS = "const D = await import('/public/js/dom.js'); const { MODES } = await import('/public/js/motion.js');"
+
+
+def test_toggle_label_names_the_next_press(js):
+    r = js(DOM_JS + "return MODES.map((m) => [m, D.toggleLabel(m), D.liveHint(m)]);")
+    sew = {"unstitching", "tiles"}
+    assert [m for m, _, _ in r] == ["intro", "quilt", "unstitching", "tiles", "restitching", "sewing"]
+    for mode, label, hint in r:
+        assert label == (SEW_NAME if mode in sew else UNSTITCH_NAME), mode
+        assert hint == (TILES_HINT if mode in sew else QUILT_HINT), mode
+
+
+def test_set_hero_state_writes_the_live_hint(js):
+    r = js(DOM_JS + r"""
+        const stage = document.createElement('div'); const hint = document.createElement('p');
+        return [['live', 'ok'], ['still', 'loading'], ['still', 'too-slow']].map(([state, reason]) => {
+          D.setHeroState(stage, hint, state, reason);
+          return hint.textContent;
+        });
+    """)
+    assert r == [QUILT_HINT, "", STILL_HINT]
+
+
+def test_set_toggle_and_data_mode_write_their_targets(js):
+    r = js(DOM_JS + r"""
+        const stage = document.createElement('div'); const button = document.createElement('button');
+        const hint = document.createElement('p');
+        D.setToggle(button, hint, 'unstitching');
+        const pressed = [button.textContent, hint.textContent];
+        D.setDataMode(stage, 'tiles');
+        const set = stage.getAttribute('data-mode');
+        D.setDataMode(stage, null);
+        return { pressed, set, cleared: stage.hasAttribute('data-mode') };
+    """)
+    assert r == {"pressed": [SEW_NAME, TILES_HINT], "set": "tiles", "cleared": False}

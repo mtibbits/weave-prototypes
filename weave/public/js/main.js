@@ -84,7 +84,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
 
   stage.append(canvas);
   stage.classList.add('is-live');
-  showLiveControls(controls, pause, true);
+  showLiveControls(controls, [pause], true);
 
   const resize = () => {
     const width = stage.clientWidth;
@@ -196,7 +196,7 @@ function startLive({ scene: S, motion: M, tiles }, slots) {
     visibility.disconnect();
     document.removeEventListener('visibilitychange', onVisibilityChange);
     pause.removeEventListener('click', onPause);
-    showLiveControls(controls, pause, false);
+    showLiveControls(controls, [pause], false);
     canvas.removeEventListener('webglcontextlost', onContextLost);
     canvas.remove();
     stage.classList.remove('is-live');

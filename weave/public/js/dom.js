@@ -64,13 +64,34 @@ export function setStageLabel(stage, panels) {
 
 export const STILL_HINT = 'Your browser shows a picture of the quilt. The panels below have everything.';
 
-// The one writer of the stage's state attributes and of the hint: #7 reuses it for live/ok and the runtime
-// reasons, and #8 extends it (for example with an optional hint argument) to write the live hint, rather than
-// writing the hint around it.
+// --- The toggle and the live hint (#8): the label names what a press would do now, and the hint keeps in step. ---
+
+export const UNSTITCH_LABEL = 'Unstitch';
+export const SEW_LABEL = 'Sew it back';
+export const toggleLabel = (mode) => (mode === 'unstitching' || mode === 'tiles' ? SEW_LABEL : UNSTITCH_LABEL);
+export const QUILT_HINT = 'Click the quilt, or press Unstitch, to lay its blocks out as a dashboard.';
+export const TILES_HINT = 'Click the background, or press Sew it back, to sew the quilt together again.';
+export const liveHint = (mode) => (toggleLabel(mode) === SEW_LABEL ? TILES_HINT : QUILT_HINT);
+
+// The one writer of the stage's state attributes and of the hint: #7's live/ok and runtime reasons, and the still
+// hint. The live path always starts in quilt mode, so live writes QUILT_HINT; setToggle keeps it in step after that.
 export function setHeroState(stage, hint, state, reason) {
   stage.dataset.heroState = state;
   stage.dataset.heroReason = reason;
-  hint.textContent = state === 'still' && reason !== 'loading' ? STILL_HINT : '';
+  if (state === 'live') hint.textContent = QUILT_HINT;
+  else hint.textContent = reason !== 'loading' ? STILL_HINT : '';
+}
+
+// The one writer of the toggle's label and the live hint, together, on every mode the director enters.
+export function setToggle(button, hint, mode) {
+  button.textContent = toggleLabel(mode);
+  hint.textContent = liveHint(mode);
+}
+
+// The one writer of data-mode: the settled mode on the live path; null removes it (the still path has none).
+export function setDataMode(stage, mode) {
+  if (mode === null) delete stage.dataset.mode;
+  else stage.dataset.mode = mode;
 }
 
 // --- The live hero's controls and URL hooks (#7). ---
@@ -84,10 +105,10 @@ export function setPaused(button, paused) {
   button.textContent = paused ? PLAY_LABEL : PAUSE_LABEL;
 }
 
-// Shows or hides the controls row and Pause together.
-export function showLiveControls(controls, pause, live) {
+// Shows or hides the controls row and its buttons (Pause and the toggle) together.
+export function showLiveControls(controls, buttons, live) {
   controls.hidden = !live;
-  pause.hidden = !live;
+  for (const button of buttons) button.hidden = !live;
 }
 
 // The page's URL hooks, read once at start: ?nowatchdog, ?watchdogLimitMs=<ms> (Coalesce's form: an absent key
