@@ -238,8 +238,11 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
     if (paused) draw();
   }
 
+  // A drag ends on its own pointer's release or cancel, and also on anything that means that release is lost: a
+  // new press (a touch tap is primary too), lost capture, or a move with the button up.
   const onPointerDown = (event) => {
     if (!event.isPrimary || event.button !== 0) return;
+    if (press && press.grabbed) endDrag();
     suppressClick = false;
     const hit = quilt.pick(event.clientX, event.clientY);
     const armed = director.mode === 'tiles' && hit.part === 'tile';
@@ -252,6 +255,10 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   };
   const onPointerMove = (event) => {
     if (!press || event.pointerId !== press.id) return;
+    if ((event.buttons & 1) === 0) {
+      onPointerEnd(event);
+      return;
+    }
     if (!press.moved) {
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= M.DRAG.thresholdPx) return;
       press.moved = true;
@@ -271,6 +278,7 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerEnd);
   canvas.addEventListener('pointercancel', onPointerEnd);
+  canvas.addEventListener('lostpointercapture', onPointerEnd);
 
   // The toggle and a click on the canvas (at ?pose=rest too). While paused a press snaps, so it is drawn at once.
   // A toggle mid-drag drops the tile first, so the sew-back starts from its new slot.
@@ -281,6 +289,7 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   };
   toggle.addEventListener('click', onToggle);
   const onCanvasClick = (event) => {
+    if (director.dragging) endDrag();
     if (suppressClick) {
       suppressClick = false;
       return;
@@ -327,6 +336,7 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerEnd);
     canvas.removeEventListener('pointercancel', onPointerEnd);
+    canvas.removeEventListener('lostpointercapture', onPointerEnd);
     canvas.removeEventListener('webglcontextlost', onContextLost);
     canvas.remove();
     stage.classList.remove('is-live');

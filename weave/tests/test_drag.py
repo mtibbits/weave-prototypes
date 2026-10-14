@@ -135,12 +135,11 @@ CELLS_IN = r"""async (el, slots) => {
 
 
 def tiles_settled(page):
-    """Wait until every block's centre is within 1e-3 of its tile slot (5 s)."""
-    page.wait_for_function(r"""async () => {
-        const L = await import('/public/js/layout.js');
-        return document.querySelector('[data-hero]').__weave.snapshot().blocks.every((b) => [0, 1].every((k) =>
-          Math.abs([0, 40, 1640, 1680].reduce((s, j) => s + b.positions[3 * j + k], 0) / 4 - L.slotCentre(b.slot, 'tiles')[k]) <= 1e-3));
-    }""", timeout=5000)
+    """Wait until every block's centre is within 1e-3 of its tile slot (5 s). The predicate is synchronous:
+    wait_for_function takes a returned Promise as truthy and would not wait at all."""
+    page.wait_for_function(r"""(tiles) => document.querySelector('[data-hero]').__weave.snapshot().blocks.every((b) =>
+        [0, 1].every((k) => Math.abs([0, 40, 1640, 1680].reduce((s, j) => s + b.positions[3 * j + k], 0) / 4
+          - tiles[b.slot][k]) <= 1e-3))""", arg=layout(page)["tiles"], timeout=5000)
 
 
 def test_drag_reorders_the_tiles(make_page, base_url):
@@ -367,6 +366,83 @@ def test_pause_after_drop_lands_the_tiles(make_page, base_url):
     held = frames(page)
     page.wait_for_timeout(300)
     assert frames(page) == held
+    assert errors == []
+
+
+def sashing_follows_the_faces(page):
+    """After a sew-back: no sashing under a square block's slot, and some under every planned block's."""
+    snap = page.eval_on_selector("[data-hero]", "el => el.__weave.snapshot().blocks.map((b) => [b.slot, b.face])")
+    cells = page.eval_on_selector("[data-hero]", CELLS_IN, [slot for slot, _ in snap])
+    return all((n > 0) == (face == "planned") for (_, face), n in zip(snap, cells)), list(zip(snap, cells))
+
+
+def settled_drop(page):
+    """The dropped tile lands: every block back at its tile slot and flat at z = 0."""
+    tiles_settled(page)
+    page.wait_for_function("() => { const b = document.querySelector('[data-hero]').__weave.snapshot().blocks"
+                           ".find((x) => x.id === 'manpower');"
+                           " return [0, 40, 1640, 1680].every((j) => Math.abs(b.positions[3 * j + 2]) <= 1e-3); }",
+                           timeout=5000)
+
+
+def drag_again_then_sew_back_by_click(page):
+    """A later drag still works, and a background click sews back with the sashing re-cut for the new order."""
+    drag(page, tile_xy(page, 6), tile_xy(page, 8))
+    want = EXPECTED[:6] + EXPECTED[7:9] + [EXPECTED[6]] + EXPECTED[9:]
+    assert order(page) == want
+    tiles_settled(page)
+    page.mouse.click(*project(page, [0, 0, 0]))  # the gutter between tiles: the background
+    wait_for_data_mode(page, "quilt")
+    ok, cells = sashing_follows_the_faces(page)
+    assert ok, cells
+
+
+def test_a_second_primary_press_drops_the_drag(make_page, base_url):
+    """A touch tap during a mouse drag (isPrimary is per pointer type) ends the drag; nothing stays lifted."""
+    page, errors = open_live(make_page, base_url, query=REST)
+    unstitch(page)
+    drag(page, tile_xy(page, 0), tile_xy(page, 5), release=False)
+    x, y = project(page, [0, 0, 0])
+    page.evaluate("""([x, y]) => { const c = document.querySelector('[data-hero] canvas');
+        for (const type of ['pointerdown', 'pointerup']) c.dispatchEvent(new PointerEvent(type, { pointerId: 7,
+          pointerType: 'touch', isPrimary: true, button: 0, clientX: x, clientY: y, bubbles: true })); }""", [x, y])
+    page.mouse.up()
+    assert order(page) == EXPECTED
+    settled_drop(page)
+    drag_again_then_sew_back_by_click(page)
+    assert errors == []
+
+
+def test_lost_capture_drops_the_drag(make_page, base_url):
+    """Capture lost mid-drag (no pointercancel) drops the tile; a buttonless hover never drags it."""
+    page, errors = open_live(make_page, base_url, query=REST)
+    unstitch(page)
+    page.evaluate("() => document.querySelector('[data-hero] canvas').addEventListener('pointerdown',"
+                  " (e) => { window.__pointerId = e.pointerId; }, { once: true })")
+    drag(page, tile_xy(page, 0), tile_xy(page, 5), release=False)
+    page.evaluate("() => document.querySelector('[data-hero] canvas').releasePointerCapture(window.__pointerId)")
+    box = page.locator("[data-hero]").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] + 60, steps=5)
+    page.mouse.up()
+    page.mouse.move(*tile_xy(page, 9), steps=10)
+    assert order(page) == EXPECTED
+    settled_drop(page)
+    drag_again_then_sew_back_by_click(page)
+    assert errors == []
+
+
+def test_a_buttonless_move_drops_the_drag(make_page, base_url):
+    """A drag whose release was lost (Alt+Tab, a dialog): the next move with no button held drops the tile."""
+    page, errors = open_live(make_page, base_url, query=REST)
+    unstitch(page)
+    drag(page, tile_xy(page, 0), tile_xy(page, 5), release=False)
+    x, y = tile_xy(page, 9)
+    page.evaluate("""([x, y]) => document.querySelector('[data-hero] canvas').dispatchEvent(new PointerEvent('pointermove',
+        { pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 0, clientX: x, clientY: y, bubbles: true }))""", [x, y])
+    assert order(page) == EXPECTED
+    settled_drop(page)
+    page.mouse.up()
+    drag_again_then_sew_back_by_click(page)
     assert errors == []
 
 

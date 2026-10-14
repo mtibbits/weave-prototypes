@@ -532,3 +532,16 @@ def test_pause_after_drop_snaps_the_tiles(js):
     assert r["landed"] is True
     assert r["others"] is True
     assert r["modes"] == ["tiles", "tiles"] and r["dragging"] is True
+
+
+def test_click_mid_drag_drops_then_sews_back(js):
+    r = drag(js, r"""
+        const t = tiles(make().director);
+        t.grab(0, c(0)); t.dragTo(c(5));
+        const acted = t.click(HITS.none, 100);
+        const dragging = t.dragging;
+        const frames = untilMode(t, 'quilt');
+        return { acted, dragging, frames, home: allAtSlots(t, quiltPose), order: slotsOf(t) };
+    """)
+    assert r["acted"] is True and r["dragging"] is False
+    assert r["frames"] > 0 and r["home"] is True and r["order"] == MOVED

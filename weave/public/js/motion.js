@@ -227,11 +227,9 @@ export class Director {
     return { position: this.springs.p[i].slice(), rotY: mix('rotY'), rotZ: mix('rotZ'), morph: mix('morph') };
   }
 
-  // A toggle mid-drag drops the tile first, so the sew-back starts from its current slot.
   toggle(now, origin = [0, 0]) {
     const next = { quilt: 'unstitching', tiles: 'restitching', unstitching: 'restitching', restitching: 'unstitching' };
     if (!(this.current in next)) return false;
-    this.drop();
     this.begin(next[this.current], origin);
     return this.snapIfPaused(now);
   }
@@ -282,7 +280,9 @@ export class Director {
 
   // Starts a transition from the current pose. From a settled mode each block's path waits stagger x its distance
   // from origin (Coalesce's burst); a reversal starts every path now and keeps the springs' velocities.
+  // A toggle or click mid-drag drops the tile first (#9), so the transition starts from its current slot.
   begin(next, origin) {
+    this.drop();
     const reversal = this.leg !== null;
     const end = LEGS[next];
     const { pathDur, stagger, fadeDur } = DIRECTOR;
