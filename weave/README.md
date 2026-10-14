@@ -2,7 +2,7 @@
 
 The home page for WEAVE, the Workforce Engagement, Actions & Visibility Environment: the planned web dashboard that grows out of the Coalesce Excel add-in. It is a work in progress, and every number on it is sample data.
 
-The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. On desktop the hero is the live 3D quilt, hanging from its rod and swaying gently, with a Pause button beside it. Phones, reduced motion and any browser where the 3D scene can't run get a still picture of the quilt instead.
+The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. On desktop the hero is the live 3D quilt, hanging from its rod and swaying gently, with Pause and Unstitch buttons beside it: Unstitch (or a click on the quilt) lays its blocks out as a dashboard of tiles, and Sew it back (or a click on the background) sews it together again. Phones, reduced motion and any browser where the 3D scene can't run get a still picture of the quilt instead.
 
 ## Preview
 
@@ -57,7 +57,7 @@ python -m pip install -r weave/requirements-dev.txt
 python -m playwright install chromium
 ```
 
-To check the page's budgets (transfer size, time to the first live frame, idle frame times and the still) and its hero states, run `verify.py` from the repo root with the venv active. It opens a visible browser, so the frame times use the real GPU; keep that window in front until it closes. `--headless` is only a smoke run, never evidence for the frame times. The report lands in `weave/verify-output/report.json`.
+To check the page's budgets (transfer size, time to the first live frame, frame times over five seconds of idle plus one unstitch and sew-back cycle, and the still) and its hero states, run `verify.py` from the repo root with the venv active. It opens a visible browser, so the frame times use the real GPU; keep that window in front until it closes. `--headless` is only a smoke run, never evidence for the frame times. The report lands in `weave/verify-output/report.json`.
 
 ```
 python weave/tools/verify.py

@@ -33,11 +33,47 @@ STILL_SIZE = (1600, 1000)
 EXPECTED_STATES = {"desktop": ["live", "ok"], "reduced_motion": ["still", "reduced-motion"], "phone": ["still", "no-hover"]}
 # The idle window opens no earlier than this after going live: past the watchdog's 2 s ruling.
 SETTLE_AFTER_LIVE_MS = 2500
+# The modes one Unstitch and one Sew it back must pass through, in order, for the window to count (#8).
+EXPECTED_CYCLE = ["unstitching", "tiles", "restitching", "quilt"]
+# Recorded beside the pooled frame rows, not budgeted, so a slow transition stays visible; the max catches a single
+# long frame (the first flip's tile shader compile and texture uploads) that no p95 can see.
+CYCLE_MEASURES = ("cycle_frame_median_ms", "cycle_frame_p95_ms", "cycle_frame_max_ms")
 
 FRAME_TIMES = """() => new Promise((resolve) => {
   const deltas = []; let last = performance.now(); const end = last + 5000;
   const tick = (now) => { deltas.push(now - last); last = now;
     if (now < end) requestAnimationFrame(tick); else resolve(deltas); };
+  requestAnimationFrame(tick);
+})"""
+# The desktop window (#8): one continuous rAF loop, 5 s tagged idle, then the toggle is pressed, pressed again on
+# tiles, and the loop stops when quilt is entered from restitching (or after 15 s), so idle and cycle deltas are
+# one unbroken series. The empty-page baseline keeps FRAME_TIMES: it has no toggle.
+WINDOW_TIMES = """() => new Promise((resolve) => {
+  const stage = document.querySelector('[data-hero]');
+  const toggle = document.querySelector('[data-toggle]');
+  const idle = []; const cycle = []; const modes = [];
+  let phase = 'idle'; let last = performance.now(); const idleEnd = last + 5000; let capAt = 0;
+  const onMode = (event) => {
+    modes.push(event.detail.mode);
+    if (event.detail.mode === 'tiles') toggle.click();
+    else if (event.detail.mode === 'quilt' && event.detail.from === 'restitching') phase = 'done';
+  };
+  stage.addEventListener('weave:mode', onMode);
+  const tick = (now) => {
+    const dt = now - last; last = now;
+    if (phase === 'idle') {
+      idle.push(dt);
+      if (now >= idleEnd) { phase = 'cycle'; capAt = now + 15000; toggle.click(); }
+    } else {
+      cycle.push(dt);
+      if (phase === 'done' || now >= capAt) {
+        stage.removeEventListener('weave:mode', onMode);
+        resolve({ idle, cycle, modes });
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  };
   requestAnimationFrame(tick);
 })"""
 TRANSFER = """() => performance.getEntriesByType('navigation').concat(performance.getEntriesByType('resource'))
@@ -78,9 +114,19 @@ def new_context(browser, **options):
     return context
 
 
-def frame_stats(deltas):
-    deltas = deltas[1:]
+def median_p95(deltas):
     return round(statistics.median(deltas), 2), round(sorted(deltas)[int(len(deltas) * 0.95)], 2)
+
+
+def frame_stats(deltas):
+    """(median, p95) of a frame loop's deltas, without its first (the wait for the first frame)."""
+    return median_p95(deltas[1:])
+
+
+def window_stats(idle, cycle):
+    """(pooled, cycle_only) for #8's window: the idle and cycle deltas pooled as one loop (only the very first
+    delta dropped), and the cycle's own (median, p95, max)."""
+    return frame_stats(idle + cycle), (*median_p95(cycle), round(max(cycle), 2))
 
 
 def run(report, base, headless):
@@ -105,7 +151,11 @@ def run(report, base, headless):
                 page.evaluate("performance.getEntriesByName('weave:first-live-frame')[0].startTime"), 1)
             page.wait_for_timeout(SETTLE_AFTER_LIVE_MS)
             before = page.eval_on_selector("[data-hero]", FRAMES)
-            measures["frame_median_ms"], measures["frame_p95_ms"] = frame_stats(page.evaluate(FRAME_TIMES))
+            window = page.evaluate(WINDOW_TIMES)
+            pooled, cycle = window_stats(window["idle"], window["cycle"])
+            measures["frame_median_ms"], measures["frame_p95_ms"] = pooled
+            measures["cycle_frame_median_ms"], measures["cycle_frame_p95_ms"], measures["cycle_frame_max_ms"] = cycle
+            states["desktop_cycle"] = window["modes"]
             # The hook outlives a teardown (w302), so the window counts only if the quilt is still live and running.
             state, reason = page.eval_on_selector("[data-hero]", HERO)
             states["desktop_after_idle"] = {"state": state, "reason": reason,
@@ -145,12 +195,20 @@ def check(report):
         failures.append("baseline_frame_median_ms is missing, so frame_median_ms is checked against 16.7")
     idle = states.get("desktop_after_idle")
     idle_ok = isinstance(idle, dict) and idle.get("state") == "live" and idle.get("frames_rose") is True
+    cycle = states.get("desktop_cycle")
     for key, limit in budgets.items():
         value = measures.get(key)
         if value is None or value > limit:
             failures.append(f"{key} = {value} (budget {limit})")
-        elif key.startswith("frame_") and not idle_ok:
-            failures.append(f"{key} = {value} was not measured on a live, running quilt (after the window: {idle})")
+        elif key.startswith("frame_"):
+            if not idle_ok:
+                failures.append(f"{key} = {value} was not measured on a live, running quilt (after the window: {idle})")
+            elif cycle != EXPECTED_CYCLE:
+                failures.append(f"{key} = {value} was not measured over one unstitch and sew-back cycle"
+                                f" (modes: {cycle})")
+    for key in CYCLE_MEASURES:
+        if measures.get(key) is None:
+            failures.append(f"{key} is missing")
     if measures.get("still_size") != list(STILL_SIZE):
         failures.append(f"still_size = {measures.get('still_size')} (expected {list(STILL_SIZE)})")
     for name, expected in EXPECTED_STATES.items():
