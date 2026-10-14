@@ -257,7 +257,8 @@ STILL_HINT = "Your browser shows a picture of the quilt. The panels below have e
 
 UNSTITCH_NAME = "Unstitch"
 SEW_NAME = "Sew it back"
-QUILT_HINT = "Click the quilt, or press Unstitch, to lay its blocks out as a dashboard."
+QUILT_HINT = ("Click the quilt, or press Unstitch, to lay its blocks out as a dashboard; in the dashboard, drag a tile"
+              " to move it.")
 TILES_HINT = "Click the background, or press Sew it back, to sew the quilt together again."
 
 # An init script: a weave:mode listener on [data-hero] from the moment it is parsed (before the scene goes live),

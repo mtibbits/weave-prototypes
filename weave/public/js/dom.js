@@ -69,7 +69,7 @@ export const STILL_HINT = 'Your browser shows a picture of the quilt. The panels
 export const UNSTITCH_LABEL = 'Unstitch';
 export const SEW_LABEL = 'Sew it back';
 export const toggleLabel = (mode) => (mode === 'unstitching' || mode === 'tiles' ? SEW_LABEL : UNSTITCH_LABEL);
-export const QUILT_HINT = 'Click the quilt, or press Unstitch, to lay its blocks out as a dashboard.';
+export const QUILT_HINT = 'Click the quilt, or press Unstitch, to lay its blocks out as a dashboard; in the dashboard, drag a tile to move it.';
 export const TILES_HINT = 'Click the background, or press Sew it back, to sew the quilt together again.';
 export const liveHint = (mode) => (toggleLabel(mode) === SEW_LABEL ? TILES_HINT : QUILT_HINT);
 

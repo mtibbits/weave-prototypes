@@ -328,3 +328,20 @@ def test_set_toggle_keeps_an_unchanged_hint(js):
         return { settle, press: seen.takeRecords().length > 0, text: hint.textContent };
     """)
     assert r == {"settle": 0, "press": True, "text": QUILT_HINT}
+
+
+def test_quilt_hint_mentions_dragging(js):
+    assert "drag a tile to move it" in js(DOM_JS + "return D.QUILT_HINT;")
+
+
+@pytest.mark.parametrize("width", [360, 768, 1440])
+def test_hint_height_is_steady_across_modes(make_page, base_url, width):
+    """#9's longer quilt hint must not make the page jump when the hint changes on unstitch."""
+    page, errors = open_live(make_page, base_url, query="?pose=rest&nowatchdog", viewport={"width": width, "height": 800})
+    height = "() => document.querySelector('.hero-hint').getBoundingClientRect().height"
+    quilt = page.evaluate(height)
+    page.get_by_role("button", name=UNSTITCH_NAME, exact=True).click()
+    page.wait_for_function("() => document.querySelector('[data-hero]').dataset.mode === 'tiles'", timeout=10000)
+    tiles = page.evaluate(height)
+    assert abs(quilt - tiles) <= 0.5, (quilt, tiles)
+    assert errors == []
