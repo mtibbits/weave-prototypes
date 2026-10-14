@@ -450,3 +450,186 @@ def test_tile_planes_hide_in_the_quilt_pose(paint_js):
         return { built, tiled, back: seen() };
     """)
     assert r == {"built": [False] * 12, "tiled": [True] * 12, "back": [False] * 12}
+
+
+# --- #9: refolding a block for a new slot, the re-cut sashing, and the slot-aware pick and snapshot. ---
+
+# flatten(q, ...is) sets each block's morph influence to 1 (placeBlock's precondition); swap(q, a, b) refolds blocks a
+# and b into each other's slots; quiltAt(q, i) is block i's quilt pose at its current slot; DRAGGED is the order a
+# drag of slot 0 to slot 5 gives (moveItem(DEFAULT_IDS, 0, 5)), as entries.
+PLACE_JS = POSE_JS + r"""
+    const flatten = (q, ...is) => is.forEach((i) => { q.blocks[i].morphTargetInfluences[0] = 1; });
+    const swap = (q, a, b) => { flatten(q, a, b); const sa = q.blocks[a].userData.slot; q.placeBlock(a, q.blocks[b].userData.slot); q.placeBlock(b, sa); };
+    const quiltAt = (q, i) => ({ position: [...L.slotCentre(q.blocks[i].userData.slot), q.blocks[i].position.z], rotY: 0,
+                                 rotZ: q.blocks[i].rotation.z, morph: 0 });
+    const EXPECTED = ['hiring', 'training', 'awards', 'promotions', 'travel', 'manpower', 'feedback', 'actions',
+                      'oversight', 'access', 'desks', 'suggest'];
+    const DRAGGED = EXPECTED.map((id) => DEFAULTS.find((e) => e.id === id));
+    const cellsIn = (snap, slot) => {
+      const { positions: sp, indices: si } = snap.sashing;
+      const [cx, cy] = L.slotCentre(slot);
+      let n = 0;
+      for (let t = 0; t < si.length; t += 3) {
+        const x = (sp[3 * si[t]] + sp[3 * si[t + 1]] + sp[3 * si[t + 2]]) / 3;
+        const y = (sp[3 * si[t] + 1] + sp[3 * si[t + 1] + 1] + sp[3 * si[t + 2] + 1]) / 3;
+        if (Math.abs(x - cx) < 0.5 && Math.abs(y - cy) < 0.5) n += 1;
+      }
+      return n;
+    };
+    const worst = (a, b) => a.reduce((m, v, k) => Math.max(m, Math.abs(v - b[k])), 0);
+"""
+
+
+def test_place_block_refolds_for_the_new_slot(paint_js):
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        const before = q.blocks.map((_, i) => q.blockBase(i));
+        flatten(q, 0, 4);
+        q.placeBlock(0, 5);
+        q.placeBlock(4, 3);
+        const fresh = build(DRAGGED);
+        const pairs = [[0, 5], [4, 3]].map(([i, k]) => {
+          const a = q.blockBase(i); const b = fresh.blockBase(k);
+          return { id: q.blocks[i].userData.id, freshId: fresh.blocks[k].userData.id, slot: a.slot,
+                   positions: worst(a.positions, b.positions), normals: worst(a.normals, b.normals) };
+        });
+        const unmoved = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11].every((i) => JSON.stringify(q.blockBase(i)) === JSON.stringify(before[i]));
+        const m = q.blockBase(0);
+        const [cx, cy] = L.slotCentre(5);
+        let oracle = 0;
+        for (let j = 0; j < 1681; j += 1) {
+          const lx = (j % 41) / 40 - 0.5; const ly = 0.5 - Math.floor(j / 41) / 40;
+          oracle = Math.max(oracle, Math.abs(m.positions[3 * j + 2] - (L.puffZ(lx + 0.5, ly + 0.5) + L.foldZ(cx + lx, cy + ly))));
+        }
+        const moved = worst(m.positions, before[0].positions);
+        return { pairs, unmoved, oracle, moved, tileSlot: tileOf(q, 0).userData.slot, tilt: [m.tilt, q.blockBase(4).tilt] };
+    """)
+    assert [(p["id"], p["freshId"], p["slot"]) for p in r["pairs"]] == [("manpower", "manpower", 5),
+                                                                        ("promotions", "promotions", 3)]
+    for p in r["pairs"]:
+        assert p["positions"] <= 1e-6 and p["normals"] <= 1e-6, p
+    assert r["unmoved"] is True
+    assert r["oracle"] <= 1e-6 and r["moved"] > 1e-3, r
+    assert r["tileSlot"] == 5
+    assert r["tilt"][0] == 0 and r["tilt"][1] != 0
+
+
+def test_place_block_needs_a_flat_block(paint_js):
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        const before = q.blockBase(0);
+        let message = null;
+        try { q.placeBlock(0, 5); } catch (err) { message = err.message; }
+        return { message, unchanged: JSON.stringify(q.blockBase(0)) === JSON.stringify(before) };
+    """)
+    assert r == {"message": "WEAVE: placeBlock needs a flat block (morph influence 1).", "unchanged": True}
+
+
+def test_refold_is_invisible_while_flat(paint_js):
+    """U1a: at influence 1 the base never reaches the screen. Block 0 faces the camera, flat, with its tile hidden
+    (a tile pose is culled by FrontSide). Control: at influence 0.5 the same refold does change the picture."""
+    r = build(paint_js, PLACE_JS + r"""
+        const shot = (q, morph) => {
+          q.setBlockPose(0, { position: q.blocks[0].position.toArray(), rotY: 0, rotZ: 0, morph });
+          tileOf(q, 0).visible = false;
+          q.render();
+          return q.renderer.domElement.toDataURL();
+        };
+        const q = build();
+        const flatBefore = shot(q, 1);
+        q.placeBlock(0, 5);
+        const flatAfter = shot(q, 1);
+        const c = build();
+        const halfBefore = shot(c, 0.5);
+        shot(c, 1);
+        c.placeBlock(0, 5);
+        const halfAfter = shot(c, 0.5);
+        return { flat: flatBefore === flatAfter, half: halfBefore === halfAfter };
+    """)
+    assert r["flat"] is True
+    assert r["half"] is False  # the control: a half-flat block shows its refold
+
+
+def test_pick_reports_the_current_slot(paint_js):
+    """U1b: a refolded block is raycast at its new slot and fold, and its bounding sphere follows the fold."""
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        const at = (p) => { const [x, y] = q.project(p); return q.pick(x, y); };
+        const sphere = q.blocks[0].geometry.boundingSphere.center.z;
+        swap(q, 0, 5);
+        q.blocks.forEach((b, i) => q.setBlockPose(i, tilePose(b.userData.slot)));
+        q.setFade(0);
+        const tile = at([...L.slotCentre(5, 'tiles'), 0]);
+        q.setFade(1);
+        q.blocks.forEach((_, i) => q.setBlockPose(i, quiltAt(q, i)));
+        const snap = q.snapshot();
+        const block = at(snap.blocks[5].positions.slice(3 * 840, 3 * 841));
+        return { tile: [tile.part, tile.slot], block: [block.part, block.slot], id: snap.blocks[5].id,
+                 sphere: Math.abs(q.blocks[0].geometry.boundingSphere.center.z - sphere) };
+    """)
+    assert r["tile"] == ["tile", 5]
+    assert r["block"] == ["block", 5] and r["id"] == "manpower"
+    assert r["sphere"] > 1e-4, r
+
+
+def test_snapshot_lists_blocks_in_slot_order(paint_js):
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        swap(q, 0, 5);
+        const snap = q.snapshot();
+        return { slots: snap.blocks.map((b) => b.slot), ids: [snap.blocks[0].id, snap.blocks[5].id] };
+    """)
+    assert r["slots"] == list(range(12))
+    assert r["ids"] == ["travel", "manpower"]
+
+
+def test_reseam_follows_the_planned_slots(paint_js):
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        swap(q, 3, 4);
+        q.blocks.forEach((_, i) => q.setBlockPose(i, quiltAt(q, i)));
+        const stale = q.snapshot();
+        q.reseam();
+        const snap = q.snapshot();
+        const sp = snap.sashing.positions;
+        let checked = 0; let missing = 0;
+        q.blocks.forEach((mesh) => {
+          if (mesh.userData.face === 'planned') return;
+          const s = snap.blocks[mesh.userData.slot].positions;
+          for (let r = 0; r <= 40; r += 1) {
+            for (let c = 0; c <= 40; c += 1) {
+              if (r !== 0 && r !== 40 && c !== 0 && c !== 40) continue;
+              const j = 3 * (r * 41 + c);
+              checked += 1;
+              let hit = false;
+              for (let k = 0; k < sp.length && !hit; k += 3) {
+                hit = Math.abs(sp[k] - s[j]) <= 1e-6 && Math.abs(sp[k + 1] - s[j + 1]) <= 1e-6
+                  && Math.abs(sp[k + 2] - s[j + 2]) <= 1e-6;
+              }
+              if (!hit) missing += 1;
+            }
+          }
+        });
+        return { stale: cellsIn(stale, 3), planned: cellsIn(snap, 3), square: cellsIn(snap, 4),
+                 untilted: q.blocks.filter((b) => b.userData.face !== 'planned').map((b) => cellsIn(snap, b.userData.slot)),
+                 checked, missing, ids: [snap.blocks[3].id, snap.blocks[4].id] };
+    """)
+    assert r["stale"] == 0  # the control: before reseam() the old sashing still has awards' hole at slot 3
+    assert r["planned"] > 0 and r["square"] == 0
+    assert r["untilted"] == [0] * 8
+    assert (r["checked"], r["missing"]) == (1280, 0)
+    assert r["ids"] == ["promotions", "awards"]
+
+
+def test_plane_point_matches_pick_none(paint_js):
+    r = build(paint_js, PLACE_JS + r"""
+        const q = build();
+        const { quiltW, quiltH } = L.LAYOUT;
+        return [[-(quiltW / 2 + 0.3), 0, 0], [quiltW / 2 + 0.3, 0.5, 0], [0.4, -(quiltH / 2 + 0.25), 0]].map((p) => {
+          const [x, y] = q.project(p);
+          const hit = q.pick(x, y);
+          return { part: hit.part, err: worst(hit.point, q.planePoint(x, y)) };
+        });
+    """)
+    assert [p["part"] for p in r] == ["none"] * 3
+    assert all(p["err"] == 0 for p in r), r
