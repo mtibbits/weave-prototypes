@@ -230,7 +230,6 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
 
   function endDrag() {
     director.drop();
-    if (press) press.grabbed = false;
     if (reseamDue) {
       quilt.reseam();
       reseamDue = false;
@@ -242,12 +241,12 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   // new press (a touch tap is primary too), lost capture, or a move with the button up.
   const onPointerDown = (event) => {
     if (!event.isPrimary || event.button !== 0) return;
-    if (press && press.grabbed) endDrag();
+    if (director.dragging) endDrag();
     suppressClick = false;
     const hit = quilt.pick(event.clientX, event.clientY);
     const armed = director.mode === 'tiles' && hit.part === 'tile';
     press = { id: event.pointerId, x: event.clientX, y: event.clientY, at: quilt.planePoint(event.clientX, event.clientY),
-      hit, moved: false, grabbed: false, armed };
+      hit, moved: false, armed };
     if (armed) {
       canvas.setPointerCapture(event.pointerId);
       event.preventDefault();
@@ -262,16 +261,16 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
     if (!press.moved) {
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= M.DRAG.thresholdPx) return;
       press.moved = true;
-      if (press.armed) press.grabbed = director.grab(director.blockAt(press.hit.slot), press.at);
+      if (press.armed) director.grab(director.blockAt(press.hit.slot), press.at);
     }
-    if (!press.grabbed) return;
+    if (!director.dragging) return;
     apply(director.dragTo(quilt.planePoint(event.clientX, event.clientY)));
     if (paused) draw();
   };
   const onPointerEnd = (event) => {
     if (!press || event.pointerId !== press.id) return;
     if (press.moved) suppressClick = true;
-    if (press.grabbed) endDrag();
+    if (director.dragging) endDrag();
     press = null;
   };
   canvas.addEventListener('pointerdown', onPointerDown);
@@ -352,10 +351,13 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   stage.__weave = {
     get mode() { return stopped ? stoppedMode : director.mode; },
     // order and slots list the slots, so they follow a drag (#9).
-    get order() { return order.map((_, k) => order[director.blockAt(k)]); },
+    get order() { return slots.map((_, k) => order[director.blockAt(k)]); },
     get slots() {
-      return slots.map((_, k) => slots[director.blockAt(k)]).map((entry) => ({ id: entry ? entry.id : null,
-        name: entry ? entry.name : null, status: entry ? entry.status : null, face: tiles.faceKind(entry) }));
+      return slots.map((_, k) => {
+        const entry = slots[director.blockAt(k)];
+        return { id: entry ? entry.id : null, name: entry ? entry.name : null, status: entry ? entry.status : null,
+          face: tiles.faceKind(entry) };
+      });
     },
     get clock() { return clock; },
     // Test-only: the last frame's h, in seconds.

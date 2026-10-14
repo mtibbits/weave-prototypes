@@ -307,10 +307,14 @@ def wait_for_mode(page, mode, timeout=10000):
                            timeout=timeout)
 
 
+def project(page, xyz):
+    """The client (CSS pixel) point where the world point `xyz` projects (through __weave.project)."""
+    return page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", xyz)
+
+
 def click_world(page, xyz):
-    """Click the canvas where the world point `xyz` projects (through __weave.project)."""
-    x, y = page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", xyz)
-    page.mouse.click(x, y)
+    """Click the canvas where the world point `xyz` projects."""
+    page.mouse.click(*project(page, xyz))
 
 
 # The four geometry checks per block from one snapshot: flat (one z), flipped (the first triangle faces away from the

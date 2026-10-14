@@ -109,12 +109,14 @@ export class Director {
     this.count = count;
     this.quiltPose = quiltPose;
     this.tilePose = tilePose;
-    this.slots = Array.from({ length: count }, (_, i) => i);
-    this.blocks = this.slots.slice();
+    this.slots = [];
+    this.blocks = [];
+    this.quilt = [];
+    this.tile = [];
+    for (let i = 0; i < count; i += 1) this.place(i, i);
     this.drag = null;
-    this.quilt = Array.from({ length: count }, (_, i) => quiltPose(i, i));
-    this.tile = Array.from({ length: count }, (_, i) => tilePose(i, i));
     this.isTile = Array.from({ length: count }, (_, i) => isTile(i));
+    this.tileCount = this.isTile.filter(Boolean).length;
     this.onEnter = onEnter;
     this.springs = new SpringSet(count);
     // SpringSet starts at the origin; every block starts at its quilt pose.
@@ -163,8 +165,7 @@ export class Director {
     const x = point[0] + offset[0];
     const y = point[1] + offset[1];
     this.hold(i, x, y);
-    const tileCount = this.isTile.filter(Boolean).length;
-    const to = Math.min(nearestSlot(x, y, 'tiles'), tileCount - 1);
+    const to = Math.min(nearestSlot(x, y, 'tiles'), this.tileCount - 1);
     if (to === this.drag.to) return [];
     this.drag.to = to;
     const moves = [];

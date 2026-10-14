@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from helpers import (DEFAULT_IDS, QUILT_HINT, SEW_NAME, UNSTITCH_NAME, assert_tile_geometry, frames, log_modes, modes,
-                     open_live, wait_for_data_mode, wait_for_mode, weave)
+from helpers import (DEFAULT_IDS, QUILT_HINT, SEW_NAME, UNSTITCH_NAME, assert_tile_geometry, click_world, frames, log_modes,
+                     modes, open_live, project, wait_for_data_mode, wait_for_mode, weave)
 from test_quilt_panels import SHIPPED, SLOT_BODIES
 from test_unstitch import CYCLE, REST, centre, fades, held_for, layout, press, tile_geometry, unstitch
 
@@ -17,10 +17,6 @@ REORDER = f"\nwindow.WEAVE_PANELS.panels.sort((a, b) => {json.dumps(EXPECTED)}.i
 # One window for a press's negative ("nothing happens") and its positive control.
 PRESS_WINDOW_MS = 800
 LIFT = 0.05  # motion.js's DRAG.lift
-
-
-def project(page, point):
-    return page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", point)
 
 
 def tile_xy(page, slot):
@@ -391,7 +387,7 @@ def drag_again_then_sew_back_by_click(page):
     want = EXPECTED[:6] + EXPECTED[7:9] + [EXPECTED[6]] + EXPECTED[9:]
     assert order(page) == want
     tiles_settled(page)
-    page.mouse.click(*project(page, [0, 0, 0]))  # the gutter between tiles: the background
+    click_world(page, [0, 0, 0])  # the gutter between tiles: the background
     wait_for_data_mode(page, "quilt")
     ok, cells = sashing_follows_the_faces(page)
     assert ok, cells
