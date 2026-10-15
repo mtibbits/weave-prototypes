@@ -322,6 +322,9 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     quilt.setPaused(paused);
     director.setPaused(paused, event.timeStamp);
     if (paused) {
+      // The hover jumps to its end too: the block under the pointer fully lifted, every other one back on its seams.
+      if (director.mode === 'quilt') pickHover();
+      easeHover(null);
       unschedule();
       draw();
     } else {

@@ -1,7 +1,7 @@
 """#10's hover: the tooltip (dom.js and weave.css, on a blank page) and, on the live page, naming and lifting a block."""
 import pytest
 
-from helpers import (HOVER_WINDOW_MS, LINK_CSS, PLANNED_WORDS, SEWN_WORDS, SUGGEST_WORDS, assert_tile_geometry,
+from helpers import (HOVER_WINDOW_MS, LINK_CSS, PLANNED_WORDS, SEAMS, SEWN_WORDS, SUGGEST_WORDS, assert_tile_geometry,
                      contrast_failures, frames, log_modes, open_live, project, wait_for_data_mode, wait_for_quilt, weave)
 from test_quilt_panels import SLOT_BODIES
 from test_unstitch import REST, layout, tile_geometry, unstitch
@@ -261,6 +261,26 @@ def test_paused_hover_snaps(make_page, base_url):
     assert abs(ratio / base - 1.03) <= 0.005, ratio / base
     assert h == {"id": "manpower", "amount": 1}
     assert frames(page) == held
+    assert errors == []
+
+
+def test_pause_snaps_an_easing_hover(make_page, base_url):
+    """Pause jumps the hover to its end too: a lift easing in lands at 1, one easing out at 0 (so the block is back
+    on its seams), whatever the pointer does next."""
+    page, errors = live_quilt(make_page, base_url)
+    base = edge(page, 0)
+    page.mouse.move(*centre_xy(page, 0))
+    page.locator("[data-pause]").focus()
+    page.keyboard.press("Enter")  # paused at once, the pointer still resting on the block mid-ease
+    assert hover_state(page) == {"id": "manpower", "amount": 1}
+    assert abs(edge(page, 0) / base - 1.03) <= 1e-6
+    page.keyboard.press("Enter")  # play again
+    wait_hover(page, "h.id === 'manpower' && h.amount === 1")
+    page.locator("[data-pause]").click()  # leaves the block and pauses before the lift has eased out
+    assert hover_state(page) == {"id": None, "amount": 0}
+    assert abs(edge(page, 0) / base - 1) <= 1e-6
+    r = page.eval_on_selector("[data-hero]", SEAMS)
+    assert (r["checked"], r["missing"]) == (1280, 0), r
     assert errors == []
 
 
