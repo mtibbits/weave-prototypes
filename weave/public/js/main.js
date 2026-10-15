@@ -503,6 +503,8 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     },
     // Test-only (#9): what is under a client point, as the canvas's press sees it.
     pick: (x, y) => quilt.pick(x, y),
+    // Test-only (#10): the hover's pick (a block index, or null), which verify.py times.
+    pickBlock: (x, y) => quilt.pickBlock(x, y),
     // #10's per-block calls for E2's #16 (scene.js has the contract); a paused page draws the change at once.
     revealStitches: (id, options) => perBlock('revealStitches', id, options),
     popStitches: (id, options) => perBlock('popStitches', id, options),

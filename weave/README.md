@@ -70,6 +70,8 @@ cd weave
 python -m pytest
 ```
 
+On a plain load the quilt plays a short intro before it settles, so a test that needs the settled quilt first calls `wait_for_quilt(page)` from `tests/helpers.py`, whose 15 s default covers going live, the intro and E2's sew-in with time to spare.
+
 The tests drive headless Chromium with Playwright. The desktop hero tests need it to report WebGL and a mouse (hover). That is verified on Windows with the GPU flags in `tests/conftest.py`. Elsewhere, if the desktop hero tests fail, suspect those flags before the page code.
 
 ## Licenses

@@ -180,13 +180,17 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   (the scene's world-space geometry as JSON-safe arrays). `order` and `slots` list the slots, so they follow a
   drag (#9). `lastDt`, `project([x, y, z])`, `fades()` (each faded part's `{ opacity, visible }`: the sashing, rod,
   shadow and fillers), `blockBase(id)` (a block's local base positions and normals, before its tilt, with its slot
-  and tilt) and `pick(clientX, clientY)` (what a press there would hit) are test-only.
-- `__weave.mode` is the director's state: `quilt`, `unstitching`, `tiles` or `restitching` (#8), with `intro` (#10)
-  and `sewing` (#16) reserved. After a fallback it keeps the value it had at the teardown, which may be
+  and tilt) and `pick(clientX, clientY)` (what a press there would hit) are test-only. #10 adds the per-block calls
+  E2's #16 drives, `revealStitches(id, { animate })`, `popStitches`, `popPins`, `restorePins` and `setFace(id, kind)`
+  (scene.js holds their contract; `snapshot()` lists the drawn `pins` and `stitches` and the `stitchDash` frame),
+  and the test-only `decorIdle`, `hover` (`{ id, amount }`), `groupMatrix()` and `pickBlock(clientX, clientY)`.
+- `__weave.mode` is the director's state: `intro` (#10), `quilt`, `unstitching`, `tiles` or `restitching` (#8), with
+  `sewing` (#16) reserved. A plain load starts in `intro`, which flies the blocks in and settles into `quilt`;
+  `?pose=rest` starts in `quilt`. After a fallback it keeps the value it had at the teardown, which may be
   `unstitching` or `restitching`; on the still path the signal is that `data-mode` is absent.
-- `data-mode` on the stage is the settled mode, `quilt` or `tiles`. It is set on the live path only, flips when a
-  transition settles (never on an unpaused press; a paused press settles at once), and is removed when a fallback
-  restores the still.
+- `data-mode` on the stage reads `quilt` or `tiles`. It is set on the live path only: it reads `quilt` from the
+  first entry (the intro's, which settles into the quilt), then flips when a transition settles (never on an unpaused
+  press; a paused press settles at once), and is removed when a fallback restores the still.
 - `weave:mode` is an event on the stage with `detail: { mode, from }`, dispatched every time the director enters a
   state, its first state included (`from: null`), from its single state-change path (D39). When it fires,
   `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped. A handler that

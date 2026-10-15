@@ -74,7 +74,8 @@ export const TILES_HINT = 'Click the background, or press Sew it back, to sew th
 export const liveHint = (mode) => (toggleLabel(mode) === SEW_LABEL ? TILES_HINT : QUILT_HINT);
 
 // The one writer of the stage's state attributes and of the hint: #7's live/ok and runtime reasons, and the still
-// hint. The live path always starts in quilt mode, so live writes QUILT_HINT; setToggle keeps it in step after that.
+// hint. The live path starts in `intro` (in `quilt` at `?pose=rest`), and `data-mode` reads `quilt` from the first
+// entry, so live writes QUILT_HINT; setToggle keeps it in step after that.
 export function setHeroState(stage, hint, state, reason) {
   stage.dataset.heroState = state;
   stage.dataset.heroReason = reason;

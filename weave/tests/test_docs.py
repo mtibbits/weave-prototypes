@@ -79,8 +79,46 @@ def test_root_readme_layout_lists_weave_tools():
 
 
 def test_spec_lists_the_mode_hooks():
-    """#8's hooks ship on the public page, so the design spec's hook list names them (Issue-7's lesson)."""
+    """#8's and #10's hooks ship on the public page, so the design spec's hook list names them (Issue-7's lesson)."""
     spec = (WEAVE / "docs" / "superpowers" / "specs" / "2026-10-09-weave-v0-design.md").read_text(encoding="utf-8")
     hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
-    for phrase in ("data-mode", "weave:mode", "restitching", "fades()"):
+    for phrase in ("data-mode", "weave:mode", "restitching", "fades()", "revealStitches", "setFace"):
         assert phrase in hooks, phrase
+    # The claim, not one phrasing: the director's states list intro (#10) as live, and sewing (#16) as reserved.
+    states = re.search(r"director's state: (.*?), with (.*?) reserved", " ".join(hooks.split()))
+    assert states, "the hook list no longer names the director's states and the reserved ones"
+    assert "`intro`" in states.group(1) and "`sewing`" in states.group(2), states.groups()
+
+
+def test_weave_readme_tests_describes_wait_for_quilt():
+    """A plain load plays the intro, so the README tells a test writer to wait for the settled quilt, and how long."""
+    prose = " ".join(re.sub(r"```.*?```", " ", section(WEAVE / "README.md", "Tests"), flags=re.S).split())
+    sentences = re.split(r"(?<=[.!?])\s+", prose)
+    assert any("wait_for_quilt" in s and "15 s" in s for s in sentences), sentences
+
+
+def frame_comment(text, constant):
+    """The run of // comment lines just above `export const <constant>` in a JS source ('' when there is none)."""
+    lines = text.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith(f"export const {constant} "))
+    block = []
+    for line in reversed(lines[:at]):
+        if not line.startswith("//"):
+            break
+        block.insert(0, line)
+    return "\n".join(block)
+
+
+def frame_claims(text):
+    """Whether the pin and dash frame comments state their claims (#20, #22 and #16 build on these frames)."""
+    pin = frame_comment(text, "PIN_LENGTH")
+    dash = frame_comment(text, "STITCH_DASH_LENGTH")
+    return all(p in pin for p in ("tip", "+Y", "PIN_LENGTH")) and all(p in dash for p in ("+X", "seam", "no lift"))
+
+
+def test_scene_js_documents_the_pin_and_dash_frames():
+    text = (WEAVE / "public" / "js" / "scene.js").read_text(encoding="utf-8")
+    assert frame_claims(text) is True
+    # Planted control: the same source with the pin frame's comment trimmed fails the check.
+    trimmed = text.replace(frame_comment(text, "PIN_LENGTH"), "// Pins.")
+    assert frame_claims(trimmed) is False

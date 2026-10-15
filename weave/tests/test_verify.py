@@ -124,6 +124,20 @@ def test_gpu_args_match_the_suites(verify):
     assert verify.GPU_ARGS == GPU_ARGS
 
 
+def test_verify_waits_like_wait_for_quilt(verify):
+    """#10: verify.py's windows open only once the intro has settled, on the tests' own predicate."""
+    import helpers
+    assert verify.QUILT_SETTLED == helpers.QUILT_SETTLED
+    calls = []
+
+    class FakePage:
+        def wait_for_function(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+    verify.wait_settled(FakePage())
+    assert len(calls) == 1 and calls[0][0][0] == helpers.QUILT_SETTLED, calls
+
+
 def test_paths_resolve_from_the_scripts_location(verify):
     assert verify.PUBLIC == WEAVE / "public"
     assert verify.OUT == WEAVE / "verify-output"
