@@ -462,6 +462,8 @@ AMBIENT = r"""async (el) => {
 
 
 def test_quilt_press_off_stage_keeps_the_tilt_bounded(make_page, base_url):
+    """A quilt press is never captured, so moving it off the stage leaves the tilt bounded. This guards the capture
+    scope: main.js's tilt clamp alone cannot redden it (its planted control also captured every press)."""
     page, errors = open_live(make_page, base_url)
     box = page.locator("[data-hero]").bounding_box()
     viewport = page.viewport_size

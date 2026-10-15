@@ -345,3 +345,12 @@ def test_hint_height_is_steady_across_modes(make_page, base_url, width):
     tiles = page.evaluate(height)
     assert abs(quilt - tiles) <= 0.5, (quilt, tiles)
     assert errors == []
+
+
+@pytest.mark.parametrize("width", [360, 1440])
+def test_still_hint_keeps_one_line_of_room(make_page, base_url, width):
+    """The still hint never changes, so the still path keeps one line of reserved room; only live grows it (#9)."""
+    page = make_page(reduced_motion="reduce", viewport={"width": width, "height": 800})
+    page.goto(f"{base_url}{HOME}")
+    assert hero_result(page) == ["still", "reduced-motion"]
+    assert page.eval_on_selector(".hero-hint", "el => getComputedStyle(el).minHeight") == "23.25px"
