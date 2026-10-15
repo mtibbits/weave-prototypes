@@ -175,8 +175,9 @@ function startLive({ scene: S, motion: M, tiles, layout: L }, slots) {
   }
 
   // ?pose=rest (D34) holds the quilt at rest: no sway, and the pointer is ignored, so the tilt stays 0. The loop
-  // and the watchdog run as usual. The pointer is clamped to the canvas, so no path (a captured drag included)
-  // tilts past AMBIENT's ceilings.
+  // and the watchdog run as usual. The pointer is clamped to the canvas: defensive, since only a tile press
+  // in tiles is captured (#9) and the ambient weight is 0 there, but a captured move past the edge never tilts
+  // past AMBIENT's ceilings.
   const clamp1 = (v) => Math.min(1, Math.max(-1, v));
   const onTilt = (event) => {
     const r = canvas.getBoundingClientRect();
