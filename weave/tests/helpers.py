@@ -261,6 +261,12 @@ QUILT_HINT = ("Click the quilt, or press Unstitch, to lay its blocks out as a da
               " to move it.")
 TILES_HINT = "Click the background, or press Sew it back, to sew the quilt together again."
 
+# --- The hover tooltip's status words (#10), by drawn face: literals from the issue, never imported from dom.js. ---
+
+SEWN_WORDS = "Sewn in"
+PLANNED_WORDS = "Pinned for later"
+SUGGEST_WORDS = "Have an idea for a panel?"
+
 # An init script: a weave:mode listener on [data-hero] from the moment it is parsed (before the scene goes live),
 # pushing { mode, from, hook: __weave.mode, data: data-mode } to window.__modes, then calling window.__onMode(event,
 # stage) if a test defined it; and every data-mode value the stage ever takes (old and new) to window.__dataModes.

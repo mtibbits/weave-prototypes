@@ -96,6 +96,43 @@ export function setDataMode(stage, mode) {
   else stage.dataset.mode = mode;
 }
 
+// --- The hover tooltip (#10): live only, built at go-live and removed at teardown. aria-hidden, since the stage label
+// and the panel lists already name every block; written with textContent only. ---
+
+// The status line, by the block's drawn face.
+export const HOVER_STATUS = Object.freeze({ sewn: 'Sewn in', planned: 'Pinned for later', suggest: 'Have an idea for a panel?' });
+const TIP_GAP = 12;
+
+export function createTooltip(stage) {
+  const tip = element('div', 'hero-tip');
+  tip.dataset.tooltip = '';
+  tip.setAttribute('aria-hidden', 'true');
+  tip.hidden = true;
+  tip.append(element('span', 'hero-tip-name'), element('span', 'hero-tip-status'));
+  stage.append(tip);
+  return tip;
+}
+
+// Shows the tooltip for block { name, face } beside the pointer at (x, y) in stage px: TIP_GAP right of and below it,
+// flipped to its left or above it on any axis where it would overflow the stage (which clips: overflow hidden).
+export function showTooltip(tip, { name, face }, x, y) {
+  const [nameEl, statusEl] = tip.children;
+  nameEl.textContent = name;
+  statusEl.textContent = HOVER_STATUS[face] ?? '';
+  tip.hidden = false;
+  const stage = tip.parentElement;
+  const place = (at, size, room) => {
+    const after = at + TIP_GAP;
+    return after + size <= room ? after : Math.max(0, at - TIP_GAP - size);
+  };
+  tip.style.left = `${place(x, tip.offsetWidth, stage.clientWidth)}px`;
+  tip.style.top = `${place(y, tip.offsetHeight, stage.clientHeight)}px`;
+}
+
+export function hideTooltip(tip) {
+  tip.hidden = true;
+}
+
 // --- The live hero's controls and URL hooks (#7). ---
 
 export const PAUSE_LABEL = 'Pause motion';
