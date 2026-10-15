@@ -1,12 +1,17 @@
 """motion.js's director: the state table, the one state-change path, the paused click guard, and (Task 3) the
 paths, stagger, settle and snap. Pure JS on a blank page: no Three, no DOM, no clock."""
+import json
+
 import pytest
+
+from helpers import DEFAULT_IDS
 
 # Builds a director over 12 blocks like scene.js's build: quilt poses at slotCentre with the planned blocks 4-7
 # lifted 0.01 and tilted 0.03, tile poses per the contract. The centre comes from the slot (#9: slot = i until a
 # drag moves block i), the lift and tilt from the block. `enters` records [mode, from, director.mode] per entry.
-# make({ isTile }) builds a fresh one; `d` is the default. allAtSlots(dir, poseOf) checks every block against
-# poseOf(i, dir.slotOf(i)).
+# make({ isTile, intro }) builds a fresh one (intro: true gives INTRO_TABLE, a fixed table that never shares
+# introScatter's seed, or a function is passed as introFrom); `d` is the default. allAtSlots(dir, poseOf) checks every
+# block against poseOf(i, dir.slotOf(i)). IDS is the shipped panels' ids, for the real seeded scatter.
 DIRECTOR_JS = r"""
     const M = await import('/public/js/motion.js');
     const L = await import('/public/js/layout.js');
@@ -15,9 +20,12 @@ DIRECTOR_JS = r"""
                                           rotZ: planned(i) ? 0.03 : 0, morph: 0 });
     const tilePose = (i, slot = i) => ({ position: [...L.slotCentre(slot, 'tiles'), 0], rotY: Math.PI, rotZ: 0,
                                          morph: 1 });
-    const make = ({ isTile = () => true } = {}) => {
+    const INTRO_TABLE = (i) => ({ offset: [0.5 * ((i % 3) - 1), 0.4, 0.8], wait: 0.05 * i });
+    const IDS = """ + json.dumps(DEFAULT_IDS) + r""";
+    const make = ({ isTile = () => true, intro = null } = {}) => {
       const enters = [];
-      const director = new M.Director({ count: 12, quiltPose, tilePose, isTile,
+      const introFrom = intro === true ? INTRO_TABLE : intro ?? undefined;
+      const director = new M.Director({ count: 12, quiltPose, tilePose, isTile, introFrom,
         onEnter: (mode, from) => enters.push([mode, from, director.mode]) });
       return { director, enters };
     };
@@ -155,6 +163,10 @@ def test_director_reads_no_clock(js):
           for (let i = 0; i < 60; i += 1) d.advance(1 / 60);
           d.toggle(1);
           for (let i = 0; i < 200; i += 1) d.advance(1 / 60);
+          const { director: e } = make({ intro: (i) => M.introScatter(IDS[i]) });
+          e.start('intro');
+          for (let i = 0; i < 200; i += 1) e.advance(1 / 60);
+          if (e.mode !== 'quilt') return e.mode;
         } finally {
           [Date.now, performance.now, Math.random] = saved;
         }
@@ -545,3 +557,152 @@ def test_click_mid_drag_drops_then_sews_back(js):
     """)
     assert r["acted"] is True and r["dragging"] is False
     assert r["frames"] > 0 and r["home"] is True and r["order"] == MOVED
+
+
+# --- #10: the intro leg. ---
+
+def test_intro_is_the_first_state(js):
+    r = step(js, r"""
+        const { director: e, enters: log } = make({ intro: true });
+        e.start('intro');
+        const fade0 = e.fade;
+        const seated = Array.from({ length: 12 }, (_, i) => {
+          const p = e.pose(i); const q = quiltPose(i); const o = INTRO_TABLE(i).offset;
+          return p.position.every((v, k) => v === q.position[k] + o[k]) && p.rotZ === q.rotZ;
+        });
+        for (let n = 0; n < 10; n += 1) e.advance(1 / 60);
+        return { log, fade0, seated, fade: e.fade, mode: e.mode };
+    """)
+    assert r["log"] == [["intro", None, "intro"]]
+    assert r["fade0"] == 0
+    assert r["seated"] == [True] * 12
+    assert r["fade"] is not None and 0 < r["fade"] < 1, r
+    assert r["mode"] == "intro"
+
+
+@pytest.mark.parametrize("rate", [60, 20])
+@pytest.mark.parametrize("scatter", ["table", "seeded"])
+def test_intro_settles_in_under_3_s(js, scatter, rate):
+    """U1: the intro settles (D40) inside 3 s of scene time, on the fixed table and on the real seeded scatter."""
+    intro = "true" if scatter == "table" else "(i) => M.introScatter(IDS[i])"
+    r = step(js, f"""
+        const {{ director: e, enters: log }} = make({{ intro: {intro} }});
+        e.start('intro');
+        let frames = -1;
+        for (let n = 1; n <= 600; n += 1) {{ e.advance(1 / {rate}); if (e.mode === 'quilt') {{ frames = n; break; }} }}
+        return {{ frames, tail: log.slice(1), home: allAt(e, quiltPose), fade: e.fade }};
+    """)
+    print(scatter, rate, r["frames"] / rate)
+    assert r["frames"] > 0 and r["frames"] / rate <= 3.0, r
+    assert r["tail"] == [["quilt", "intro", "quilt"]]
+    assert r["home"] is True
+    assert r["fade"] == 1
+
+
+def test_intro_without_tiles_only_fades(js):
+    r = step(js, r"""
+        const { director: e } = make({ isTile: () => false, intro: true });
+        e.start('intro');
+        let moved = 0; let time = null;
+        for (let n = 1; n <= 600; n += 1) {
+          e.advance(1 / 60);
+          if (!allAt(e, quiltPose)) moved += 1;
+          if (e.mode === 'quilt') { time = e.time; break; }
+        }
+        return { moved, time, fadeDur: M.INTRO.fadeDur, fade: e.fade };
+    """)
+    assert r["moved"] == 0
+    assert r["time"] is not None and abs(r["time"] - r["fadeDur"]) <= 1 / 60 + 1e-9, r
+    assert r["fade"] == 1
+
+
+def test_pause_during_intro_jumps_to_the_quilt(js):
+    r = step(js, r"""
+        const { director: e, enters: log } = make({ intro: true });
+        e.start('intro');
+        for (let n = 0; n < 10; n += 1) e.advance(1 / 60);
+        const mid = e.mode;
+        e.setPaused(true, 5);
+        return { mid, log: log.map(([m, f]) => [m, f]), home: allAt(e, quiltPose), fade: e.fade, snapAt: e.lastSnapAt };
+    """)
+    assert r["mid"] == "intro"
+    assert r["log"] == [["intro", None], ["quilt", "intro"]]
+    assert r["home"] is True and r["fade"] == 1 and r["snapAt"] == 5
+
+
+@pytest.mark.parametrize("action", ["toggle", "click"])
+def test_unstitch_during_intro_finishes_it_first(js, action):
+    act = "e.toggle(1)" if action == "toggle" else "e.click(HITS.block, 1)"
+    r = step(js, f"""
+        const log = [];
+        let atLift = null;
+        const e = new M.Director({{ count: 12, quiltPose, tilePose, isTile: () => true, introFrom: INTRO_TABLE,
+          onEnter: (mode, from) => {{ log.push([mode, from]); if (mode === 'unstitching') atLift = allAt(e, quiltPose); }} }});
+        e.start('intro');
+        for (let n = 0; n < 10; n += 1) e.advance(1 / 60);
+        const acted = {act};
+        const reached = untilMode(e, 'tiles');
+        const c = make({{ intro: true }}).director;
+        c.start('intro'); c.advance(1 / 60);
+        const none = c.click(HITS.none, 1);
+        return {{ acted, log, atLift, reached, tiles: allAtSlots(e, tilePose), none, noneMode: c.mode }};
+    """)
+    assert r["acted"] is True
+    assert r["log"][:3] == [["intro", None], ["quilt", "intro"], ["unstitching", "quilt"]]
+    assert r["atLift"] is True
+    assert r["reached"] > 0 and r["tiles"] is True
+    assert r["none"] is False and r["noneMode"] == "intro"
+
+
+def test_toggle_inside_the_intro_settle_does_not_double(js):
+    r = step(js, r"""
+        const log = [];
+        let toggled = false;
+        const e = new M.Director({ count: 12, quiltPose, tilePose, isTile: () => true, introFrom: INTRO_TABLE,
+          onEnter: (mode, from) => {
+            log.push([mode, from]);
+            if (mode === 'quilt' && !toggled) { toggled = true; e.toggle(2); }
+          } });
+        e.start('intro');
+        for (let n = 0; n < 10; n += 1) e.advance(1 / 60);
+        e.toggle(1);
+        return { log, mode: e.mode };
+    """)
+    assert [m for m, _ in r["log"]].count("unstitching") == 1, r
+    assert r["log"] == [["intro", None], ["quilt", "intro"], ["unstitching", "quilt"]]
+    assert r["mode"] == "unstitching"
+
+
+def test_progress_follows_each_flight(js):
+    r = step(js, r"""
+        const fresh = make({ intro: true }).director;
+        const unstarted = fresh.progress(11);
+        const { director: e } = make({ intro: true });
+        e.start('intro');
+        const seen = [];
+        for (let n = 0; n < 600 && e.mode === 'intro'; n += 1) { seen.push([e.time, e.progress(11)]); e.advance(1 / 60); }
+        return { unstarted, seen, wait: INTRO_TABLE(11).wait, pathDur: M.INTRO.pathDur, after: e.progress(11), mode: e.mode };
+    """)
+    assert r["unstarted"] == 1 and r["mode"] == "quilt" and r["after"] == 1
+    wait, dur = r["wait"], r["pathDur"]
+    before = [p for t, p in r["seen"] if t <= wait]
+    flying = [p for t, p in r["seen"] if wait + 1e-9 < t < wait + dur - 1e-9]
+    done = [p for t, p in r["seen"] if t >= wait + dur + 1e-9]
+    assert before and all(p == 0 for p in before)
+    assert flying and all(0 < p < 1 for p in flying) and flying == sorted(flying)
+    assert done and all(p == 1 for p in done)
+
+
+def test_intro_scatter_is_seeded_and_bounded(js):
+    r = step(js, r"""
+        return { a: M.introScatter('manpower'), b: M.introScatter('manpower'), other: M.introScatter('hiring'),
+                 all: IDS.map((id) => M.introScatter(id)), INTRO: M.INTRO };
+    """)
+    assert r["a"] == r["b"] and r["a"] != r["other"]
+    lim = r["INTRO"]
+    for s in r["all"]:
+        dx, dy, dz = s["offset"]
+        assert abs(dx) <= lim["scatter"] and abs(dy) <= lim["scatter"], s
+        assert lim["rise"][0] <= dz <= lim["rise"][1], s
+        assert 0 <= s["wait"] <= lim["spread"], s
+    assert r["INTRO"] == {"pathDur": 1.2, "spread": 0.6, "fadeDur": 0.8, "scatter": 1.2, "rise": [0.6, 1.2]}

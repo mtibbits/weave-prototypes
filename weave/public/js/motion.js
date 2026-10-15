@@ -1,6 +1,7 @@
 // WEAVE's motion: Coalesce's fixed-step springs and the quilt's ambient sway and pointer tilt. Pure: no Three,
 // no DOM, and no clock of its own (D8): time arrives only as the dt the caller measured from rAF timestamps.
 import { LAYOUT, moveItem, nearestSlot } from './layout.js';
+import { rngFor } from './random.js';
 
 // Coalesce's values (coalesce/public/js/motion.js).
 export const STEP = 1 / 120;
@@ -94,6 +95,24 @@ export const DIRECTOR = Object.freeze({
 // the 0.25 arc, inside DEFAULT_BOUNDS' 0.3 margin).
 export const DRAG = Object.freeze({ thresholdPx: 6, lift: 0.05 });
 
+// #10's intro: each tile block flies in from a seeded scatter point (offset from its quilt pose, up to `scatter`
+// across and `rise` towards the camera) after a seeded wait of up to `spread` s, along a pathDur path, while the fade
+// runs 0 -> 1 over fadeDur. It settles (D40) in about 2.4 s at 20-60 fps (U1).
+export const INTRO = Object.freeze({ pathDur: 1.2, spread: 0.6, fadeDur: 0.8, scatter: 1.2, rise: Object.freeze([0.6, 1.2]) });
+// A block's decor (stitches, pins) is dressed once its flight's eased progress reaches DRESS_AT, in the intro and
+// in a sew-back, so the sew/drop ends before the D40 settle; the settle's finishDecor() is the backstop.
+export const DRESS_AT = 0.7;
+
+// Seeded from rngFor(id, 'intro'), in this draw order: dx, dy in [-scatter, scatter], dz in rise, wait in [0, spread].
+export function introScatter(id) {
+  const rng = rngFor(id, 'intro');
+  const { scatter, rise, spread } = INTRO;
+  const dx = (rng() * 2 - 1) * scatter;
+  const dy = (rng() * 2 - 1) * scatter;
+  const dz = rise[0] + rng() * (rise[1] - rise[0]);
+  return { offset: [dx, dy, dz], wait: rng() * spread };
+}
+
 // Where each transition goes: the settled mode it ends in, and the flip (s) and fade (g) it ends at.
 const LEGS = Object.freeze({
   unstitching: Object.freeze({ settle: 'tiles', s: 1, g: 0 }),
@@ -105,7 +124,8 @@ const LEGS = Object.freeze({
 // timeStamp, D8) only for the paused click guard. onEnter(mode, from) runs from enter(), the one writer of mode.
 export class Director {
   // quiltPose(i, slot) and tilePose(i, slot) are block i's poses in a slot; every block starts in slot i (#9).
-  constructor({ count, quiltPose, tilePose, isTile, onEnter }) {
+  // introFrom(i) (#10, optional) is block i's intro flight, { offset, wait }; null, or a filler, only fades in.
+  constructor({ count, quiltPose, tilePose, isTile, onEnter, introFrom = null }) {
     this.count = count;
     this.quiltPose = quiltPose;
     this.tilePose = tilePose;
@@ -118,6 +138,7 @@ export class Director {
     this.isTile = Array.from({ length: count }, (_, i) => isTile(i));
     this.tileCount = this.isTile.filter(Boolean).length;
     this.onEnter = onEnter;
+    this.introFrom = introFrom;
     this.springs = new SpringSet(count);
     // SpringSet starts at the origin; every block starts at its quilt pose.
     for (let i = 0; i < count; i += 1) {
@@ -215,8 +236,34 @@ export class Director {
     this.onEnter(next, from);
   }
 
+  // The first state: 'quilt' at rest, or (#10) 'intro', a leg like begin()'s that settles into the quilt: each tile
+  // block is seated at its quilt pose plus its introFrom offset, at rest, and flies home; the fade starts at 0.
   start(first = 'quilt') {
+    if (first === 'intro') {
+      const { pathDur, fadeDur } = INTRO;
+      const paths = this.isTile.map((tile, i) => {
+        const from = tile && this.introFrom ? this.introFrom(i) : null;
+        if (!from) return null;
+        const home = this.quilt[i].position;
+        const p = home.map((v, d) => v + from.offset[d]);
+        this.springs.p[i] = p.slice();
+        this.springs.setTarget(i, p);
+        this.springs.v[i].fill(0);
+        return { t0: this.time + from.wait, from: { p, s: 0 }, to: { p: home.slice(), s: 0 } };
+      });
+      const fade = { t0: this.time, dur: fadeDur, from: 0, to: 1 };
+      const ends = Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0)));
+      this.g = 0;
+      this.leg = { settle: 'quilt', s: 0, g: 1, pathDur, paths, fade, ends };
+    }
     this.enter(first);
+  }
+
+  // Block i's eased path progress in the running leg, 0 ... 1; 1 with no leg or no path.
+  progress(i) {
+    const path = this.leg ? this.leg.paths[i] : null;
+    if (!path) return 1;
+    return ease.inout(progress(this.time, path.t0, this.leg.pathDur ?? DIRECTOR.pathDur));
   }
 
   // Block i's pose: position from its spring, the rest blended by its flip s (the ends exactly).
@@ -229,6 +276,7 @@ export class Director {
   }
 
   toggle(now, origin = [0, 0]) {
+    if (this.current === 'intro') return this.cutIntro(now, origin);
     const next = { quilt: 'unstitching', tiles: 'restitching', unstitching: 'restitching', restitching: 'unstitching' };
     if (!(this.current in next)) return false;
     this.begin(next[this.current], origin);
@@ -239,6 +287,7 @@ export class Director {
   click(hit, now) {
     if (this.paused && now - this.lastSnapAt < DIRECTOR.pausedClickMs) return false;
     const onQuilt = hit.part === 'block' || hit.part === 'sashing';
+    if (this.current === 'intro' && onQuilt) return this.cutIntro(now, hit.point);
     if (this.current === 'quilt' && onQuilt) this.begin('unstitching', hit.point);
     else if (this.current === 'tiles' && hit.part === 'none') this.begin('restitching', hit.point);
     else return false;
@@ -279,6 +328,14 @@ export class Director {
 
   // --- Internals. ---
 
+  // Unstitch during the intro (#10): the intro finishes first (entering quilt), then unstitches, unless a weave:mode
+  // handler on that quilt entry has already moved on (Issue-8's re-entrancy lesson).
+  cutIntro(now, origin) {
+    this.finish();
+    if (this.current === 'quilt') this.begin('unstitching', origin);
+    return this.snapIfPaused(now);
+  }
+
   // Starts a transition from the current pose. From a settled mode each block's path waits stagger x its distance
   // from origin (Coalesce's burst); a reversal starts every path now and keeps the springs' velocities.
   // A toggle or click mid-drag drops the tile first (#9), so the transition starts from its current slot.
@@ -304,7 +361,8 @@ export class Director {
   // (coalesce/public/js/motion.js pathPoint). The follower gains hold from the path's start until the settle:
   // switching to the home gains (k 38, zeta 0.5) at the path's end, as Coalesce does, adds about 1.1 s before 1e-3.
   follow() {
-    const { pathDur, lift, follow } = DIRECTOR;
+    const { lift, follow } = DIRECTOR;
+    const pathDur = this.leg.pathDur ?? DIRECTOR.pathDur;
     const target = [0, 0, 0];
     this.leg.paths.forEach((path, i) => {
       if (!path) return;
