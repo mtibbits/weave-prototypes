@@ -1,8 +1,10 @@
 """#10's hover: the tooltip (dom.js and weave.css, on a blank page) and, on the live page, naming and lifting a block."""
 import pytest
 
-from helpers import (HOVER_WINDOW_MS, LINK_CSS, PLANNED_WORDS, SEAMS, SEWN_WORDS, SUGGEST_WORDS, assert_tile_geometry,
-                     contrast_failures, frames, log_modes, open_live, project, wait_for_data_mode, wait_for_quilt, weave)
+from helpers import (HOVER_WINDOW_MS, LINK_CSS, PLANNED_WORDS, SEAMS, SEWN_WORDS, SNAP_JSON, SUGGEST_WORDS,
+                     assert_tile_geometry, contrast_failures, frames, live_quilt, log_modes, open_live, project,
+                     wait_for_data_mode, wait_for_quilt, weave)
+from test_drag import quilt_xy
 from test_quilt_panels import SLOT_BODIES
 from test_unstitch import REST, layout, tile_geometry, unstitch
 
@@ -78,17 +80,10 @@ TIP = "[data-tooltip]"
 # (slot, name, status) per hovered face.
 FACES = {"manpower": (0, "Manpower", SEWN_WORDS), "promotions": (4, "Promotions", PLANNED_WORDS),
          "suggest": (11, "Suggest a panel", SUGGEST_WORDS)}
-SNAP_JSON = "el => JSON.stringify(el.__weave.snapshot())"
 
 
 def edge(page, slot):
     return page.evaluate(f"({EDGE})({slot})")
-
-
-def centre_xy(page, slot):
-    """Block `slot`'s centre vertex, projected to client px."""
-    return page.eval_on_selector("[data-hero]", "(el, slot) => el.__weave.project(el.__weave.snapshot().blocks[slot]"
-                                 ".positions.slice(3 * 840, 3 * 841))", slot)
 
 
 def slot_xy(page, slot):
@@ -124,18 +119,12 @@ def wait_tip_shown(page, timeout=HOVER_WINDOW_MS):
     page.wait_for_function(f"() => document.querySelector('{TIP}')?.hidden === false", timeout=timeout, polling=50)
 
 
-def live_quilt(make_page, base_url, **kwargs):
-    page, errors = open_live(make_page, base_url, **kwargs)
-    wait_for_quilt(page)
-    return page, errors
-
-
 @pytest.mark.parametrize("face", list(FACES))
 def test_hover_names_and_lifts_a_block(make_page, base_url, face):
     slot, name, status = FACES[face]
     page, errors = live_quilt(make_page, base_url)
     base = edge(page, slot)
-    page.mouse.move(*centre_xy(page, slot))
+    page.mouse.move(*quilt_xy(page, slot))
     wait_ratio(page, slot, base, 1.025, 1.035)
     tip = page.locator(TIP)
     assert tip.count() == 1 and tip_hidden(page) is False
@@ -154,7 +143,7 @@ def test_hover_names_and_lifts_a_block(make_page, base_url, face):
 @pytest.mark.parametrize("slot", [0, 11], ids=["slot0", "slot11"])
 def test_tooltip_stays_inside_the_stage(make_page, base_url, slot):
     page, errors = live_quilt(make_page, base_url)
-    page.mouse.move(*centre_xy(page, slot))
+    page.mouse.move(*quilt_xy(page, slot))
     wait_tip_shown(page)
     tip = page.locator(TIP).bounding_box()
     stage = page.locator("[data-hero]").bounding_box()
@@ -188,7 +177,7 @@ def test_handler_sees_no_hover(make_page, base_url):
         page.add_init_script(EDGE_AT_UNSTITCH)
     page, errors = live_quilt(make_page, base_url, before_goto=before)
     base = edge(page, 0)
-    page.mouse.move(*centre_xy(page, 0))
+    page.mouse.move(*quilt_xy(page, 0))
     wait_hover(page, "h.id === 'manpower' && h.amount === 1")
     press_toggle_by_key(page)
     page.wait_for_function("() => window.__edge !== undefined", timeout=2000)
@@ -198,7 +187,7 @@ def test_handler_sees_no_hover(make_page, base_url):
 
 def test_resting_pointer_is_named_on_entering_quilt(make_page, base_url):
     page, errors = live_quilt(make_page, base_url)
-    page.mouse.move(*centre_xy(page, 0))
+    page.mouse.move(*quilt_xy(page, 0))
     wait_hover(page, "h.id === 'manpower'")  # precondition
     press_toggle_by_key(page)
     wait_for_data_mode(page, "tiles")
@@ -212,12 +201,12 @@ def test_resting_pointer_is_named_on_entering_quilt(make_page, base_url):
 def test_hover_skips_fillers(make_page, base_url):
     page, errors = live_quilt(make_page, base_url, panels_body=SLOT_BODIES["ten"])
     base = edge(page, 10)
-    page.mouse.move(*centre_xy(page, 10))
+    page.mouse.move(*quilt_xy(page, 10))
     page.wait_for_timeout(HOVER_WINDOW_MS)
     assert tip_hidden(page) is True and hover_state(page)["id"] is None
     assert abs(edge(page, 10) / base - 1) <= 1e-6
     # Control: the block beside it is named within the same window.
-    page.mouse.move(*centre_xy(page, 9))
+    page.mouse.move(*quilt_xy(page, 9))
     wait_tip_shown(page)
     assert errors == []
 
@@ -234,7 +223,7 @@ def test_hover_is_off_in_tiles_at_rest_and_in_the_intro(make_page, base_url):
 
     rest, rest_errors = open_live(make_page, base_url, query=REST)
     held = rest.eval_on_selector("[data-hero]", SNAP_JSON)
-    rest.mouse.move(*centre_xy(rest, 0))
+    rest.mouse.move(*quilt_xy(rest, 0))
     rest.wait_for_timeout(HOVER_WINDOW_MS)
     assert tip_hidden(rest) is True
     assert rest.eval_on_selector("[data-hero]", SNAP_JSON) == held
@@ -256,7 +245,7 @@ def test_paused_hover_snaps(make_page, base_url):
     page.locator("[data-pause]").click()
     held = frames(page)
     base = edge(page, 0)
-    page.mouse.move(*centre_xy(page, 0))
+    page.mouse.move(*quilt_xy(page, 0))
     ratio, h = page.evaluate(f"() => [({EDGE})(0), ({HOVER_STATE})()]")
     assert abs(ratio / base - 1.03) <= 0.005, ratio / base
     assert h == {"id": "manpower", "amount": 1}
@@ -269,7 +258,7 @@ def test_pause_snaps_an_easing_hover(make_page, base_url):
     on its seams), whatever the pointer does next."""
     page, errors = live_quilt(make_page, base_url)
     base = edge(page, 0)
-    page.mouse.move(*centre_xy(page, 0))
+    page.mouse.move(*quilt_xy(page, 0))
     page.locator("[data-pause]").focus()
     page.keyboard.press("Enter")  # paused at once, the pointer still resting on the block mid-ease
     assert hover_state(page) == {"id": "manpower", "amount": 1}
@@ -286,7 +275,7 @@ def test_pause_snaps_an_easing_hover(make_page, base_url):
 
 def test_hovered_click_unstitches_flat(make_page, base_url):
     page, errors = live_quilt(make_page, base_url)
-    at = centre_xy(page, 5)
+    at = quilt_xy(page, 5)
     page.mouse.move(*at)
     wait_hover(page, "h.id === 'travel' && h.amount === 1")
     page.mouse.click(*at)
@@ -297,7 +286,7 @@ def test_hovered_click_unstitches_flat(make_page, base_url):
 
 def test_teardown_removes_the_tooltip(make_page, base_url):
     page, errors = live_quilt(make_page, base_url)
-    page.mouse.move(*centre_xy(page, 0))
+    page.mouse.move(*quilt_xy(page, 0))
     wait_tip_shown(page)
     page.eval_on_selector("[data-hero]", "el => el.__weave.stop('context-lost')")
     assert page.locator(TIP).count() == 0

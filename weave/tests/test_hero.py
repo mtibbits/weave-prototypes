@@ -2,8 +2,8 @@
 import pytest
 
 from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, QUILT_HINT, SEW_NAME, STILL_HINT, TILES_HINT,
-                     UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result, hidden_by_attribute, ink_fraction,
-                     open_live, rising, wait_for_quilt, wait_for_reason, weave)
+                     UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result, hidden_by_attribute,
+                     ink_fraction, live_quilt, open_live, rising, wait_for_reason, weave)
 
 
 def assert_still_page(page):
@@ -63,8 +63,7 @@ def test_touch_device_keeps_still(make_page, base_url):
 def test_goes_live_on_desktop(make_page, base_url):
     """Port of coalesce/tests/test_hero.py::test_goes_live_on_desktop, with the first-frame mark and a non-blank
     canvas (control: the same stage with the canvas hidden)."""
-    page, errors = open_live(make_page, base_url)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url)
     canvas = page.locator("[data-hero] canvas")
     assert canvas.count() == 1 and canvas.get_attribute("aria-hidden") == "true"
     assert page.locator("[data-pause]").is_visible()
@@ -90,8 +89,7 @@ def test_pause_sits_in_the_controls_row_not_the_stage(make_page, base_url):
 
 
 def test_hooks_describe_the_drawn_quilt(make_page, base_url):
-    page, _ = open_live(make_page, base_url)
-    wait_for_quilt(page)
+    page, _ = live_quilt(make_page, base_url)
     assert weave(page, ".mode") == "quilt"
     assert weave(page, ".order") == DEFAULT_IDS
     slots = weave(page, ".slots")
@@ -247,8 +245,7 @@ def test_webgl_setup_failure_falls_back(make_page, base_url):
 
 
 def test_stop_hook_tears_down_once(make_page, base_url):
-    page, errors = open_live(make_page, base_url)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url)
     page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('too-slow'); }")
     assert hero_result(page) == ["still", "context-lost"]
     assert_still_page(page)

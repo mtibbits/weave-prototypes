@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from helpers import SEW_NAME, frames, open_live, wait_for_data_mode, wait_for_decor, weave
+from helpers import SEW_NAME, SNAP_JSON, frames, open_live, wait_for_data_mode, wait_for_decor, weave
 from test_drag import EXPECTED, drag, order, tile_xy
-from test_intro import LIVE_IDS, PLANNED_IDS
+from test_intro import LIVE_IDS, PLANNED_IDS, decor_counts
 from test_unstitch import REST, press, unstitch
 
 # Every shown stitch against its slot from one snapshot: the gap to its slot's nearest edge, |z - foldZ| and the
@@ -67,17 +67,11 @@ PIN_CHECK = r"""async (el) => {
 }"""
 
 LISTS = "el => { const s = el.__weave.snapshot(); return JSON.stringify([s.stitches, s.pins]); }"
-SNAP_JSON = "el => JSON.stringify(el.__weave.snapshot())"
 
 
 def call(page, js):
     """Run `js` with w = the stage's __weave."""
     return page.eval_on_selector("[data-hero]", f"el => {{ const w = el.__weave; {js} }}")
-
-
-def counts(page):
-    return call(page, "const s = w.snapshot(); const c = (l) => l.reduce((o, e) => ({ ...o, [e.id]: (o[e.id] ?? 0) + 1 }), {});"
-                      " return { stitches: c(s.stitches), pins: c(s.pins) };")
 
 
 def reorder_and_sew_back(page):
@@ -127,7 +121,7 @@ def test_popping_one_block_leaves_the_others(make_page, base_url):
     page, errors = open_live(make_page, base_url, query=REST)
     call(page, "w.popStitches('manpower');")
     wait_for_decor(page)
-    c = counts(page)["stitches"]
+    c = decor_counts(page)["stitches"]
     assert "manpower" not in c and c == {i: 48 for i in LIVE_IDS if i != "manpower"}, c
     assert errors == []
 
@@ -178,7 +172,7 @@ def test_start_planned_round_trip(make_page, base_url):
     def step(js):
         call(page, js)
         wait_for_decor(page)
-        c = counts(page)
+        c = decor_counts(page)
         return c["stitches"].get("manpower", 0), c["pins"].get("manpower", 0)
 
     assert step("w.restorePins('manpower');")[1] in (3, 4)

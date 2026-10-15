@@ -4,7 +4,7 @@ import json
 import pytest
 
 from helpers import (DEFAULT_IDS, QUILT_HINT, SEAMS, SEW_NAME, UNSTITCH_NAME, assert_tile_geometry, click_world, frames,
-                     log_modes, modes, open_live, project, wait_for_data_mode, wait_for_mode, wait_for_quilt, weave)
+                     live_quilt, log_modes, modes, open_live, project, wait_for_data_mode, wait_for_mode, weave)
 from test_quilt_panels import SHIPPED, SLOT_BODIES
 from test_unstitch import CYCLE, REST, centre, fades, held_for, layout, press, tile_geometry, unstitch
 
@@ -263,8 +263,7 @@ def test_toggle_mid_drag_drops_then_sews_back(make_page, base_url):
 
 @pytest.mark.parametrize("query", [REST, "?nowatchdog"], ids=["rest", "plain"])
 def test_seams_meet_after_reorder_and_sew_back(make_page, base_url, query):
-    page, errors = open_live(make_page, base_url, query=query)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url, query=query)
     unstitch(page)
     drag(page, tile_xy(page, 0), tile_xy(page, 5))
     assert order(page) == EXPECTED  # the precondition: the drag reordered the quilt
@@ -437,8 +436,7 @@ AMBIENT = r"""async (el) => {
 def test_quilt_press_off_stage_keeps_the_tilt_bounded(make_page, base_url):
     """A quilt press is never captured, so moving it off the stage leaves the tilt bounded. This guards the capture
     scope: main.js's tilt clamp alone cannot redden it (its planted control also captured every press)."""
-    page, errors = open_live(make_page, base_url)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url)
     box = page.locator("[data-hero]").bounding_box()
     viewport = page.viewport_size
     start = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)

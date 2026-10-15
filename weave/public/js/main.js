@@ -166,6 +166,9 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   const pointer = { x: 0, y: 0, inside: false };
   let hoverTarget = null;
   const amounts = new Array(slots.length).fill(0);
+  // The block, face and pointer the shown tooltip was last placed for: placing it reads its size (a layout), so a
+  // frame that changes none of them leaves it be.
+  let tipFor = '';
 
   function pickHover() {
     hoverTarget = director.mode === 'quilt' && pointer.inside ? quilt.pickBlock(pointer.x, pointer.y) : null;
@@ -173,9 +176,12 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
       hideTooltip(tip);
       return;
     }
+    const { face } = quilt.blocks[hoverTarget].userData;
+    const key = `${hoverTarget} ${face} ${pointer.x} ${pointer.y}`;
+    if (!tip.hidden && key === tipFor) return;
+    tipFor = key;
     const r = stage.getBoundingClientRect();
-    showTooltip(tip, { name: slots[hoverTarget].name, face: quilt.blocks[hoverTarget].userData.face },
-      pointer.x - r.left, pointer.y - r.top);
+    showTooltip(tip, { name: slots[hoverTarget].name, face }, pointer.x - r.left, pointer.y - r.top);
   }
 
   function easeHover(h) {
@@ -192,11 +198,8 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
 
   function clearHover() {
     hoverTarget = null;
-    amounts.forEach((a, i) => {
-      if (a === 0) return;
-      amounts[i] = 0;
-      quilt.setHover(i, 0);
-    });
+    hideTooltip(tip);
+    easeHover(null);
   }
 
   // Every state the director enters (D39): the scene first, so a handler's snapshot() sees the pose (outside quilt
@@ -221,7 +224,6 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
       dressed.clear();
       quilt.stowAll();
     }
-    if (mode !== 'quilt') hideTooltip(tip);
     stage.dispatchEvent(new CustomEvent('weave:mode', { detail: { mode, from } }));
   }
 

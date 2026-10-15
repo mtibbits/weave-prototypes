@@ -263,7 +263,7 @@ export class Director {
   progress(i) {
     const path = this.leg ? this.leg.paths[i] : null;
     if (!path) return 1;
-    return ease.inout(progress(this.time, path.t0, this.leg.pathDur ?? DIRECTOR.pathDur));
+    return ease.inout(progress(this.time, path.t0, this.leg.pathDur));
   }
 
   // Block i's pose: position from its spring, the rest blended by its flip s (the ends exactly).
@@ -353,7 +353,7 @@ export class Director {
     });
     const fade = { t0: this.time, dur: fadeDur, from: this.g, to: end.g };
     const ends = Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0)));
-    this.leg = { ...end, paths, fade, ends };
+    this.leg = { ...end, pathDur, paths, fade, ends };
     this.enter(next);
   }
 
@@ -362,7 +362,7 @@ export class Director {
   // switching to the home gains (k 38, zeta 0.5) at the path's end, as Coalesce does, adds about 1.1 s before 1e-3.
   follow() {
     const { lift, follow } = DIRECTOR;
-    const pathDur = this.leg.pathDur ?? DIRECTOR.pathDur;
+    const { pathDur } = this.leg;
     const target = [0, 0, 0];
     this.leg.paths.forEach((path, i) => {
       if (!path) return;

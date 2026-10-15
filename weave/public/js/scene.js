@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { makeCanvas, paintSashing, paintShadow, paintWeaveNormal, paintWood, sashingSize } from './fabric.js';
 import { foldZ, LAYOUT, puffZ, slotCentre } from './layout.js';
+import { ease } from './motion.js';
 import { rngFor } from './random.js';
 import { faceKind, paintFace, paintTile } from './tiles.js';
 
@@ -145,9 +146,9 @@ function foldBlock(geometry, slot, tilt) {
   geometry.computeBoundingSphere();
 }
 
-// One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence
-// 0 for #8's flatten (#10's hover lift is the block's scale and z, not a morph). A filler is built transparent, since it fades; every other block carries its
-// tile face.
+// One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence 0 for
+// #8's flatten (#10's hover lift is the block's scale and z, not a morph). A filler is built transparent, since it
+// fades; every other block carries its tile face.
 function buildBlock(slot, entry, renderer) {
   const face = faceKind(entry);
   const [cx, cy] = slotCentre(slot);
@@ -289,7 +290,13 @@ const DROP_FROM = 0.25;
 const POP_RISE = 0.4;
 // The step for the cloth's slope, in block-local units.
 const SLOPE_EPS = 1e-4;
-const easeInOut = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
+
+// The cloth's slope [dz/dx, dz/dy] at (lx, ly), by central difference.
+function surfaceSlope(slot, tilt, lx, ly) {
+  const at = (u, v) => surfaceZ(slot, tilt, u, v);
+  return [(at(lx + SLOPE_EPS, ly) - at(lx - SLOPE_EPS, ly)) / (2 * SLOPE_EPS),
+    (at(lx, ly + SLOPE_EPS) - at(lx, ly - SLOPE_EPS)) / (2 * SLOPE_EPS)];
+}
 
 // The dashes' rest matrices in block-local space: each side in turn (top, right, bottom, left, clockwise), its +X
 // along the seam's slope and its +Z up off the cloth.
@@ -304,8 +311,8 @@ function stitchMatrices(slot, tilt) {
       const t = (k + 0.5) / STITCHES_PER_SIDE;
       const lx = sx + dx * t;
       const ly = sy + dy * t;
-      const slope = (surfaceZ(slot, tilt, lx + dx * SLOPE_EPS, ly + dy * SLOPE_EPS)
-        - surfaceZ(slot, tilt, lx - dx * SLOPE_EPS, ly - dy * SLOPE_EPS)) / (2 * SLOPE_EPS);
+      const [gx, gy] = surfaceSlope(slot, tilt, lx, ly);
+      const slope = gx * dx + gy * dy;
       x.set(dx, dy, slope).normalize();
       z.crossVectors(x, y.set(-dy, dx, 0)).normalize();
       y.crossVectors(z, x);
@@ -323,20 +330,19 @@ function pinMatrices(id, slot, tilt) {
   if (rng() < 0.5) corners.splice(Math.floor(rng() * 4), 1);
   const maxLean = (PIN_MAX_TILT_DEG * Math.PI) / 180;
   const up = new THREE.Vector3(0, 1, 0);
-  const at = (u, v) => surfaceZ(slot, tilt, u, v);
   return corners.map(([sx, sy]) => {
     const lx = sx * (0.5 - (0.12 + 0.06 * rng()));
     const ly = sy * (0.5 - (0.12 + 0.06 * rng()));
     const azimuth = rng() * 2 * Math.PI;
     const lean = rng() * maxLean;
-    const n = new THREE.Vector3(-(at(lx + SLOPE_EPS, ly) - at(lx - SLOPE_EPS, ly)) / (2 * SLOPE_EPS),
-      -(at(lx, ly + SLOPE_EPS) - at(lx, ly - SLOPE_EPS)) / (2 * SLOPE_EPS), 1).normalize();
+    const [gx, gy] = surfaceSlope(slot, tilt, lx, ly);
+    const n = new THREE.Vector3(-gx, -gy, 1).normalize();
     const a = new THREE.Vector3(1, 0, 0).addScaledVector(n, -n.x).normalize();
     const b = new THREE.Vector3().crossVectors(n, a);
     const dir = n.multiplyScalar(Math.cos(lean))
       .addScaledVector(a, Math.sin(lean) * Math.cos(azimuth)).addScaledVector(b, Math.sin(lean) * Math.sin(azimuth));
     const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
-    return new THREE.Matrix4().compose(new THREE.Vector3(lx, ly, at(lx, ly)), quaternion, new THREE.Vector3(1, 1, 1));
+    return new THREE.Matrix4().compose(new THREE.Vector3(lx, ly, surfaceZ(slot, tilt, lx, ly)), quaternion, new THREE.Vector3(1, 1, 1));
   });
 }
 
@@ -444,7 +450,7 @@ export function buildQuilt(renderer, { slots }) {
   // along their +Y, and a pop shrinks either away (the pins rising as they go).
   function stepKind(kind, u) {
     const { dir, from } = kind.anim;
-    const e = easeInOut(u);
+    const e = ease.inout(u);
     if (kind.type === 'stitches') {
       const n = kind.f.length;
       kind.f = from.f.map((f0, k) => {

@@ -5,8 +5,8 @@ import inspect
 import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
-from helpers import (PLAIN_START, SEAMS, SEAMS_OF, UNSTITCH_NAME, frames, log_modes, modes, open_live, project,
-                     wait_for_data_mode, wait_for_quilt, weave)
+from helpers import (PLAIN_START, SEAMS, SEAMS_OF, UNSTITCH_NAME, frames, live_quilt, log_modes, modes, open_live,
+                     project, wait_for_data_mode, wait_for_quilt, weave)
 from test_unstitch import CYCLE, REST, fades, layout, press, state
 
 LIVE_IDS = ["manpower", "hiring", "training", "awards", "travel", "actions", "desks"]
@@ -35,8 +35,7 @@ def test_wait_for_quilt_defaults_to_15_s():
 
 
 def test_wait_for_quilt_waits_for_the_settle(make_page, base_url):
-    page, errors = open_live(make_page, base_url, before_goto=log_modes)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url, before_goto=log_modes)
     assert modes(page)[:2] == PLAIN_START and weave(page, ".mode") == "quilt"
     # Control: it must time out (Playwright's TimeoutError) when the quilt is not settled.
     press(page, UNSTITCH_NAME)
@@ -48,8 +47,7 @@ def test_wait_for_quilt_waits_for_the_settle(make_page, base_url):
 
 def test_intro_leaves_within_4_s(make_page, base_url):
     """U1, D12: on the wall clock, the intro enters quilt within 4 s; data-mode reads quilt throughout."""
-    page, errors = open_live(make_page, base_url, before_goto=log_modes)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url, before_goto=log_modes)
     log = page.evaluate("window.__modes")
     assert [(e["mode"], e["from"]) for e in log[:2]] == PLAIN_START
     assert [e["data"] for e in log[:2]] == ["quilt", "quilt"]
@@ -79,8 +77,7 @@ SETTLED_TILTS = r"""async (el) => {
 def test_intro_settles_onto_the_slots(make_page, base_url):
     """D40: the settled intro is the quilt: seams meet, the decor is at rest and the planned tilts are the seeded ones.
     The pointer never enters the stage."""
-    page, errors = open_live(make_page, base_url)
-    wait_for_quilt(page)
+    page, errors = live_quilt(make_page, base_url)
     tilts = page.eval_on_selector("[data-hero]", SETTLED_TILTS)
     seams = page.eval_on_selector("[data-hero]", SEAMS_OF, ["__settled", 0])
     nudged = page.eval_on_selector("[data-hero]", SEAMS_OF, ["__settled", 1e-3])

@@ -268,8 +268,9 @@ PLANNED_WORDS = "Pinned for later"
 SUGGEST_WORDS = "Have an idea for a panel?"
 
 # An init script: a weave:mode listener on [data-hero] from the moment it is parsed (before the scene goes live),
-# pushing { mode, from, hook: __weave.mode, data: data-mode, t: performance.now() } to window.__modes, then calling window.__onMode(event,
-# stage) if a test defined it; and every data-mode value the stage ever takes (old and new) to window.__dataModes.
+# pushing { mode, from, hook: __weave.mode, data: data-mode, t: performance.now() } to window.__modes, then calling
+# window.__onMode(event, stage) if a test defined it; and every data-mode value the stage ever takes (old and new) to
+# window.__dataModes.
 MODE_LOG = r"""
     window.__modes = [];
     window.__dataModes = [];
@@ -318,6 +319,7 @@ QUILT_SETTLED = ("() => { const el = document.querySelector('[data-hero]');"
 # A plain load's first two weave:mode entries.
 PLAIN_START = [("intro", None), ("quilt", "intro")]
 DECOR_IDLE = "() => document.querySelector('[data-hero]').__weave.decorIdle === true"
+SNAP_JSON = "el => JSON.stringify(el.__weave.snapshot())"
 # Every hover negative waits this long; its positive control polls within the same window (weave Issue-8).
 HOVER_WINDOW_MS = 500
 
@@ -425,6 +427,13 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
     page.goto(base_url + HOME + query)
     assert hero_result(page) == ["live", "ok"], errors
     page.locator("[data-hero]").scroll_into_view_if_needed()
+    return page, errors
+
+
+def live_quilt(make_page, base_url, **kwargs):
+    """open_live, then wait until the intro has settled into the quilt; returns (page, errors)."""
+    page, errors = open_live(make_page, base_url, **kwargs)
+    wait_for_quilt(page)
     return page, errors
 
 
