@@ -1,6 +1,6 @@
 // WEAVE's motion: Coalesce's fixed-step springs and the quilt's ambient sway and pointer tilt. Pure: no Three,
 // no DOM, and no clock of its own (D8): time arrives only as the dt the caller measured from rAF timestamps.
-import { LAYOUT } from './layout.js';
+import { LAYOUT, moveItem, nearestSlot } from './layout.js';
 
 // Coalesce's values (coalesce/public/js/motion.js).
 export const STEP = 1 / 120;
@@ -89,6 +89,11 @@ export const DIRECTOR = Object.freeze({
   settleEps: 1e-3, pausedClickMs: 400,
 });
 
+// #9's drag. A press has moved once Math.hypot(e.clientX - press.x, e.clientY - press.y) > thresholdPx (CSS px,
+// from the pointerdown point). lift: the dragged tile's z in quilt space, so it draws over its neighbours (below
+// the 0.25 arc, inside DEFAULT_BOUNDS' 0.3 margin).
+export const DRAG = Object.freeze({ thresholdPx: 6, lift: 0.05 });
+
 // Where each transition goes: the settled mode it ends in, and the flip (s) and fade (g) it ends at.
 const LEGS = Object.freeze({
   unstitching: Object.freeze({ settle: 'tiles', s: 1, g: 0 }),
@@ -99,11 +104,19 @@ const LEGS = Object.freeze({
 // and the mode. Pure like the rest of this module: time arrives only through advance(h), and `now` (an event's
 // timeStamp, D8) only for the paused click guard. onEnter(mode, from) runs from enter(), the one writer of mode.
 export class Director {
+  // quiltPose(i, slot) and tilePose(i, slot) are block i's poses in a slot; every block starts in slot i (#9).
   constructor({ count, quiltPose, tilePose, isTile, onEnter }) {
     this.count = count;
-    this.quilt = Array.from({ length: count }, (_, i) => quiltPose(i));
-    this.tile = Array.from({ length: count }, (_, i) => tilePose(i));
+    this.quiltPose = quiltPose;
+    this.tilePose = tilePose;
+    this.slots = [];
+    this.blocks = [];
+    this.quilt = [];
+    this.tile = [];
+    for (let i = 0; i < count; i += 1) this.place(i, i);
+    this.drag = null;
     this.isTile = Array.from({ length: count }, (_, i) => isTile(i));
+    this.tileCount = this.isTile.filter(Boolean).length;
     this.onEnter = onEnter;
     this.springs = new SpringSet(count);
     // SpringSet starts at the origin; every block starts at its quilt pose.
@@ -122,6 +135,75 @@ export class Director {
   }
 
   get mode() { return this.current; }
+
+  // --- The drag (#9). ---
+
+  // Block i's current slot, and the block in slot k.
+  slotOf(i) { return this.slots[i]; }
+
+  blockAt(k) { return this.blocks[k]; }
+
+  get dragging() { return this.drag !== null; }
+
+  // Picks block i up at `point` (the press in quilt-group xy): only a tile, only in settled tiles, one at a time.
+  // The block lifts to DRAG.lift and keeps its offset from the pointer.
+  grab(i, point) {
+    if (this.current !== 'tiles' || this.leg || !this.isTile[i] || this.drag) return false;
+    const [x, y] = this.springs.p[i];
+    const from = this.slots[i];
+    this.drag = { i, offset: [x - point[0], y - point[1]], start: this.blocks.slice(), from, to: from };
+    this.hold(i, x, y);
+    return true;
+  }
+
+  // The dragged block follows `point`; the tiles reflow by move-and-shift from the drag's start order, clamped to
+  // the last tile slot (fillSlots puts the tiles first, so the fillers never move). Returns [[block, slot], ...]
+  // for the blocks whose slot changed in this call.
+  dragTo(point) {
+    if (!this.drag) return [];
+    const { i, offset, start, from } = this.drag;
+    const x = point[0] + offset[0];
+    const y = point[1] + offset[1];
+    this.hold(i, x, y);
+    const to = Math.min(nearestSlot(x, y, 'tiles'), this.tileCount - 1);
+    if (to === this.drag.to) return [];
+    this.drag.to = to;
+    const moves = [];
+    moveItem(start, from, to).forEach((b, k) => {
+      if (this.slots[b] === k) return;
+      this.place(b, k);
+      if (b !== i) this.springs.setTarget(b, this.tile[b].position);
+      moves.push([b, k]);
+    });
+    if (this.paused) this.springs.snap();
+    return moves;
+  }
+
+  // Lets the dragged block go to its current slot: the home spring carries it in, or at once while paused.
+  drop() {
+    if (!this.drag) return false;
+    const { i } = this.drag;
+    this.springs.setTarget(i, this.tile[i].position);
+    this.drag = null;
+    if (this.paused) this.springs.snap();
+    return true;
+  }
+
+  // Block i at (x, y, DRAG.lift), at rest, with its target there too.
+  hold(i, x, y) {
+    const at = [x, y, DRAG.lift];
+    this.springs.p[i] = at.slice();
+    this.springs.setTarget(i, at);
+    this.springs.v[i].fill(0);
+  }
+
+  // Block b takes slot k: the slot map both ways, and its quilt and tile poses re-derived for k.
+  place(b, k) {
+    this.slots[b] = k;
+    this.blocks[k] = b;
+    this.quilt[b] = this.quiltPose(b, k);
+    this.tile[b] = this.tilePose(b, k);
+  }
 
   get fade() { return this.g; }
 
@@ -163,8 +245,10 @@ export class Director {
     return this.snapIfPaused(now);
   }
 
+  // Pausing outside a transition lands every spring on its target too (a tile just dropped, or reflowing mid-drag).
   setPaused(paused, now) {
     this.paused = paused;
+    if (paused && !this.leg) this.springs.snap();
     this.snapIfPaused(now);
   }
 
@@ -197,7 +281,9 @@ export class Director {
 
   // Starts a transition from the current pose. From a settled mode each block's path waits stagger x its distance
   // from origin (Coalesce's burst); a reversal starts every path now and keeps the springs' velocities.
+  // A toggle or click mid-drag drops the tile first (#9), so the transition starts from its current slot.
   begin(next, origin) {
+    this.drop();
     const reversal = this.leg !== null;
     const end = LEGS[next];
     const { pathDur, stagger, fadeDur } = DIRECTOR;

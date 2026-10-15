@@ -123,28 +123,40 @@ function buildTile(slot, entry) {
   return tile;
 }
 
-// One block: a 40 x 40 plane at its slot, puffed and folded (foldZ is evaluated where each vertex really hangs,
-// so a tilted block follows the fold under it), with a flat morph target 0 at influence 0 for #10's lift and #8's
-// flatten. A filler is built transparent, since it fades; every other block carries its tile face.
+// A block's base for `slot`: each vertex of the flat morph target puffed and folded (foldZ is evaluated where the
+// vertex really hangs, so a tilted block follows the fold under it, and read on every call: D10), then its
+// normals and bounds. The build and #9's placeBlock both come here, so a moved block is the block a fresh build
+// would give at that slot.
+function foldBlock(geometry, slot, tilt) {
+  const [cx, cy] = slotCentre(slot);
+  const cos = Math.cos(tilt);
+  const sin = Math.sin(tilt);
+  const position = geometry.attributes.position;
+  const flat = geometry.morphAttributes.position[0];
+  for (let j = 0; j < position.count; j += 1) {
+    const lx = flat.getX(j);
+    const ly = flat.getY(j);
+    position.setZ(j, puffZ(lx + 0.5, ly + 0.5) + foldZ(cx + cos * lx - sin * ly, cy + sin * lx + cos * ly));
+  }
+  position.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+}
+
+// One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence
+// 0 for #10's lift and #8's flatten. A filler is built transparent, since it fades; every other block carries its
+// tile face.
 function buildBlock(slot, entry, renderer) {
   const face = faceKind(entry);
   const [cx, cy] = slotCentre(slot);
   const tilt = face === 'planned' ? (rngFor(entry.id, 'tilt')() * 2 - 1) * TILT_MAX : 0;
-  const cos = Math.cos(tilt);
-  const sin = Math.sin(tilt);
   const geometry = new THREE.PlaneGeometry(1, 1, SEGMENTS, SEGMENTS);
-  const position = geometry.attributes.position;
-  const flat = position.clone();
-  for (let j = 0; j < position.count; j += 1) {
-    const lx = position.getX(j);
-    const ly = position.getY(j);
-    position.setZ(j, puffZ(lx + 0.5, ly + 0.5) + foldZ(cx + cos * lx - sin * ly, cy + sin * lx + cos * ly));
-  }
-  geometry.computeVertexNormals();
-  const up = new Float32Array(position.count * 3);
-  for (let j = 0; j < position.count; j += 1) up[3 * j + 2] = 1;
-  geometry.morphAttributes.position = [flat];
+  const { count } = geometry.attributes.position;
+  const up = new Float32Array(count * 3);
+  for (let j = 0; j < count; j += 1) up[3 * j + 2] = 1;
+  geometry.morphAttributes.position = [geometry.attributes.position.clone()];
   geometry.morphAttributes.normal = [new THREE.BufferAttribute(up, 3)];
+  foldBlock(geometry, slot, tilt);
 
   const canvas = makeCanvas(512);
   paintFace(canvas, entry, face);
@@ -162,8 +174,9 @@ function buildBlock(slot, entry, renderer) {
 
 // The sashing: one folded sheet over the whole quilt, cut along every block-vertex line so it meets each block
 // edge vertex for vertex. Cells inside an untilted block are left out; cells under a planned (tilted) block are
-// kept, so the slivers a tilt uncovers show muslin, not the page. UVs follow #6's D38 rule.
-function buildSashing(blocks) {
+// kept, so the slivers a tilt uncovers show muslin, not the page. The holes follow each block's current
+// userData.slot, so #9's reseam re-cuts them after a reorder. UVs follow #6's D38 rule.
+function sashingGeometry(blocks) {
   const { quiltW: W, quiltH: H } = LAYOUT;
   const lines = (centres, sign) => {
     const out = [];
@@ -205,13 +218,18 @@ function buildSashing(blocks) {
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
+  return geometry;
+}
 
+function buildSashing(blocks) {
+  const { quiltW: W, quiltH: H } = LAYOUT;
   const canvas = makeCanvas(...sashingSize(LAYOUT));
   paintSashing(canvas, LAYOUT);
   // The weave keeps the blocks' scale in scene units: a block is 1 unit, the sheet W x H.
   const normalMap = weaveNormalMap().clone();
   normalMap.repeat.set(W * WEAVE_REPEAT, H * WEAVE_REPEAT);
-  return new THREE.Mesh(geometry, fabricMaterial({ map: canvasTexture(canvas), normalMap, transparent: true }));
+  return new THREE.Mesh(sashingGeometry(blocks),
+    fabricMaterial({ map: canvasTexture(canvas), normalMap, transparent: true }));
 }
 
 // The hanging rod: a wooden pole just above the top edge, with ball ends larger than the pole.
@@ -273,6 +291,8 @@ export function buildQuilt(renderer, { slots }) {
   scene.add(group, shadow);
   const tiles = blocks.map((b) => b.children.find((c) => c.userData.part === 'tile') ?? null);
   const fillers = blocks.filter((b) => b.userData.face === 'filler');
+  // Each block's seeded tilt, read once (not in userData: the snapshot's block keys are pinned).
+  const tilts = blocks.map((b) => b.rotation.z);
 
   const pivot = new THREE.Vector3(0, LAYOUT.rod.y, 0);
   const aboutX = new THREE.Quaternion();
@@ -328,27 +348,64 @@ export function buildQuilt(renderer, { slots }) {
     return true;
   };
 
-  // What is under a client (CSS pixel) point: the nearest drawn block, sashing or tile face (the rod and shadow
-  // are never targets; a flipped block or an unflipped tile faces away, so FrontSide skips it), and the point in
-  // the group's space: the hit, or for 'none' where the ray meets the group's z = 0 plane. A block is known by
-  // its place in `blocks`, so the snapshot's userData stays as it is; only a tile carries { slot, part }.
-  function pick(clientX, clientY) {
+  // Aims the raycaster through a client (CSS pixel) point.
+  function aim(clientX, clientY) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, 1 - ((clientY - rect.top) / rect.height) * 2);
     scene.updateMatrixWorld();
     raycaster.setFromCamera(pointer, camera);
-    // The Raycaster ignores `visible`, so a hidden or faded part is filtered here.
-    const hit = raycaster.intersectObjects(targets, false).find((h) => shown(h.object));
-    if (hit) {
-      const [x, y] = group.worldToLocal(hit.point.clone()).toArray();
-      const slot = blocks.indexOf(hit.object);
-      if (hit.object === sashing) return { part: 'sashing', slot: null, point: [x, y] };
-      if (slot >= 0) return { part: 'block', slot, point: [x, y] };
-      return { part: 'tile', slot: hit.object.userData.slot, point: [x, y] };
-    }
+  }
+
+  // Where the aimed ray meets the group's z = 0 plane, in the group's space.
+  function groundPoint() {
     ray.copy(raycaster.ray).applyMatrix4(group.matrixWorld.clone().invert());
     const at = ray.intersectPlane(ground, new THREE.Vector3());
-    return { part: 'none', slot: null, point: at ? [at.x, at.y] : [0, 0] };
+    return at ? [at.x, at.y] : [0, 0];
+  }
+
+  // A client point on the group's z = 0 plane, whatever is drawn there: #9's drag follows the pointer with it.
+  function planePoint(clientX, clientY) {
+    aim(clientX, clientY);
+    return groundPoint();
+  }
+
+  // What is under a client (CSS pixel) point: the nearest drawn block, sashing or tile face (the rod and shadow
+  // are never targets; a flipped block or an unflipped tile faces away, so FrontSide skips it), and the point in
+  // the group's space: the hit, or for 'none' where the ray meets the group's z = 0 plane. A block and its tile
+  // report their current userData.slot, which #9's placeBlock keeps up to date.
+  function pick(clientX, clientY) {
+    aim(clientX, clientY);
+    // The Raycaster ignores `visible`, so a hidden or faded part is filtered here.
+    const hit = raycaster.intersectObjects(targets, false).find((h) => shown(h.object));
+    if (!hit) return { part: 'none', slot: null, point: groundPoint() };
+    const [x, y] = group.worldToLocal(hit.point.clone()).toArray();
+    if (hit.object === sashing) return { part: 'sashing', slot: null, point: [x, y] };
+    const part = hit.object.userData.part === 'tile' ? 'tile' : 'block';
+    return { part, slot: hit.object.userData.slot, point: [x, y] };
+  }
+
+  // #9: refolds block i for `slot` (a fresh build's fold there) and moves its slot, and its tile's, to `slot`. Only
+  // while the block is fully flat (morph influence 1), so the base it rewrites is never on screen; never cached.
+  function placeBlock(i, slot) {
+    const mesh = blocks[i];
+    if (mesh.morphTargetInfluences[0] !== 1) throw new Error('WEAVE: placeBlock needs a flat block (morph influence 1).');
+    foldBlock(mesh.geometry, slot, tilts[i]);
+    mesh.userData.slot = slot;
+    if (tiles[i]) tiles[i].userData.slot = slot;
+  }
+
+  // #9: re-cuts the sashing's holes for the blocks' current slots; the material and its maps are kept.
+  function reseam() {
+    const old = sashing.geometry;
+    sashing.geometry = sashingGeometry(blocks);
+    old.dispose();
+  }
+
+  // Test-only: block i's slot, seeded tilt and local base (before the tilt and the morph) as plain arrays.
+  function blockBase(i) {
+    const { geometry, userData } = blocks[i];
+    return { slot: userData.slot, tilt: tilts[i], positions: Array.from(geometry.attributes.position.array),
+      normals: Array.from(geometry.attributes.normal.array) };
   }
 
   // Resizing clears the canvas, so the current pose is redrawn at once (uncounted): a ResizeObserver runs after
@@ -382,7 +439,7 @@ export function buildQuilt(renderer, { slots }) {
     const { width, height } = shadow.geometry.parameters;
     const sashPosition = sashing.geometry.attributes.position;
     return {
-      blocks: blocks.map((mesh) => ({
+      blocks: blocks.slice().sort((a, b) => a.userData.slot - b.userData.slot).map((mesh) => ({
         ...mesh.userData,
         positions: flatWorld(mesh, mesh.geometry.attributes.position.count, (j, v) => mesh.getVertexPosition(j, v)),
         indices: Array.from(mesh.geometry.index.array),
@@ -439,6 +496,6 @@ export function buildQuilt(renderer, { slots }) {
 
   return {
     scene, camera, renderer, group, blocks, sashing, rod, shadow, setAmbient, setBlockPose, setFade, fades, pick, resize,
-    render, snapshot, project, dispose,
+    render, snapshot, project, dispose, placeBlock, reseam, blockBase, planePoint,
   };
 }

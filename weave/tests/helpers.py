@@ -257,7 +257,8 @@ STILL_HINT = "Your browser shows a picture of the quilt. The panels below have e
 
 UNSTITCH_NAME = "Unstitch"
 SEW_NAME = "Sew it back"
-QUILT_HINT = "Click the quilt, or press Unstitch, to lay its blocks out as a dashboard."
+QUILT_HINT = ("Click the quilt, or press Unstitch, to lay its blocks out as a dashboard; in the dashboard, drag a tile"
+              " to move it.")
 TILES_HINT = "Click the background, or press Sew it back, to sew the quilt together again."
 
 # An init script: a weave:mode listener on [data-hero] from the moment it is parsed (before the scene goes live),
@@ -306,10 +307,14 @@ def wait_for_mode(page, mode, timeout=10000):
                            timeout=timeout)
 
 
+def project(page, xyz):
+    """The client (CSS pixel) point where the world point `xyz` projects (through __weave.project)."""
+    return page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", xyz)
+
+
 def click_world(page, xyz):
-    """Click the canvas where the world point `xyz` projects (through __weave.project)."""
-    x, y = page.eval_on_selector("[data-hero]", "(el, p) => el.__weave.project(p)", xyz)
-    page.mouse.click(x, y)
+    """Click the canvas where the world point `xyz` projects."""
+    page.mouse.click(*project(page, xyz))
 
 
 # The four geometry checks per block from one snapshot: flat (one z), flipped (the first triangle faces away from the

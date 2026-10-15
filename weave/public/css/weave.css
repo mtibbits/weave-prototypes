@@ -51,6 +51,10 @@ html[data-frame="still"] body * { visibility: hidden; }
 html[data-frame="still"] .hero-stage, html[data-frame="still"] .hero-stage > canvas, html[data-frame="still"] .hero-stage > .hero-still { visibility: visible; }
 html[data-frame="still"] .hero-stage { position: fixed; inset: 0; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; z-index: 100; }
 .hero-hint { min-height: 1.55em; margin: 10px 0 0; font-size: 15px; color: var(--muted); }
+/* Live only: room for the longest live hint (#9's quilt hint: two lines, three on a narrow window), so the hint
+   changing on unstitch never moves the page under it. The still hint never changes, so the still path keeps 1.55em. */
+.hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 3.1em; }
+@media (max-width: 440px) { .hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 4.65em; } }
 
 .panels, .why { border-top: 1px solid var(--line); padding: 36px 0 8px; }
 .panels h2, .why h2 { font-family: var(--serif); font-weight: 400; font-size: 32px; margin: 0 0 16px; }
