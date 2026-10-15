@@ -123,28 +123,30 @@ function buildTile(slot, entry) {
   return tile;
 }
 
+// Block-local z of the cloth at (lx, ly) for a block in `slot` at `tilt`: the puff plus the fold evaluated where that
+// point really hangs (D10: read on every call, never cached). foldBlock and #10's decor both come here.
+function surfaceZ(slot, tilt, lx, ly) {
+  const [cx, cy] = slotCentre(slot);
+  const cos = Math.cos(tilt);
+  const sin = Math.sin(tilt);
+  return puffZ(lx + 0.5, ly + 0.5) + foldZ(cx + cos * lx - sin * ly, cy + sin * lx + cos * ly);
+}
+
 // A block's base for `slot`: each vertex of the flat morph target puffed and folded (foldZ is evaluated where the
 // vertex really hangs, so a tilted block follows the fold under it, and read on every call: D10), then its
 // normals and bounds. The build and #9's placeBlock both come here, so a moved block is the block a fresh build
 // would give at that slot.
 function foldBlock(geometry, slot, tilt) {
-  const [cx, cy] = slotCentre(slot);
-  const cos = Math.cos(tilt);
-  const sin = Math.sin(tilt);
   const position = geometry.attributes.position;
   const flat = geometry.morphAttributes.position[0];
-  for (let j = 0; j < position.count; j += 1) {
-    const lx = flat.getX(j);
-    const ly = flat.getY(j);
-    position.setZ(j, puffZ(lx + 0.5, ly + 0.5) + foldZ(cx + cos * lx - sin * ly, cy + sin * lx + cos * ly));
-  }
+  for (let j = 0; j < position.count; j += 1) position.setZ(j, surfaceZ(slot, tilt, flat.getX(j), flat.getY(j)));
   position.needsUpdate = true;
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 }
 
 // One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence
-// 0 for #10's lift and #8's flatten. A filler is built transparent, since it fades; every other block carries its
+// 0 for #8's flatten (#10's hover lift is the block's scale and z, not a morph). A filler is built transparent, since it fades; every other block carries its
 // tile face.
 function buildBlock(slot, entry, renderer) {
   const face = faceKind(entry);
@@ -263,6 +265,106 @@ function buildShadow() {
   return shadow;
 }
 
+// --- #10: seam stitches, pins and the hover lift. ---
+
+// Seam stitch dash frame (D33): local +X runs along the seam; the dash is a cylinder of length STITCH_DASH_LENGTH and
+// radius STITCH_DASH_RADIUS centred at its origin; the centre lies ON the fabric surface at its x, y (puffZ + foldZ
+// there, puffZ 0 on the seam line), with no lift, so half the thread sinks in. #16's needle has its own NEEDLE_LIFT.
+export const STITCH_DASH_LENGTH = 0.05;
+export const STITCH_DASH_RADIUS = 0.005;
+export const STITCHES_PER_SIDE = 12;          // dash k on a side at (k + 0.5) / 12 along it: 48 per block
+// Pin frame (#22 keeps it): origin at the tip, shaft along local +Y to a round head whose centre is PIN_LENGTH above,
+// in scene units; the tip sits on the block's surface and +Y leans at most PIN_MAX_TILT_DEG from its normal there.
+export const PIN_LENGTH = 0.16;
+export const PIN_HEAD_RADIUS = 0.018;
+export const PIN_SHAFT_RADIUS = 0.004;
+export const PIN_MAX_TILT_DEG = 15;           // seeded; the AC bound is 20
+export const DECOR_TIMING = Object.freeze({ sew: 0.4, pop: 0.3, drop: 0.3 }); // seconds of director time
+export const HOVER = Object.freeze({ scale: 0.03, lift: 0.04, rate: 12 });
+
+// The share of the sew each dash takes to scale in; the dashes start one after another over the rest.
+const SEW_EACH = 0.25;
+// A restored pin drops this far along its +Y; a popped one rises this far as it shrinks.
+const DROP_FROM = 0.25;
+const POP_RISE = 0.4;
+// The step for the cloth's slope, in block-local units.
+const SLOPE_EPS = 1e-4;
+const easeInOut = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
+
+// The dashes' rest matrices in block-local space: each side in turn (top, right, bottom, left, clockwise), its +X
+// along the seam's slope and its +Z up off the cloth.
+function stitchMatrices(slot, tilt) {
+  const sides = [[[-0.5, 0.5], [1, 0]], [[0.5, 0.5], [0, -1]], [[0.5, -0.5], [-1, 0]], [[-0.5, -0.5], [0, 1]]];
+  const out = [];
+  const x = new THREE.Vector3();
+  const y = new THREE.Vector3();
+  const z = new THREE.Vector3();
+  for (const [[sx, sy], [dx, dy]] of sides) {
+    for (let k = 0; k < STITCHES_PER_SIDE; k += 1) {
+      const t = (k + 0.5) / STITCHES_PER_SIDE;
+      const lx = sx + dx * t;
+      const ly = sy + dy * t;
+      const slope = (surfaceZ(slot, tilt, lx + dx * SLOPE_EPS, ly + dy * SLOPE_EPS)
+        - surfaceZ(slot, tilt, lx - dx * SLOPE_EPS, ly - dy * SLOPE_EPS)) / (2 * SLOPE_EPS);
+      x.set(dx, dy, slope).normalize();
+      z.crossVectors(x, y.set(-dy, dx, 0)).normalize();
+      y.crossVectors(z, x);
+      out.push(new THREE.Matrix4().makeBasis(x, y, z).setPosition(lx, ly, surfaceZ(slot, tilt, lx, ly)));
+    }
+  }
+  return out;
+}
+
+// The pins' rest matrices in block-local space, seeded from rngFor(id, 'pins') in this draw order: the count (3 or
+// 4), the corner a 3 leaves out, then per pin its insets from both edges (0.12-0.18), azimuth and lean.
+function pinMatrices(id, slot, tilt) {
+  const rng = rngFor(id, 'pins');
+  const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
+  if (rng() < 0.5) corners.splice(Math.floor(rng() * 4), 1);
+  const maxLean = (PIN_MAX_TILT_DEG * Math.PI) / 180;
+  const up = new THREE.Vector3(0, 1, 0);
+  const at = (u, v) => surfaceZ(slot, tilt, u, v);
+  return corners.map(([sx, sy]) => {
+    const lx = sx * (0.5 - (0.12 + 0.06 * rng()));
+    const ly = sy * (0.5 - (0.12 + 0.06 * rng()));
+    const azimuth = rng() * 2 * Math.PI;
+    const lean = rng() * maxLean;
+    const n = new THREE.Vector3(-(at(lx + SLOPE_EPS, ly) - at(lx - SLOPE_EPS, ly)) / (2 * SLOPE_EPS),
+      -(at(lx, ly + SLOPE_EPS) - at(lx, ly - SLOPE_EPS)) / (2 * SLOPE_EPS), 1).normalize();
+    const a = new THREE.Vector3(1, 0, 0).addScaledVector(n, -n.x).normalize();
+    const b = new THREE.Vector3().crossVectors(n, a);
+    const dir = n.multiplyScalar(Math.cos(lean))
+      .addScaledVector(a, Math.sin(lean) * Math.cos(azimuth)).addScaledVector(b, Math.sin(lean) * Math.sin(azimuth));
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
+    return new THREE.Matrix4().compose(new THREE.Vector3(lx, ly, at(lx, ly)), quaternion, new THREE.Vector3(1, 1, 1));
+  });
+}
+
+// One decor part as a hidden InstancedMesh child of its block: never culled, never a pick target.
+function decorMesh(geometry, material, count, part) {
+  const mesh = new THREE.InstancedMesh(geometry, material, count);
+  mesh.visible = false;
+  mesh.frustumCulled = false;
+  mesh.userData = { part };
+  return mesh;
+}
+
+// The decor's shared geometries (in their D33 and pin frames) and materials.
+function decorParts() {
+  const dash = new THREE.CylinderGeometry(STITCH_DASH_RADIUS, STITCH_DASH_RADIUS, STITCH_DASH_LENGTH, 8, 1);
+  dash.rotateZ(-Math.PI / 2);
+  const shaft = new THREE.CylinderGeometry(PIN_SHAFT_RADIUS, PIN_SHAFT_RADIUS, PIN_LENGTH, 8, 1);
+  shaft.translate(0, PIN_LENGTH / 2, 0);
+  const head = new THREE.SphereGeometry(PIN_HEAD_RADIUS, 12, 8);
+  head.translate(0, PIN_LENGTH, 0);
+  return {
+    dash, shaft, head,
+    thread: new THREE.MeshStandardMaterial({ color: '#3B2F2A', roughness: 0.85 }),
+    steel: new THREE.MeshStandardMaterial({ color: '#C3C7CB', metalness: 0.85, roughness: 0.35 }),
+    bead: new THREE.MeshStandardMaterial({ color: '#C4623A', roughness: 0.45 }),
+  };
+}
+
 // A mesh's `count` vertices in world space as one flat array; read(j, v) fills v with vertex j in local space.
 function flatWorld(mesh, count, read) {
   const v = new THREE.Vector3();
@@ -293,6 +395,174 @@ export function buildQuilt(renderer, { slots }) {
   const fillers = blocks.filter((b) => b.userData.face === 'filler');
   // Each block's seeded tilt, read once (not in userData: the snapshot's block keys are pinned).
   const tilts = blocks.map((b) => b.rotation.z);
+  const entries = slots.slice();
+
+  // --- #10's decor. Its state lives here, by block index, never in userData (the snapshot spreads userData into
+  // every block, and its keys are pinned). Each kind (stitches, pins) has a state for #16 (shown or hidden), and is
+  // drawn when shown and its block is not stowed (#8's transitions stow it). `drawn` is where its animation is
+  // heading; `anim` is { dir, t, dur, from } while it runs.
+  const parts = decorParts();
+  const decor = blocks.map((mesh, i) => {
+    const { id, status, face } = mesh.userData;
+    const kinds = {};
+    if (status === 'live') {
+      const rest = stitchMatrices(i, tilts[i]);
+      const stitches = decorMesh(parts.dash, parts.thread, rest.length, 'stitches');
+      mesh.add(stitches);
+      kinds.stitches = { type: 'stitches', meshes: [stitches], rest, f: new Array(rest.length).fill(0) };
+    }
+    if (status === 'live' || face === 'planned') {
+      const rest = pinMatrices(id, i, tilts[i]);
+      const shafts = decorMesh(parts.shaft, parts.steel, rest.length, 'pinShafts');
+      const heads = decorMesh(parts.head, parts.bead, rest.length, 'pinHeads');
+      mesh.add(shafts, heads);
+      kinds.pins = { type: 'pins', meshes: [shafts, heads], rest, y: 0, s: 0 };
+    }
+    for (const kind of Object.values(kinds)) Object.assign(kind, { state: 'hidden', drawn: false, anim: null });
+    return { kinds, stowed: false };
+  });
+  let decorPaused = false;
+
+  const scratch = new THREE.Matrix4();
+  const step = new THREE.Matrix4();
+  // Writes a kind's instance matrices from its rest matrices and its current scales (stitches) or drop/pop (pins).
+  function writeKind(kind) {
+    kind.rest.forEach((rest, k) => {
+      scratch.copy(rest);
+      if (kind.type === 'stitches') {
+        const f = kind.f[k];
+        if (f !== 1) scratch.multiply(step.makeScale(f, f, f));
+      } else if (kind.y !== 0 || kind.s !== 1) {
+        scratch.multiply(step.makeTranslation(0, kind.y, 0)).multiply(step.makeScale(kind.s, kind.s, kind.s));
+      }
+      for (const mesh of kind.meshes) mesh.setMatrixAt(k, scratch);
+    });
+    for (const mesh of kind.meshes) mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // A kind at u (0-1) of its running animation: a sew scales the dashes in one after another, a drop lands the pins
+  // along their +Y, and a pop shrinks either away (the pins rising as they go).
+  function stepKind(kind, u) {
+    const { dir, from } = kind.anim;
+    const e = easeInOut(u);
+    if (kind.type === 'stitches') {
+      const n = kind.f.length;
+      kind.f = from.f.map((f0, k) => {
+        if (dir === 'out') return f0 * (1 - e);
+        const start = (k / n) * (1 - SEW_EACH);
+        return f0 + (1 - f0) * Math.min(1, Math.max(0, (u - start) / SEW_EACH));
+      });
+    } else if (dir === 'out') {
+      kind.y = from.y + POP_RISE * e;
+      kind.s = from.s * (1 - e);
+    } else {
+      kind.y = from.y * (1 - e);
+      kind.s = from.s + (1 - from.s) * e;
+    }
+    writeKind(kind);
+  }
+
+  // A kind at the end of where it is heading: exactly at rest and drawn, or hidden.
+  function endKind(kind) {
+    kind.anim = null;
+    if (kind.type === 'stitches') kind.f.fill(kind.drawn ? 1 : 0);
+    else {
+      kind.y = 0;
+      kind.s = kind.drawn ? 1 : 0;
+    }
+    if (kind.drawn) writeKind(kind);
+    for (const mesh of kind.meshes) mesh.visible = kind.drawn;
+  }
+
+  // Heads block i's kind for where its state and stow say it should be; a kind already heading there is left alone.
+  // Instant when not animated or while paused.
+  function retarget(i, kind, animate) {
+    const want = kind.state === 'shown' && !decor[i].stowed;
+    if (want === kind.drawn) return;
+    kind.drawn = want;
+    if (!animate || decorPaused) {
+      endKind(kind);
+      return;
+    }
+    // A drop starts DROP_FROM up at full size; one that turns back a pop starts where the pop has got to.
+    const from = kind.type === 'stitches' ? { f: kind.f.slice() }
+      : { y: kind.s === 0 ? DROP_FROM : kind.y, s: kind.s === 0 ? 1 : kind.s };
+    const dur = !want ? DECOR_TIMING.pop : kind.type === 'stitches' ? DECOR_TIMING.sew : DECOR_TIMING.drop;
+    kind.anim = { dir: want ? 'in' : 'out', t: 0, dur, from };
+    for (const mesh of kind.meshes) mesh.visible = true;
+    stepKind(kind, 0);
+  }
+
+  const indexOf = (id) => (typeof id === 'string' ? blocks.findIndex((b) => b.userData.id === id) : -1);
+
+  // #16's per-block calls: set block id's state for that kind; an unknown id, or a block without that decor, does
+  // nothing, and a call that would set the state the kind already has never restarts its animation.
+  function setState(id, key, state, { animate = true } = {}) {
+    const i = indexOf(id);
+    const kind = i < 0 ? null : decor[i].kinds[key];
+    if (!kind || kind.state === state) return;
+    kind.state = state;
+    retarget(i, kind, animate);
+  }
+  const revealStitches = (id, options) => setState(id, 'stitches', 'shown', options);
+  const popStitches = (id, options) => setState(id, 'stitches', 'hidden', options);
+  const restorePins = (id, options) => setState(id, 'pins', 'shown', options);
+  const popPins = (id, options) => setState(id, 'pins', 'hidden', options);
+
+  // #8's transitions hide the decor (stow) and return it (unstow) without touching the per-block state #16 sets.
+  function setStowed(i, stowed, animate) {
+    if (decor[i].stowed === stowed) return;
+    decor[i].stowed = stowed;
+    for (const kind of Object.values(decor[i].kinds)) retarget(i, kind, animate);
+  }
+  const byId = (fn) => (id, { animate = true } = {}) => {
+    const i = indexOf(id);
+    if (i >= 0) fn(i, animate);
+  };
+  const stow = byId((i, animate) => setStowed(i, true, animate));
+  const unstow = byId((i, animate) => setStowed(i, false, animate));
+  const stowAll = ({ animate = true } = {}) => decor.forEach((_, i) => setStowed(i, true, animate));
+  const unstowAll = ({ animate = true } = {}) => decor.forEach((_, i) => setStowed(i, false, animate));
+  // Block index i's unstow, for main.js's per-block sew-back (a filler or the suggest block has no id to name).
+  const unstowBlock = (i, { animate = true } = {}) => setStowed(i, false, animate);
+
+  const eachKind = (fn) => decor.forEach(({ kinds }) => Object.values(kinds).forEach(fn));
+
+  // One frame of h seconds of director time (D8: the decor has no clock of its own).
+  function tick(h) {
+    eachKind((kind) => {
+      if (!kind.anim) return;
+      kind.anim.t += h;
+      if (kind.anim.t >= kind.anim.dur - 1e-9) endKind(kind);
+      else stepKind(kind, kind.anim.t / kind.anim.dur);
+    });
+  }
+
+  // Every running decor animation at its end.
+  function finishDecor() {
+    eachKind((kind) => { if (kind.anim) endKind(kind); });
+  }
+
+  // Paused, every call is instant and a running animation ends now.
+  function setPaused(paused) {
+    decorPaused = paused;
+    if (paused) finishDecor();
+  }
+
+  // Repaints block id's face as `kind` (#16's "start planned" and sew-in); its tilt and the sashing are unchanged.
+  function setFace(id, kind) {
+    if (!['sewn', 'planned', 'suggest'].includes(kind)) throw new Error("WEAVE: setFace needs 'sewn', 'planned' or 'suggest'.");
+    const i = indexOf(id);
+    if (i < 0) return;
+    const { map } = blocks[i].material;
+    paintFace(map.image, entries[i], kind);
+    map.needsUpdate = true;
+    blocks[i].userData.face = kind;
+  }
+
+  // The hover lift: block i's amount (0-1), which setBlockPose applies on every call; and each block's last pose.
+  const hover = new Array(blocks.length).fill(0);
+  const poses = blocks.map((b) => ({ position: b.position.toArray(), rotY: 0, rotZ: b.rotation.z, morph: 0 }));
 
   const pivot = new THREE.Vector3(0, LAYOUT.rod.y, 0);
   const aboutX = new THREE.Quaternion();
@@ -310,9 +580,16 @@ export function buildQuilt(renderer, { slots }) {
 
   // Block i's pose (#8's director): position, rotY (the flip), rotZ (the seeded tilt) and morph (the flatten).
   // Euler XYZ makes the rotation Ry(rotY) Rz(rotZ). Its tile face draws only once the block starts to flip.
-  function setBlockPose(i, { position, rotY, rotZ, morph }) {
+  // #10: the stored hover amount a scales the block by 1 + HOVER.scale a and lifts it HOVER.lift a; at 0 the pose is
+  // exactly the director's.
+  function setBlockPose(i, pose) {
+    const { position, rotY, rotZ, morph } = pose;
     const mesh = blocks[i];
+    const a = hover[i];
+    poses[i] = pose;
     mesh.position.fromArray(position);
+    if (a !== 0) mesh.position.z += HOVER.lift * a;
+    mesh.scale.setScalar(1 + HOVER.scale * a);
     mesh.rotation.y = rotY;
     mesh.rotation.z = rotZ;
     mesh.morphTargetInfluences[0] = morph;
@@ -384,6 +661,22 @@ export function buildQuilt(renderer, { slots }) {
     return { part, slot: hit.object.userData.slot, point: [x, y] };
   }
 
+  // Block i's hover amount (0-1), applied at once.
+  function setHover(i, amount) {
+    hover[i] = amount;
+    setBlockPose(i, poses[i]);
+  }
+
+  // The hover's pick: the nearest drawn block under a client point (blocks only, never the sashing, so it stays
+  // cheap), as its block index; null for none or a filler. pick (press and click) is unchanged.
+  function pickBlock(clientX, clientY) {
+    aim(clientX, clientY);
+    const hit = raycaster.intersectObjects(blocks, false).find((h) => shown(h.object));
+    if (!hit) return null;
+    const i = blocks.indexOf(hit.object);
+    return blocks[i].userData.face === 'filler' ? null : i;
+  }
+
   // #9: refolds block i for `slot` (a fresh build's fold there) and moves its slot, and its tile's, to `slot`. Only
   // while the block is fully flat (morph influence 1), so the base it rewrites is never on screen; never cached.
   function placeBlock(i, slot) {
@@ -392,6 +685,11 @@ export function buildQuilt(renderer, { slots }) {
     foldBlock(mesh.geometry, slot, tilts[i]);
     mesh.userData.slot = slot;
     if (tiles[i]) tiles[i].userData.slot = slot;
+    // #10: the decor re-lays on the new fold, and keeps its state.
+    const { stitches, pins } = decor[i].kinds;
+    if (stitches) stitches.rest = stitchMatrices(slot, tilts[i]);
+    if (pins) pins.rest = pinMatrices(mesh.userData.id, slot, tilts[i]);
+    for (const kind of [stitches, pins]) if (kind && (kind.drawn || kind.anim)) writeKind(kind);
   }
 
   // #9: re-cuts the sashing's holes for the blocks' current slots; the material and its maps are kept.
@@ -422,10 +720,36 @@ export function buildQuilt(renderer, { slots }) {
     renderer.render(scene, camera);
   }
 
+  // The drawn instances of every block's decor part (block-slot order, then instance order) as { id, position,
+  // quaternion, scale } in world space (block.matrixWorld x instanceMatrix, decomposed); a zero-scale instance (a
+  // dash not yet sewn) is not drawn.
+  function drawnDecor(key) {
+    const out = [];
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    for (const mesh of blocks.slice().sort((a, b) => a.userData.slot - b.userData.slot)) {
+      const kind = decor[blocks.indexOf(mesh)].kinds[key];
+      if (!kind || !shown(kind.meshes[0])) continue;
+      kind.rest.forEach((_, k) => {
+        if ((kind.type === 'stitches' ? kind.f[k] : kind.s) === 0) return;
+        kind.meshes[0].getMatrixAt(k, m);
+        m.premultiply(mesh.matrixWorld).decompose(p, q, s);
+        out.push({ id: mesh.userData.id, position: p.toArray(), quaternion: q.toArray(), scale: s.toArray() });
+      });
+    }
+    return out;
+  }
+
   // The D18 contract, as plain JSON-safe arrays in world space:
   // { blocks: [{ slot, id, status, face, positions /*1681*3 flat: getVertexPosition(i).applyMatrix4(matrixWorld)*/,
   //              indices, uvs /*1681*2*/ }] (12, slot order),
-  //   sashing: { positions, indices, uvs }, pins: [], stitches: [],
+  //   sashing: { positions, indices, uvs },
+  //   pins: [{ id, position, quaternion, scale }],     // #10: each drawn pin once, from its shaft (its tip, +Y up it)
+  //   stitches: [{ id, position, quaternion, scale }], // #10: each drawn dash (its centre, +X along the seam)
+  //   stitchDash: { length, radius },                  // STITCH_DASH_LENGTH and STITCH_DASH_RADIUS
+  //   (pins: [] and stitches: [] on a fresh build: the decor is built hidden)
   //   rod: { start, end, radius },            // world centres of the two ball ends
   //   shadow: { position, quaternion, width, height },
   //   camera: { position, target, up, fov, aspect } }
@@ -450,8 +774,9 @@ export function buildQuilt(renderer, { slots }) {
         indices: Array.from(sashing.geometry.index.array),
         uvs: Array.from(sashing.geometry.attributes.uv.array),
       },
-      pins: [],
-      stitches: [],
+      pins: drawnDecor('pins'),
+      stitches: drawnDecor('stitches'),
+      stitchDash: { length: STITCH_DASH_LENGTH, radius: STITCH_DASH_RADIUS },
       rod: {
         start: caps[0].getWorldPosition(new THREE.Vector3()).toArray(),
         end: caps[1].getWorldPosition(new THREE.Vector3()).toArray(),
@@ -497,5 +822,8 @@ export function buildQuilt(renderer, { slots }) {
   return {
     scene, camera, renderer, group, blocks, sashing, rod, shadow, setAmbient, setBlockPose, setFade, fades, pick, resize,
     render, snapshot, project, dispose, placeBlock, reseam, blockBase, planePoint,
+    revealStitches, popStitches, restorePins, popPins, setFace, stow, unstow, stowAll, unstowAll, unstowBlock, tick,
+    setPaused, finishDecor, setHover, pickBlock,
+    get decorIdle() { return decor.every(({ kinds }) => Object.values(kinds).every((k) => !k.anim)); },
   };
 }

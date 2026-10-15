@@ -147,10 +147,12 @@ def test_snapshot_is_plain_json_with_the_contract_fields(paint_js):
           sizes: snap.blocks.map((b) => [b.positions.length, b.uvs.length, b.indices.length]),
           sashingSizes: [snap.sashing.positions.length / 3, snap.sashing.uvs.length / 2, snap.sashing.indices.length],
           pins: snap.pins, stitches: snap.stitches, finite: numbers.every(Number.isFinite), numbers: numbers.length,
+          stitchDash: snap.stitchDash, dash: { length: S.STITCH_DASH_LENGTH, radius: S.STITCH_DASH_RADIUS },
         };
     """)
     assert r["roundTrip"] is True
-    assert r["top"] == ["blocks", "camera", "pins", "rod", "sashing", "shadow", "stitches"]
+    assert r["top"] == ["blocks", "camera", "pins", "rod", "sashing", "shadow", "stitchDash", "stitches"]
+    assert r["stitchDash"] == r["dash"] and r["dash"]["length"] > 0 and r["dash"]["radius"] > 0
     assert r["block"] == ["face", "id", "indices", "positions", "slot", "status", "uvs"]
     assert r["sashing"] == ["indices", "positions", "uvs"]
     assert r["rod"] == ["end", "radius", "start"]
@@ -633,3 +635,389 @@ def test_plane_point_matches_pick_none(paint_js):
     """)
     assert [p["part"] for p in r] == ["none"] * 3
     assert all(p["err"] == 0 for p in r), r
+
+
+# --- #10: seam stitches, pins, the per-block calls, setFace, the hover lift and pickBlock. ---
+
+# idx(q, id) is block id's index; decor(q, i, part) its decor mesh of that part (or null); matrices(mesh) a copy of its
+# instance matrices; near(a, b, eps) compares two number arrays; ended(q, call) reads the snapshot list a call
+# changes; tickFor(q, seconds, h) ticks until `seconds` have summed (returns the tick count).
+DECOR_JS = PLACE_JS + r"""
+    const idx = (q, id) => q.blocks.findIndex((b) => b.userData.id === id);
+    const decor = (q, i, part) => q.blocks[i].children.find((c) => c.userData.part === part) ?? null;
+    const matrices = (mesh) => Array.from(mesh.instanceMatrix.array);
+    const near = (a, b, eps) => a.length === b.length && a.every((v, k) => Math.abs(v - b[k]) <= eps);
+    const flatList = (list) => list.flatMap((e) => [...e.position, ...e.quaternion, ...e.scale]);
+    const listOf = (q, key, id) => q.snapshot()[key].filter((e) => e.id === id);
+    const tickFor = (q, seconds, h = 1 / 60) => { let n = 0; for (let t = 0; t < seconds - 1e-9; t += h) { q.tick(h); n += 1; } return n; };
+    const LIVE = DEFAULTS.filter((e) => e.status === 'live').map((e) => e.id);
+    const PLANNED = DEFAULTS.filter((e) => e.status === 'planned').map((e) => e.id);
+    const edgeOf = (x, y, slot) => {
+      const [cx, cy] = L.slotCentre(slot);
+      const gaps = [[Math.abs(Math.abs(x - cx) - 0.5), 'x'], [Math.abs(Math.abs(y - cy) - 0.5), 'y']];
+      gaps.sort((a, b) => a[0] - b[0]);
+      return gaps[0];
+    };
+    // Each stitch against its slot: the gap to the nearest edge, |z - foldZ|, and the cross-seam component of +X.
+    const seamCheck = (stitches, slotOfId) => {
+      let edge = 0; let z = 0; let cross = 0;
+      for (const s of stitches) {
+        const [x, y, zz] = s.position;
+        const [gap, axis] = edgeOf(x, y, slotOfId(s.id));
+        edge = Math.max(edge, gap);
+        z = Math.max(z, Math.abs(zz - L.foldZ(x, y)));
+        const X = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(...s.quaternion));
+        cross = Math.max(cross, Math.abs(axis === 'x' ? X.x : X.y));
+      }
+      return { edge, z, cross, count: stitches.length };
+    };
+"""
+
+
+def decor(paint_js, body):
+    return paint_js(BUILD_JS + DECOR_JS + body)
+
+
+def test_decor_is_built_per_kind(paint_js):
+    r = decor(paint_js, r"""
+        const passed = [];
+        const original = THREE.Raycaster.prototype.intersectObjects;
+        THREE.Raycaster.prototype.intersectObjects = function (objects, ...rest) { passed.push(...objects); return original.call(this, objects, ...rest); };
+        const kinds = (q) => q.blocks.map((b) => {
+          const by = {};
+          for (const c of b.children) if (c.userData.part !== 'tile') by[c.userData.part] = { count: c.count, visible: c.visible, instanced: c.isInstancedMesh === true, culled: c.frustumCulled };
+          return { id: b.userData.id, face: b.userData.face, by };
+        });
+        const q = build();
+        const f = build(slotsOf(10));
+        const [x, y] = q.project([...L.slotCentre(0), 0]);
+        q.pick(x, y); q.pickBlock(x, y);
+        THREE.Raycaster.prototype.intersectObjects = original;
+        return { q: kinds(q), f: kinds(f), live: LIVE, planned: PLANNED,
+                 targeted: passed.filter((o) => ['stitches', 'pinShafts', 'pinHeads'].includes(o.userData.part)).length,
+                 passed: passed.length };
+    """)
+    assert len(r["live"]) == 7 and len(r["planned"]) == 4
+    for b in r["q"] + r["f"]:
+        by = b["by"]
+        for mesh in by.values():
+            assert mesh["instanced"] is True and mesh["visible"] is False and mesh["culled"] is False, b
+        if b["id"] in r["live"]:
+            assert sorted(by) == ["pinHeads", "pinShafts", "stitches"], b
+            assert by["stitches"]["count"] == 48
+        elif b["id"] in r["planned"]:
+            assert sorted(by) == ["pinHeads", "pinShafts"], b
+        else:
+            assert by == {}, b
+        if "pinShafts" in by:
+            assert by["pinShafts"]["count"] in (3, 4) and by["pinHeads"]["count"] == by["pinShafts"]["count"], b
+    assert r["f"][10]["by"] == {} and r["f"][11]["by"] == {}
+    assert r["passed"] > 0 and r["targeted"] == 0
+
+
+def test_pin_and_dash_frames(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        const shafts = decor(q, 0, 'pinShafts'); const heads = decor(q, 0, 'pinHeads'); const dash = decor(q, 0, 'stitches');
+        shafts.geometry.computeBoundingBox(); heads.geometry.computeBoundingSphere(); dash.geometry.computeBoundingBox();
+        const pairs = [];
+        q.blocks.forEach((_, i) => {
+          const a = decor(q, i, 'pinShafts'); const b = decor(q, i, 'pinHeads');
+          if (a) pairs.push(near(matrices(a), matrices(b), 1e-12));
+        });
+        const bb = (g) => ({ min: g.boundingBox.min.toArray(), max: g.boundingBox.max.toArray() });
+        return { shaft: bb(shafts.geometry), head: heads.geometry.boundingSphere.center.toArray(), dash: bb(dash.geometry),
+                 pairs, PIN_LENGTH: S.PIN_LENGTH, L: S.STITCH_DASH_LENGTH, R: S.STITCH_DASH_RADIUS };
+    """)
+    assert r["PIN_LENGTH"] == 0.16
+    # Geometry attributes are float32, so the frames hold to 1e-6, not to float64's last bit.
+    shaft = r["shaft"]
+    assert abs(shaft["min"][1]) <= 1e-6 and shaft["max"][1] <= r["PIN_LENGTH"] + 1e-6
+    assert abs(shaft["min"][0] + shaft["max"][0]) <= 1e-6 and abs(shaft["min"][2] + shaft["max"][2]) <= 1e-6
+    assert all(abs(a - b) <= 1e-6 for a, b in zip(r["head"], [0, 0.16, 0])), r["head"]
+    dmin, dmax = r["dash"]["min"], r["dash"]["max"]
+    assert abs(dmax[0] - dmin[0] - r["L"]) <= 1e-6 and abs(dmax[1] - dmin[1] - 2 * r["R"]) <= 1e-6
+    assert abs(dmax[2] - dmin[2] - 2 * r["R"]) <= 1e-6
+    assert all(abs(dmin[k] + dmax[k]) <= 1e-6 for k in range(3)), r["dash"]
+    assert len(r["pairs"]) == 11 and all(r["pairs"])
+
+
+def test_revealed_stitches_draw_and_snapshot(paint_js):
+    """U2: InstancedMesh children of a morph-targeted block draw and decompose at block.matrixWorld x instanceMatrix."""
+    r = decor(paint_js, r"""
+        const q = build();
+        q.revealStitches('manpower', { animate: false });
+        const snap = q.snapshot();
+        const mesh = decor(q, 0, 'stitches');
+        const m = new THREE.Matrix4(); const p = new THREE.Vector3(); const qu = new THREE.Quaternion(); const sc = new THREE.Vector3();
+        let gap = 0;
+        snap.stitches.forEach((s, k) => {
+          mesh.getMatrixAt(k, m);
+          m.premultiply(q.blocks[0].matrixWorld).decompose(p, qu, sc);
+          gap = Math.max(gap, ...[...p.toArray(), ...qu.toArray(), ...sc.toArray()].map((v, j) => Math.abs(v - [...s.position, ...s.quaternion, ...s.scale][j])));
+        });
+        const gl = q.renderer.getContext();
+        const rect = q.renderer.domElement.getBoundingClientRect();
+        const read = (point) => {
+          q.render();
+          const [x, y] = q.project(point);
+          const px = new Uint8Array(36);
+          gl.readPixels(Math.round(x - rect.left) - 1, Math.round(rect.bottom - y) - 1, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          return Array.from(px);
+        };
+        // A dash on the bottom edge, nudged up by its radius so the read lands on the half above the cloth.
+        const target = snap.stitches.find((s) => Math.abs(s.position[1] - (L.slotCentre(0)[1] - 0.5)) < 1e-6);
+        const at = [target.position[0], target.position[1], target.position[2] + S.STITCH_DASH_RADIUS * 0.5];
+        const shown = read(at);
+        mesh.visible = false;
+        const hidden = read(at);
+        return { count: snap.stitches.length, ids: [...new Set(snap.stitches.map((s) => s.id))], gap,
+                 differ: shown.some((v, k) => Math.abs(v - hidden[k]) > 8) };
+    """)
+    assert r["count"] == 48 and r["ids"] == ["manpower"]
+    assert r["gap"] <= 1e-6, r
+    assert r["differ"] is True
+
+
+def test_stitches_lie_on_the_seam(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        LIVE.forEach((id) => q.revealStitches(id, { animate: false }));
+        const snap = q.snapshot();
+        const perId = Object.fromEntries(LIVE.map((id) => [id, snap.stitches.filter((s) => s.id === id).length]));
+        return { perId, ...seamCheck(snap.stitches, (id) => idx(q, id)) };
+    """)
+    assert r["count"] == 336 and set(r["perId"].values()) == {48}
+    assert r["edge"] <= 1e-6 and r["z"] <= 1e-3 and r["cross"] < 1e-3, r
+
+
+# Each pin against its block's mesh, from one snapshot: the tip's |z| gap to the mesh surface (bilinear in the
+# block's snapshot grid at the tip's inverse-tilted local xy), the angle (degrees) between the pin's +Y and that cell's
+# mesh normal, and its scale. The oracle is the mesh, never foldZ.
+PIN_CHECK_JS = r"""
+    const pinCheck = (q, snap) => {
+      let gap = 0; let angle = 0; let scale = 0;
+      const byId = {};
+      for (const pin of snap.pins) {
+        byId[pin.id] = (byId[pin.id] ?? 0) + 1;
+        const b = snap.blocks.find((x) => x.id === pin.id);
+        const mesh = q.blocks[idx(q, pin.id)];
+        const [cx, cy] = L.slotCentre(b.slot);
+        const t = mesh.rotation.z;
+        const dx = pin.position[0] - mesh.position.x; const dy = pin.position[1] - mesh.position.y;
+        const lx = Math.cos(-t) * dx - Math.sin(-t) * dy; const ly = Math.sin(-t) * dx + Math.cos(-t) * dy;
+        const fc = (lx + 0.5) * 40; const fr = (0.5 - ly) * 40;
+        const c0 = Math.min(39, Math.floor(fc)); const r0 = Math.min(39, Math.floor(fr));
+        const u = fc - c0; const v = fr - r0;
+        const P = (r, c) => b.positions.slice(3 * (r * 41 + c), 3 * (r * 41 + c) + 3);
+        const p00 = P(r0, c0); const p01 = P(r0, c0 + 1); const p10 = P(r0 + 1, c0); const p11 = P(r0 + 1, c0 + 1);
+        const z = (1 - u) * (1 - v) * p00[2] + u * (1 - v) * p01[2] + (1 - u) * v * p10[2] + u * v * p11[2];
+        gap = Math.max(gap, Math.abs(z - pin.position[2]));
+        const d1 = new THREE.Vector3(...p11).sub(new THREE.Vector3(...p00));
+        const d2 = new THREE.Vector3(...p01).sub(new THREE.Vector3(...p10));
+        const n = d1.cross(d2).normalize();
+        if (n.z < 0) n.negate();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(...pin.quaternion));
+        angle = Math.max(angle, (up.angleTo(n) * 180) / Math.PI);
+        scale = Math.max(scale, ...pin.scale.map((s) => Math.abs(s - 1)));
+      }
+      return { gap, angle, scale, byId, count: snap.pins.length };
+    };
+"""
+
+
+def test_pins_stand_on_their_blocks(paint_js):
+    """U3: all 11 pin sets, restored; the worst gaps are printed."""
+    r = decor(paint_js, PIN_CHECK_JS + r"""
+        const q = build();
+        [...LIVE, ...PLANNED].forEach((id) => q.restorePins(id, { animate: false }));
+        return pinCheck(q, q.snapshot());
+    """)
+    print(f"pins: worst tip gap {r['gap']:.2e}, worst angle {r['angle']:.2f} deg, {r['count']} pins")
+    assert len(r["byId"]) == 11 and all(n in (3, 4) for n in r["byId"].values()), r["byId"]
+    # The instance matrices are float32, so the unit scale holds to 1e-6.
+    assert r["gap"] <= 1e-3 and r["angle"] <= 20 and r["scale"] <= 1e-6, r
+
+
+# (call, setup before it, the snapshot list it changes, its DECOR_TIMING key)
+CALLS = {
+    "revealStitches": ("", "stitches", "sew", "manpower"),
+    "popStitches": ("q.revealStitches('manpower', { animate: false });", "stitches", "pop", "manpower"),
+    "restorePins": ("", "pins", "drop", "promotions"),
+    "popPins": ("q.restorePins('promotions', { animate: false });", "pins", "pop", "promotions"),
+}
+
+
+@pytest.mark.parametrize("call", list(CALLS))
+def test_per_block_calls_reach_their_ends(paint_js, call):
+    setup, key, timing, block = CALLS[call]
+    r = decor(paint_js, f"""
+        const h = 0.05;
+        const fresh = () => {{ const q = build(); {setup} return q; }};
+        const endOf = (q) => flatList(listOf(q, '{key}', '{block}'));
+        const ref = fresh(); ref.{call}('{block}', {{ animate: false }});
+        const want = endOf(ref);
+        const instant = [near(endOf(ref), want, 0), ref.decorIdle];
+        const q = fresh();
+        q.{call}('{block}');
+        const dur = S.DECOR_TIMING.{timing};
+        const ticks = [];
+        for (let n = 1; n <= 40 && !(near(endOf(q), want, 1e-12) && q.decorIdle); n += 1) {{
+          ticks.push(q.decorIdle);
+          q.tick(h);
+        }}
+        let summed = 0; for (let n = 0; n < ticks.length; n += 1) summed += h;
+        const p = fresh(); p.setPaused(true); p.{call}('{block}');
+        const paused = [near(endOf(p), want, 1e-12), p.decorIdle];
+        const m = fresh(); m.{call}('{block}'); m.tick(h); const midIdle = m.decorIdle; m.setPaused(true);
+        return {{ instant, ticks, summed, dur, h, paused, finished: [near(endOf(m), want, 1e-12), m.decorIdle], midIdle,
+                  wantCount: listOf(ref, '{key}', '{block}').length }};
+    """)
+    assert r["instant"] == [True, True]
+    assert r["ticks"] and not any(r["ticks"]), r["ticks"]  # decorIdle is false until the end
+    assert r["summed"] >= r["dur"] - 1e-9 and r["summed"] - r["h"] < r["dur"] - 1e-9, r
+    assert r["paused"] == [True, True] and r["midIdle"] is False and r["finished"] == [True, True]
+    assert r["wantCount"] in ({0} if call.startswith("pop") else {48} if key == "stitches" else {3, 4}), r
+
+
+def test_calls_without_that_decor_do_nothing(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        const before = JSON.stringify(q.snapshot());
+        q.popPins('manpower'); q.popStitches('promotions'); q.revealStitches('suggest'); q.restorePins(null);
+        q.revealStitches('nobody'); q.restorePins('suggest');
+        const after = JSON.stringify(q.snapshot());
+        q.restorePins('manpower');
+        return { same: before === after, idle: q.decorIdle, control: JSON.stringify(q.snapshot()) !== before };
+    """)
+    assert r["same"] is True
+    assert r["control"] is True  # weave Issue-7: the same snapshot does see a call that has decor
+
+
+def test_repeat_calls_are_no_ops(paint_js):
+    r = decor(paint_js, r"""
+        const until = (q) => { let n = 0; while (!q.decorIdle && n < 100) { q.tick(1 / 60); n += 1; } return n; };
+        const repeat = (call, id, part, half) => {
+          const a = build(); a[call](id); tickFor(a, half);
+          const mid = matrices(decor(a, idx(a, id), part));
+          a[call](id);
+          const unchanged = near(matrices(decor(a, idx(a, id), part)), mid, 1e-12);
+          const withRepeat = until(a);
+          const b = build(); b[call](id); tickFor(b, half);
+          return { unchanged, withRepeat, without: until(b) };
+        };
+        const reveal = repeat('revealStitches', 'manpower', 'stitches', 0.2);
+        const restore = repeat('restorePins', 'promotions', 'pinShafts', 0.15);
+        const u = build(); u.revealStitches('manpower', { animate: false });
+        const atRest = matrices(decor(u, 0, 'stitches'));
+        u.unstow('manpower');
+        const unstow = { unchanged: near(matrices(decor(u, 0, 'stitches')), atRest, 1e-12), idle: u.decorIdle };
+        const c = build(); c.revealStitches('manpower'); tickFor(c, 0.2);
+        const mid = matrices(decor(c, 0, 'stitches'));
+        c.popStitches('manpower'); c.tick(1 / 60);
+        return { reveal, restore, unstow, control: !near(matrices(decor(c, 0, 'stitches')), mid, 1e-12) };
+    """)
+    for leg in ("reveal", "restore"):
+        assert r[leg]["unchanged"] is True and r[leg]["withRepeat"] == r[leg]["without"] > 0, r
+    assert r["unstow"] == {"unchanged": True, "idle": True}
+    assert r["control"] is True
+
+
+def test_stow_hides_and_unstow_returns_the_state(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        q.revealStitches('manpower', { animate: false });
+        q.restorePins('promotions', { animate: false });
+        const before = q.snapshot();
+        q.stowAll({ animate: false });
+        const stowed = q.snapshot();
+        q.unstowAll({ animate: false });
+        const after = q.snapshot();
+        return { counts: [before.stitches.length, before.pins.length], stowed: [stowed.stitches, stowed.pins],
+                 same: JSON.stringify([before.stitches, before.pins]) === JSON.stringify([after.stitches, after.pins]),
+                 manpowerPins: after.pins.filter((p) => p.id === 'manpower').length, idle: q.decorIdle };
+    """)
+    assert r["counts"][0] == 48 and r["counts"][1] in (3, 4)
+    assert r["stowed"] == [[], []]
+    assert r["same"] is True and r["manpowerPins"] == 0 and r["idle"] is True
+
+
+def test_place_block_relays_the_decor(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        q.revealStitches('manpower', { animate: false });
+        flatten(q, 0);
+        q.placeBlock(0, 5);
+        q.setBlockPose(0, { position: [...L.slotCentre(5), 0], rotY: 0, rotZ: 0, morph: 0 });
+        const moved = listOf(q, 'stitches', 'manpower');
+        const fresh = build(DRAGGED);
+        fresh.revealStitches('manpower', { animate: false });
+        const want = listOf(fresh, 'stitches', 'manpower');
+        return { same: near(flatList(moved), flatList(want), 1e-6), n: moved.length,
+                 ...seamCheck(moved, () => 5) };
+    """)
+    assert r["n"] == 48 and r["same"] is True
+    assert r["edge"] <= 1e-6 and r["z"] <= 1e-3 and r["cross"] < 1e-3, r
+
+
+def test_set_face_repaints_the_block(paint_js):
+    r = decor(paint_js, r"""
+        const T = await import('/public/js/tiles.js');
+        const { makeCanvas } = await import('/public/js/fabric.js');
+        const q = build();
+        const i = idx(q, 'promotions');
+        const tilt = q.blocks[i].rotation.z;
+        const version = q.blocks[i].material.map.version;
+        q.setFace('promotions', 'sewn');
+        const want = makeCanvas(512);
+        T.paintFace(want, DEFAULTS.find((e) => e.id === 'promotions'), 'sewn');
+        let message = null;
+        try { q.setFace('promotions', 'filler'); } catch (err) { message = err.message; }
+        return { got: await sha256Canvas(q.blocks[i].material.map.image), want: await sha256Canvas(want),
+                 face: q.blocks[i].userData.face, snapFace: q.snapshot().blocks[q.blocks[i].userData.slot].face,
+                 needsUpdate: q.blocks[i].material.map.version > version, tilt: q.blocks[i].rotation.z === tilt, message };
+    """)
+    assert r["got"] == r["want"]
+    assert r["face"] == "sewn" and r["snapFace"] == "sewn" and r["needsUpdate"] is True and r["tilt"] is True
+    assert r["message"] == "WEAVE: setFace needs 'sewn', 'planned' or 'suggest'."
+
+
+def test_hover_scales_and_lifts(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        q.revealStitches('manpower', { animate: false });
+        const pose = quiltPose(q, 0);
+        const read = () => ({ scale: q.blocks[0].scale.toArray(), position: q.blocks[0].position.toArray() });
+        q.setHover(0, 1);
+        const hovered = read();
+        q.setBlockPose(0, pose);
+        const kept = read();
+        const stitchScale = q.snapshot().stitches[0].scale;
+        q.setHover(0, 0);
+        return { pose: pose.position, hovered, kept, stitchScale, cleared: read(), H: S.HOVER };
+    """)
+    assert r["H"] == {"scale": 0.03, "lift": 0.04, "rate": 12}
+    for leg in ("hovered", "kept"):
+        g = r[leg]
+        assert all(abs(s - 1.03) <= 1e-12 for s in g["scale"]), r
+        assert g["position"][:2] == r["pose"][:2] and abs(g["position"][2] - (r["pose"][2] + 0.04)) <= 1e-12, r
+    assert all(abs(s - 1.03) <= 1e-6 for s in r["stitchScale"]), r
+    assert r["cleared"] == {"scale": [1, 1, 1], "position": r["pose"]}
+
+
+def test_pick_block_ignores_the_sashing(paint_js):
+    r = decor(paint_js, r"""
+        const q = build();
+        const at = (p) => q.project(p);
+        const snap = q.snapshot();
+        const centre0 = snap.blocks[0].positions.slice(3 * 840, 3 * 841);
+        const [x0, y0] = L.slotCentre(0); const [x1] = L.slotCentre(1);
+        const seam = [(x0 + x1) / 2, y0, L.foldZ((x0 + x1) / 2, y0)];
+        const f = build(slotsOf(10));
+        const filler = f.snapshot().blocks[10].positions.slice(3 * 840, 3 * 841);
+        return { block: q.pickBlock(...at(centre0)), seam: q.pickBlock(...at(seam)), pickSeam: q.pick(...at(seam)).part,
+                 filler: f.pickBlock(...f.project(filler)), pickFiller: f.pick(...f.project(filler)).part };
+    """)
+    assert r["block"] == 0
+    assert r["seam"] is None and r["pickSeam"] == "sashing"
+    assert r["filler"] is None and r["pickFiller"] == "block"
