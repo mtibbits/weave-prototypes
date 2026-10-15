@@ -211,7 +211,7 @@ def test_hover_skips_fillers(make_page, base_url):
     assert errors == []
 
 
-def test_hover_is_off_in_tiles_at_rest_and_in_the_intro(make_page, base_url):
+def test_hover_is_off_in_tiles(make_page, base_url):
     page, errors = live_quilt(make_page, base_url)
     unstitch(page)
     page.mouse.move(*project(page, [*layout(page)["tiles"][0], 0]))
@@ -221,6 +221,8 @@ def test_hover_is_off_in_tiles_at_rest_and_in_the_intro(make_page, base_url):
     assert page.eval_on_selector("[data-hero]", SNAP_JSON) == held
     assert errors == []
 
+
+def test_hover_is_off_at_rest(make_page, base_url):
     rest, rest_errors = open_live(make_page, base_url, query=REST)
     held = rest.eval_on_selector("[data-hero]", SNAP_JSON)
     rest.mouse.move(*quilt_xy(rest, 0))
@@ -229,6 +231,8 @@ def test_hover_is_off_in_tiles_at_rest_and_in_the_intro(make_page, base_url):
     assert rest.eval_on_selector("[data-hero]", SNAP_JSON) == held
     assert rest_errors == []
 
+
+def test_hover_is_off_in_the_intro(make_page, base_url):
     intro, intro_errors = open_live(make_page, base_url)
     assert weave(intro, ".mode") == "intro"  # precondition
     intro.mouse.move(*slot_xy(intro, 0))

@@ -182,7 +182,8 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   shadow and fillers), `blockBase(id)` (a block's local base positions and normals, before its tilt, with its slot
   and tilt) and `pick(clientX, clientY)` (what a press there would hit) are test-only. #10 adds the per-block calls
   E2's #16 drives, `revealStitches(id, { animate })`, `popStitches`, `popPins`, `restorePins` and `setFace(id, kind)`
-  (scene.js holds their contract; `snapshot()` lists the drawn `pins` and `stitches` and the `stitchDash` frame),
+  (scene.js holds their contract; `snapshot()` lists the drawn `pins` and `stitches` and the `stitchDash` frame,
+  and its blocks include any hover lift, so a reader that needs seated seams keeps the pointer off the blocks),
   and the test-only `decorIdle`, `hover` (`{ id, amount }`), `groupMatrix()` and `pickBlock(clientX, clientY)`.
 - `__weave.mode` is the director's state: `intro` (#10), `quilt`, `unstitching`, `tiles` or `restitching` (#8), with
   `sewing` (#16) reserved. A plain load starts in `intro`, which flies the blocks in and settles into `quilt`;

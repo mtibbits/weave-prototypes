@@ -63,6 +63,9 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   let quilt;
   try {
     quilt = S.buildQuilt(renderer, { slots });
+    // #10: compile every program now, the hidden decor's included (compile walks hidden objects), so the first frame
+    // that shows a stitch or a pin does not stall on a shader compile.
+    renderer.compile(quilt.scene, quilt.camera);
   } catch (err) {
     renderer.dispose();
     renderer.forceContextLoss();
@@ -70,9 +73,6 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     setHeroState(stage, hint, 'still', 'load-failed');
     return;
   }
-  // #10: compile every program now, the hidden decor's included (compile walks hidden objects), so the first frame
-  // that shows a stitch or a pin does not stall on a shader compile.
-  renderer.compile(quilt.scene, quilt.camera);
 
   // Block index -> id, as built; the hooks map it through the director's slot map (#9).
   const order = slots.map((entry) => (entry ? entry.id : null));
