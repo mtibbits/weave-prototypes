@@ -166,21 +166,21 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   const pointer = { x: 0, y: 0, inside: false };
   let hoverTarget = null;
   const amounts = new Array(slots.length).fill(0);
-  // The block, face and pointer the shown tooltip was last placed for: placing it reads its size (a layout), so a
+  // The block, face and stage-relative pointer the shown tooltip was last placed for: placing it reads its size (a layout), so a
   // frame that changes none of them leaves it be.
   let tipFor = '';
 
   function pickHover() {
     hoverTarget = director.mode === 'quilt' && pointer.inside ? quilt.pickBlock(pointer.x, pointer.y) : null;
     if (hoverTarget === null) {
-      hideTooltip(tip);
+      if (!tip.hidden) hideTooltip(tip);
       return;
     }
     const { face } = quilt.blocks[hoverTarget].userData;
-    const key = `${hoverTarget} ${face} ${pointer.x} ${pointer.y}`;
+    const r = stage.getBoundingClientRect();
+    const key = `${hoverTarget} ${face} ${pointer.x - r.left} ${pointer.y - r.top}`;
     if (!tip.hidden && key === tipFor) return;
     tipFor = key;
-    const r = stage.getBoundingClientRect();
     showTooltip(tip, { name: slots[hoverTarget].name, face }, pointer.x - r.left, pointer.y - r.top);
   }
 
@@ -323,6 +323,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     // The decor first, so a transition the director finishes here dresses or stows its decor at once.
     quilt.setPaused(paused);
     director.setPaused(paused, event.timeStamp);
+    if (stopped) return;
     if (paused) {
       // The hover jumps to its end too: the block under the pointer fully lifted, every other one back on its seams.
       if (director.mode === 'quilt') pickHover();

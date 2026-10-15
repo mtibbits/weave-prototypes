@@ -94,7 +94,7 @@ def test_corners_stay_in_the_canvas(make_page, base_url, size, case):
     page, errors = open_live(make_page, base_url, query="?pose=rest&nowatchdog" if case == "rest" else "?nowatchdog",
                              viewport={"width": size[0], "height": size[1]})
     wait_for_quilt(page)
-    cap =page.evaluate("import('/public/js/layout.js').then((L) => L.LAYOUT.rod.capRadius)")
+    cap = page.evaluate("import('/public/js/layout.js').then((L) => L.LAYOUT.rod.capRadius)")
     if case == "pointer":
         box = page.locator("[data-hero]").bounding_box()
         page.mouse.move(box["x"] + 1, box["y"] + 1)

@@ -121,6 +121,9 @@ export function showTooltip(tip, { name, face }, x, y) {
   nameEl.textContent = name;
   statusEl.textContent = HOVER_STATUS[face] ?? '';
   tip.hidden = false;
+  // Measured at the stage's origin: left where it was, an absolute box shrink-wraps to the room left there.
+  tip.style.left = '0px';
+  tip.style.top = '0px';
   const stage = tip.parentElement;
   const place = (at, size, room) => {
     const after = at + TIP_GAP;

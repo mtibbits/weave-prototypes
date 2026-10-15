@@ -9,15 +9,15 @@ from test_drag import EXPECTED, drag, order, tile_xy
 from test_intro import LIVE_IDS, PLANNED_IDS, decor_counts
 from test_unstitch import REST, press, unstitch
 
-# Every shown stitch against its slot from one snapshot: the gap to its slot's nearest edge, |z - foldZ| and the
-# cross-seam component of its +X; the per-id counts; stitchDash against scene.js's exports.
+# Every shown stitch against its slot from one snapshot: the gap to its slot's nearest edge, how far it runs past
+# that edge's ends, |z - foldZ| and the cross-seam component of its +X; the per-id counts; stitchDash against scene.js's exports.
 STITCH_CHECK = r"""async (el) => {
     const THREE = await import('three');
     const L = await import('/public/js/layout.js');
     const S = await import('/public/js/scene.js');
     const snap = el.__weave.snapshot();
     const slotOf = Object.fromEntries(snap.blocks.map((b) => [b.id, b.slot]));
-    let edge = 0; let z = 0; let cross = 0;
+    let edge = 0; let span = 0; let z = 0; let cross = 0;
     const perId = {};
     for (const s of snap.stitches) {
       perId[s.id] = (perId[s.id] ?? 0) + 1;
@@ -25,11 +25,12 @@ STITCH_CHECK = r"""async (el) => {
       const [cx, cy] = L.slotCentre(slotOf[s.id]);
       const gx = Math.abs(Math.abs(x - cx) - 0.5); const gy = Math.abs(Math.abs(y - cy) - 0.5);
       edge = Math.max(edge, Math.min(gx, gy));
+      span = Math.max(span, Math.abs(gx < gy ? y - cy : x - cx) - 0.5);
       z = Math.max(z, Math.abs(zz - L.foldZ(x, y)));
       const X = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(...s.quaternion));
       cross = Math.max(cross, Math.abs(gx < gy ? X.x : X.y));
     }
-    return { edge, z, cross, count: snap.stitches.length, perId,
+    return { edge, span, z, cross, count: snap.stitches.length, perId,
              dash: [snap.stitchDash, { length: S.STITCH_DASH_LENGTH, radius: S.STITCH_DASH_RADIUS }] };
 }"""
 
@@ -89,7 +90,7 @@ def test_stitches_on_the_fabric(make_page, base_url, case):
         reorder_and_sew_back(page)
     r = page.eval_on_selector("[data-hero]", STITCH_CHECK)
     assert r["count"] == 336 and r["perId"] == {i: 48 for i in LIVE_IDS}, r["perId"]
-    assert r["edge"] <= 1e-6 and r["z"] <= 1e-3 and r["cross"] < 1e-3, r
+    assert r["edge"] <= 1e-6 and r["span"] <= 0 and r["z"] <= 1e-3 and r["cross"] < 1e-3, r
     assert r["dash"][0] == r["dash"][1]
     assert errors == []
 
@@ -142,7 +143,7 @@ def test_calls_end_at_once_when_paused_or_unanimated(make_page, base_url, name):
            " idle: w.decorIdle };")
     page, errors = open_live(make_page, base_url, query=REST)
     unanimated = call(page, run.replace("OPTIONS", "{ animate: false }"))
-    paused_page, _ = open_live(make_page, base_url, query=REST)
+    paused_page, paused_errors = open_live(make_page, base_url, query=REST)
     paused_page.locator("[data-pause]").click()
     held = frames(paused_page)
     paused = call(paused_page, run.replace("OPTIONS", "undefined"))
@@ -150,7 +151,7 @@ def test_calls_end_at_once_when_paused_or_unanimated(make_page, base_url, name):
     assert paused["n"] in want and paused["idle"] is True, paused
     paused_page.wait_for_timeout(300)
     assert frames(paused_page) == held
-    assert errors == []
+    assert errors == [] and paused_errors == []
 
 
 def test_absent_decor_calls_change_nothing(make_page, base_url):
