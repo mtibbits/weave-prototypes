@@ -19,12 +19,6 @@ def layout(page):
     return page.evaluate(LAYOUT_JS)
 
 
-def plain_start(page):
-    """The log's start before the first press: the intro and its settle on a plain load once #10 is wired, else the
-    quilt alone. Task 5 pins the intro form and deletes this."""
-    return PLAIN_START if ("intro", None) in modes(page) else CYCLE[:1]
-
-
 def press(page, name):
     page.get_by_role("button", name=name, exact=True).click()
 
@@ -92,7 +86,7 @@ def test_toggle_unstitches_and_sews_back(make_page, base_url, query):
     assert state(page) == [UNSTITCH_NAME, "restitching", "tiles"]
     wait_for_data_mode(page, "quilt")
     log = page.evaluate("window.__modes")
-    start = plain_start(page)
+    start = CYCLE[:1] if query == REST else PLAIN_START  # a plain load plays the intro first (#10)
     assert [(e["mode"], e["from"]) for e in log] == start + CYCLE[1:]
     assert all(e["hook"] == e["mode"] for e in log), log
     assert [e["data"] for e in log if e["mode"] in ("intro", "quilt", "tiles")] == ["quilt"] * len(start) + ["tiles", "quilt"], log
@@ -153,9 +147,10 @@ def test_fillers_fade_and_return(make_page, base_url):
 
 
 # The largest difference between the stored load-time snapshot and a fresh one, number by number (-1 when their
-# shapes differ).
-SNAPSHOT_DRIFT = r"""el => {
-    const a = window.__load; const b = el.__weave.snapshot();
+# shapes differ), over the given top-level keys (null: the whole snapshot).
+SNAPSHOT_DRIFT = r"""(el, keys) => {
+    const pick = (s) => (keys ? Object.fromEntries(keys.map((k) => [k, s[k]])) : s);
+    const a = pick(window.__load); const b = pick(el.__weave.snapshot());
     let worst = 0; let shape = true;
     const walk = (x, y) => {
       if (typeof x === 'number') { if (typeof y !== 'number') shape = false; else worst = Math.max(worst, Math.abs(x - y)); return; }
@@ -174,10 +169,11 @@ def test_sew_back_restores_the_rest_quilt(make_page, base_url):
     page, errors = open_live(make_page, base_url, query=REST)
     page.eval_on_selector("[data-hero]", "el => { window.__load = el.__weave.snapshot(); }")
     unstitch(page)
-    assert page.eval_on_selector("[data-hero]", SNAPSHOT_DRIFT) > 0.1  # the cycle really moved the blocks
+    # The cycle really moved the blocks (the blocks alone: in tiles #10's decor lists are empty, by design).
+    assert page.eval_on_selector("[data-hero]", SNAPSHOT_DRIFT, ["blocks"]) > 0.1
     press(page, SEW_NAME)
     wait_for_data_mode(page, "quilt")
-    drift = page.eval_on_selector("[data-hero]", SNAPSHOT_DRIFT)
+    drift = page.eval_on_selector("[data-hero]", SNAPSHOT_DRIFT, None)
     assert 0 <= drift <= 1e-6, drift
     assert all_faded(fades(page), SHOWN), fades(page)
     assert errors == []
@@ -372,7 +368,7 @@ def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
     assert_still_page(page)
     logged = len(modes(page))
     page.wait_for_timeout(STOP_WINDOW_MS)
-    assert len(modes(page)) == logged == len(plain_start(page)) + 1
+    assert len(modes(page)) == logged == 3  # intro, quilt, unstitching
     assert hero_result(page) == ["still", "context-lost"]
     assert weave(page, ".mode") == "unstitching"
     assert errors == []
@@ -425,8 +421,8 @@ def test_stop_inside_a_mode_handler_halts_the_cycle(make_page, base_url):
     press(page, UNSTITCH_NAME)
     assert page.eval_on_selector("[data-hero]", "el => el.hasAttribute('data-mode')") is False
     assert hint(page) == STILL_HINT
-    assert modes(page) == plain_start(page) + CYCLE[1:2]
+    assert modes(page) == PLAIN_START + CYCLE[1:2]
     page.wait_for_timeout(500)
-    assert modes(page) == plain_start(page) + CYCLE[1:2]
+    assert modes(page) == PLAIN_START + CYCLE[1:2]
     assert weave(page, ".mode") == "unstitching"
     assert errors == []

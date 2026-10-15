@@ -110,7 +110,12 @@ def wait_ratio(page, slot, base, low, high, timeout=HOVER_WINDOW_MS):
                            arg=[slot, base, low, high], timeout=timeout, polling=50)
 
 
-def wait_hover(page, predicate, timeout=HOVER_WINDOW_MS):
+# The hover amount eases at HOVER.rate (12/s) and snaps within 1e-3, so reaching exactly 0 or 1 takes about 0.58 s:
+# longer than HOVER_WINDOW_MS, which times the negatives and their controls, not this settle.
+HOVER_SETTLE_MS = 2000
+
+
+def wait_hover(page, predicate, timeout=HOVER_SETTLE_MS):
     page.wait_for_function(f"() => {{ const h = document.querySelector('[data-hero]').__weave.hover; return {predicate}; }}",
                            timeout=timeout, polling=50)
 
@@ -200,7 +205,7 @@ def test_resting_pointer_is_named_on_entering_quilt(make_page, base_url):
     assert hover_state(page)["id"] is None and tip_hidden(page) is True
     press_toggle_by_key(page)
     wait_for_quilt(page)
-    wait_hover(page, "h.id === 'manpower'")
+    wait_hover(page, "h.id === 'manpower'", timeout=HOVER_WINDOW_MS)
     assert errors == []
 
 
