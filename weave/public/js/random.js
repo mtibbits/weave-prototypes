@@ -6,7 +6,8 @@
 //   paintFabric(c, fabric, seedId) -> (seedId, 'fabric'); a filler block is ('filler', 'fabric').
 //   Face extras (stitch jitter, chalk wobble) -> (entry.id, 'face'). Tile bars -> (entry.id, 'bars').
 //   Textures -> ('sashing', 'speckle'), ('wood', 'grain'), ('weave-normal', 'weave'), ('shadow', 'soft').
-//   A planned block's askew tilt (#7) -> (entry.id, 'tilt'). #10 adds its own purposes.
+//   A planned block's askew tilt (#7) -> (entry.id, 'tilt'). #10's intro scatter -> (entry.id, 'intro') and its
+//   pins -> (entry.id, 'pins').
 // A panel whose id is 'filler' shares the filler's stream, which is harmless.
 
 // Copied unchanged from coalesce/public/js/motion.js. The WEAVE copy is frozen for hash stability

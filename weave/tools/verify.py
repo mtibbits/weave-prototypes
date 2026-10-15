@@ -81,6 +81,35 @@ TRANSFER = """() => performance.getEntriesByType('navigation').concat(performanc
 SETTLED = """() => { const d = document.querySelector('[data-hero]').dataset;
   return d.heroState && d.heroReason !== 'loading'; }"""
 HERO = "el => [el.dataset.heroState, el.dataset.heroReason]"
+# The settled quilt (#10): a plain load plays the intro first, so the windows open only once it has settled. Byte-equal
+# to tests/helpers.py's QUILT_SETTLED (test_verify.py pins the two), with wait_for_quilt's 15 s.
+QUILT_SETTLED = ("() => { const el = document.querySelector('[data-hero]');"
+                 " return el?.dataset.mode === 'quilt' && el.__weave?.mode === 'quilt'; }")
+SETTLED_TIMEOUT_MS = 15000
+# An init script: every rAF delta from the intro's weave:mode entry until it leaves intro (the event does not bubble,
+# so the document listens in the capture phase). Recorded as the intro's longest frame, not budgeted.
+INTRO_FRAMES = """
+  window.__introFrames = null;
+  document.addEventListener('weave:mode', (event) => {
+    if (event.detail.mode !== 'intro') return;
+    const deltas = []; window.__introFrames = deltas;
+    let last = performance.now();
+    const tick = (now) => { deltas.push(now - last); last = now;
+      if (document.querySelector('[data-hero]').__weave?.mode === 'intro') requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  }, true);
+"""
+# The hover's per-frame pick (#10), timed over 200 calls across the stage's middle row; its median in ms, recorded.
+PICK_TIMES = """el => {
+  const r = el.getBoundingClientRect(); const times = [];
+  for (let i = 0; i < 200; i += 1) {
+    const t0 = performance.now();
+    el.__weave.pickBlock(r.left + r.width * ((i % 20) + 0.5) / 20, r.top + r.height / 2);
+    times.push(performance.now() - t0);
+  }
+  times.sort((a, b) => a - b);
+  return times[100];
+}"""
 FRAMES = "el => Number(el.dataset.heroFrames || 0)"
 
 
@@ -99,6 +128,11 @@ def fixed_instant():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.FIXED_INSTANT
+
+
+def wait_settled(page):
+    """Wait until the quilt has settled in quilt mode: past the intro (#10), as the tests' wait_for_quilt does."""
+    page.wait_for_function(QUILT_SETTLED, timeout=SETTLED_TIMEOUT_MS)
 
 
 def settle(page):
@@ -142,11 +176,14 @@ def run(report, base, headless):
         page.close()
 
         page = desktop.new_page()
+        page.add_init_script(INTRO_FRAMES)
         page.goto(f"{base}/")
         states["desktop"] = settle(page)
         if states["desktop"] == ["live", "ok"]:
-            page.wait_for_function("document.querySelector('[data-hero]').__weave?.mode === 'quilt'"
-                                   " && performance.getEntriesByName('weave:first-live-frame').length === 1")
+            wait_settled(page)
+            page.wait_for_function("performance.getEntriesByName('weave:first-live-frame').length === 1")
+            intro = page.evaluate("window.__introFrames")
+            measures["intro_frame_max_ms"] = round(max(intro), 2) if intro else None
             measures["first_live_frame_ms"] = round(
                 page.evaluate("performance.getEntriesByName('weave:first-live-frame')[0].startTime"), 1)
             page.wait_for_timeout(SETTLE_AFTER_LIVE_MS)
@@ -160,6 +197,8 @@ def run(report, base, headless):
             state, reason = page.eval_on_selector("[data-hero]", HERO)
             states["desktop_after_idle"] = {"state": state, "reason": reason,
                                             "frames_rose": page.eval_on_selector("[data-hero]", FRAMES) > before}
+            if state == "live":
+                measures["pick_block_median_ms"] = round(page.eval_on_selector("[data-hero]", PICK_TIMES), 3)
         measures["home_transfer_bytes"] = page.evaluate(TRANSFER)
         measures["headroom_bytes"] = BUDGETS["home_transfer_bytes"] - measures["home_transfer_bytes"]
 

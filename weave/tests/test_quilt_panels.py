@@ -33,6 +33,14 @@ def test_editing_panels_js_changes_the_quilt_and_the_lists(make_page, base_url):
     assert errors == []
 
 
+# The face kind of each slot, recomputed from window.WEAVE_PANELS the way main.js routes it (cleanPanels, fillSlots,
+# then tiles.faceKind per entry).
+FACES_FROM_DATA = r"""async () => {
+    const [C, D, T] = await Promise.all([import('/public/js/catalog.js'), import('/public/js/dom.js'),
+                                         import('/public/js/tiles.js')]);
+    return D.fillSlots(C.cleanPanels(window.WEAVE_PANELS).panels).map((entry) => T.faceKind(entry));
+}"""
+
 SLOT_BODIES = {
     "ten": SHIPPED + "\nwindow.WEAVE_PANELS.panels.length = 10;\n",
     "thirteen": SHIPPED + "\nwindow.WEAVE_PANELS.panels.push({ id: 'extra', name: 'Extra', status: 'planned', sample: null });\n",
@@ -53,4 +61,7 @@ def test_slot_filling(make_page, base_url, case):
     else:
         assert order == [None] * 12 and all(s["face"] == "filler" for s in slots)
     snap_faces = page.eval_on_selector("[data-hero]", "el => el.__weave.snapshot().blocks.map((b) => b.face)")
-    assert snap_faces == [s["face"] for s in slots]  # the drawn quilt agrees with the hooks
+    # A data-side oracle, independent of slots: the face kinds main.js's routing gives the loaded panels.
+    want = page.evaluate(FACES_FROM_DATA)
+    assert len(want) == 12
+    assert [s["face"] for s in slots] == want and snap_faces == want

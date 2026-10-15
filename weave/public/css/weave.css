@@ -50,6 +50,10 @@ html[data-frame="still"], html[data-frame="still"] body { overflow: hidden; }
 html[data-frame="still"] body * { visibility: hidden; }
 html[data-frame="still"] .hero-stage, html[data-frame="still"] .hero-stage > canvas, html[data-frame="still"] .hero-stage > .hero-still { visibility: visible; }
 html[data-frame="still"] .hero-stage { position: fixed; inset: 0; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; z-index: 100; }
+/* #10's hover tooltip: opaque, never a pointer target, no fade; it sets no display, so [hidden] still hides it. */
+.hero-tip { position: absolute; z-index: 2; pointer-events: none; max-width: 18em; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #FFFDF8; color: var(--ink); font-size: 14px; line-height: 1.35; box-shadow: 0 2px 8px rgba(30, 36, 34, .12); }
+.hero-tip-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.hero-tip-status { display: block; color: var(--muted); }
 .hero-hint { min-height: 1.55em; margin: 10px 0 0; font-size: 15px; color: var(--muted); }
 /* Live only: room for the longest live hint (#9's quilt hint: two lines, three on a narrow window), so the hint
    changing on unstitch never moves the page under it. The still hint never changes, so the still path keeps 1.55em. */

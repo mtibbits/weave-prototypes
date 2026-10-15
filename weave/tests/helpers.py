@@ -261,9 +261,16 @@ QUILT_HINT = ("Click the quilt, or press Unstitch, to lay its blocks out as a da
               " to move it.")
 TILES_HINT = "Click the background, or press Sew it back, to sew the quilt together again."
 
+# --- The hover tooltip's status words (#10), by drawn face: literals from the issue, never imported from dom.js. ---
+
+SEWN_WORDS = "Sewn in"
+PLANNED_WORDS = "Pinned for later"
+SUGGEST_WORDS = "Have an idea for a panel?"
+
 # An init script: a weave:mode listener on [data-hero] from the moment it is parsed (before the scene goes live),
-# pushing { mode, from, hook: __weave.mode, data: data-mode } to window.__modes, then calling window.__onMode(event,
-# stage) if a test defined it; and every data-mode value the stage ever takes (old and new) to window.__dataModes.
+# pushing { mode, from, hook: __weave.mode, data: data-mode, t: performance.now() } to window.__modes, then calling
+# window.__onMode(event, stage) if a test defined it; and every data-mode value the stage ever takes (old and new) to
+# window.__dataModes.
 MODE_LOG = r"""
     window.__modes = [];
     window.__dataModes = [];
@@ -272,7 +279,8 @@ MODE_LOG = r"""
       el.__modeLog = true;
       el.addEventListener('weave:mode', (event) => {
         window.__modes.push({ mode: event.detail.mode, from: event.detail.from,
-                              hook: el.__weave ? el.__weave.mode : null, data: el.dataset.mode ?? null });
+                              hook: el.__weave ? el.__weave.mode : null, data: el.dataset.mode ?? null,
+                              t: performance.now() });
         if (window.__onMode) window.__onMode(event, el);
       });
       new MutationObserver((records) => {
@@ -302,6 +310,31 @@ def wait_for_data_mode(page, mode, timeout=10000):
                            timeout=timeout)
 
 
+# --- The intro (#10): a plain load plays it before the quilt settles, so a test that needs the settled quilt waits. ---
+
+# The settled quilt: data-mode and __weave.mode both quilt. Synchronous (a returned Promise reads as truthy; Issue-9),
+# and byte-equal to tools/verify.py's.
+QUILT_SETTLED = ("() => { const el = document.querySelector('[data-hero]');"
+                 " return el?.dataset.mode === 'quilt' && el.__weave?.mode === 'quilt'; }")
+# A plain load's first two weave:mode entries.
+PLAIN_START = [("intro", None), ("quilt", "intro")]
+DECOR_IDLE = "() => document.querySelector('[data-hero]').__weave.decorIdle === true"
+SNAP_JSON = "el => JSON.stringify(el.__weave.snapshot())"
+# Every hover negative waits this long; its positive control polls within the same window (weave Issue-8).
+HOVER_WINDOW_MS = 500
+
+
+def wait_for_quilt(page, timeout=15000):
+    """Wait until the quilt has settled in quilt mode. D12's budget: 4 s to go live, 4 s of intro, 5 s for E2's
+    sew-in and 2 s spare."""
+    page.wait_for_function(QUILT_SETTLED, timeout=timeout)
+
+
+def wait_for_decor(page, timeout=5000):
+    """Wait until no stitch or pin animation is running."""
+    page.wait_for_function(DECOR_IDLE, timeout=timeout)
+
+
 def wait_for_mode(page, mode, timeout=10000):
     page.wait_for_function("(mode) => document.querySelector('[data-hero]').__weave.mode === mode", arg=mode,
                            timeout=timeout)
@@ -315,6 +348,42 @@ def project(page, xyz):
 def click_world(page, xyz):
     """Click the canvas where the world point `xyz` projects."""
     page.mouse.click(*project(page, xyz))
+
+
+# seams(snap, L, nudge = 0): every block that is not planned has each of its 160 edge vertices within 1e-4 (3D) of a
+# sashing vertex, from one snapshot, and each block's centre against its quilt slot (off). nudge adds to block slot 0's
+# x before matching, so a planted control can redden it.
+SEAMS_JS = r"""
+    const seams = (snap, L, nudge = 0) => {
+      const sp = snap.sashing.positions;
+      let checked = 0; let missing = 0; let off = 0;
+      for (const b of snap.blocks) {
+        const p = b.positions;
+        const mean = [0, 1].map((k) => [0, 40, 1640, 1680].reduce((s, j) => s + p[3 * j + k], 0) / 4);
+        off = Math.max(off, ...mean.map((v, k) => Math.abs(v - L.slotCentre(b.slot)[k])));
+        if (b.face === 'planned') continue;
+        const dx = b.slot === 0 ? nudge : 0;
+        for (let r = 0; r <= 40; r += 1) {
+          for (let c = 0; c <= 40; c += 1) {
+            if (r !== 0 && r !== 40 && c !== 0 && c !== 40) continue;
+            const j = 3 * (r * 41 + c);
+            checked += 1;
+            let hit = false;
+            for (let k = 0; k < sp.length && !hit; k += 3) {
+              hit = Math.hypot(sp[k] - p[j] - dx, sp[k + 1] - p[j + 1], sp[k + 2] - p[j + 2]) <= 1e-4;
+            }
+            if (!hit) missing += 1;
+          }
+        }
+      }
+      return { checked, missing, off };
+    };
+"""
+# eval_on_selector bodies: SEAMS on a fresh snapshot; SEAMS_OF on a snapshot stored as window[name], with a nudge.
+SEAMS = f"""async (el) => {{ const L = await import('/public/js/layout.js'); {SEAMS_JS}
+    return seams(el.__weave.snapshot(), L); }}"""
+SEAMS_OF = f"""async (el, [name, nudge]) => {{ const L = await import('/public/js/layout.js'); {SEAMS_JS}
+    return seams(window[name], L, nudge); }}"""
 
 
 # The four geometry checks per block from one snapshot: flat (one z), flipped (the first triangle faces away from the
@@ -358,6 +427,13 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
     page.goto(base_url + HOME + query)
     assert hero_result(page) == ["live", "ok"], errors
     page.locator("[data-hero]").scroll_into_view_if_needed()
+    return page, errors
+
+
+def live_quilt(make_page, base_url, **kwargs):
+    """open_live, then wait until the intro has settled into the quilt; returns (page, errors)."""
+    page, errors = open_live(make_page, base_url, **kwargs)
+    wait_for_quilt(page)
     return page, errors
 
 

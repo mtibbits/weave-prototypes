@@ -1,7 +1,7 @@
 """?pose=rest and ?frame=still (the capture recipe), the page's snapshot(), and the corners that must stay in view."""
 import pytest
 
-from helpers import HOME, frames, hero_result, open_live, wait_for_reason
+from helpers import HOME, frames, hero_result, open_live, wait_for_quilt, wait_for_reason
 
 # Stores the stage's snapshot as JSON in window.__snap; SAME_AS_STORED compares a fresh one with it.
 STORE = "el => { window.__snap = JSON.stringify(el.__weave.snapshot()); }"
@@ -93,6 +93,7 @@ CORNERS = r"""el => {
 def test_corners_stay_in_the_canvas(make_page, base_url, size, case):
     page, errors = open_live(make_page, base_url, query="?pose=rest&nowatchdog" if case == "rest" else "?nowatchdog",
                              viewport={"width": size[0], "height": size[1]})
+    wait_for_quilt(page)
     cap = page.evaluate("import('/public/js/layout.js').then((L) => L.LAYOUT.rod.capRadius)")
     if case == "pointer":
         box = page.locator("[data-hero]").bounding_box()
