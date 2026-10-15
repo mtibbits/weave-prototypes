@@ -1,5 +1,6 @@
 """The live loop: Pause and Play, the one clock, and idling when the tab is hidden or the stage is off screen."""
-from helpers import contrast_failures, corner_z, focus_failures, frames, ink_fraction, open_live, rising, weave
+from helpers import (contrast_failures, corner_z, focus_failures, frames, ink_fraction, open_live, rising, wait_for_quilt,
+                     weave)
 
 FIXED = "2026-10-09T09:00:00"
 
@@ -90,6 +91,7 @@ def test_live_resize_redraws_before_the_frame_paints(make_page, base_url):
     """A resize while the loop runs lands after that frame's render; without a redraw the cleared canvas would paint
     as bare paper, so the quilt flickers on every resize step."""
     page, errors = open_live(make_page, base_url)
+    wait_for_quilt(page)
     assert rising(page, 300)
     r = page.eval_on_selector("[data-hero]", RESIZE_AND_READ)
     assert r["after"] != r["before"]  # the buffer really was resized, and so cleared

@@ -2,9 +2,9 @@
 the live hint, and the teardown of a running transition."""
 import pytest
 
-from helpers import (QUILT_HINT, SEW_NAME, STILL_HINT, TILE_GEOMETRY_JS, TILES_HINT, UNSTITCH_NAME, assert_tile_geometry,
-                     click_world, frames, hero_result, ink_fraction, log_modes, modes, open_live, wait_for_data_mode,
-                     wait_for_mode, weave)
+from helpers import (PLAIN_START, QUILT_HINT, SEW_NAME, STILL_HINT, TILE_GEOMETRY_JS, TILES_HINT, UNSTITCH_NAME,
+                     assert_tile_geometry, click_world, frames, hero_result, ink_fraction, log_modes, modes, open_live,
+                     wait_for_data_mode, wait_for_mode, wait_for_quilt, weave)
 from test_hero import assert_still_page
 from test_pose import SAME_AS_STORED, STORE
 from test_quilt_panels import SLOT_BODIES
@@ -17,6 +17,12 @@ LAYOUT_JS = "import('/public/js/layout.js').then((L) => ({ LAYOUT: L.LAYOUT, til
 
 def layout(page):
     return page.evaluate(LAYOUT_JS)
+
+
+def plain_start(page):
+    """The log's start before the first press: the intro and its settle on a plain load once #10 is wired, else the
+    quilt alone. Task 5 pins the intro form and deletes this."""
+    return PLAIN_START if ("intro", None) in modes(page) else CYCLE[:1]
 
 
 def press(page, name):
@@ -78,6 +84,7 @@ def held_for(page, mode, ms=800):
 @pytest.mark.parametrize("query", [REST, "?nowatchdog"], ids=["rest", "plain"])
 def test_toggle_unstitches_and_sews_back(make_page, base_url, query):
     page, errors = open_live(make_page, base_url, query=query, before_goto=log_modes)
+    wait_for_quilt(page)
     press(page, UNSTITCH_NAME)
     assert state(page) == [SEW_NAME, "unstitching", "quilt"]
     wait_for_data_mode(page, "tiles")
@@ -85,9 +92,10 @@ def test_toggle_unstitches_and_sews_back(make_page, base_url, query):
     assert state(page) == [UNSTITCH_NAME, "restitching", "tiles"]
     wait_for_data_mode(page, "quilt")
     log = page.evaluate("window.__modes")
-    assert [(e["mode"], e["from"]) for e in log] == CYCLE
+    start = plain_start(page)
+    assert [(e["mode"], e["from"]) for e in log] == start + CYCLE[1:]
     assert all(e["hook"] == e["mode"] for e in log), log
-    assert [e["data"] for e in log if e["mode"] in ("quilt", "tiles")] == ["quilt", "tiles", "quilt"], log
+    assert [e["data"] for e in log if e["mode"] in ("intro", "quilt", "tiles")] == ["quilt"] * len(start) + ["tiles", "quilt"], log
     assert errors == []
 
 
@@ -119,6 +127,7 @@ def test_quilt_click_unstitches(make_page, base_url):
 def test_tiles_mode_is_flat_flipped_square_and_still(make_page, base_url):
     """Plain load: in tiles mode the sway and tilt are exactly zero, so snapshot()'s world space is quilt space."""
     page, errors = open_live(make_page, base_url)
+    wait_for_quilt(page)
     box = page.locator("[data-hero]").bounding_box()
     page.mouse.move(box["x"] + 5, box["y"] + 5)  # the pointer tilt is live, and must not move the tiles
     unstitch(page)
@@ -132,6 +141,7 @@ def test_tiles_mode_is_flat_flipped_square_and_still(make_page, base_url):
 
 def test_fillers_fade_and_return(make_page, base_url):
     page, errors = open_live(make_page, base_url, panels_body=SLOT_BODIES["ten"])
+    wait_for_quilt(page)
     unstitch(page)
     f = fades(page)
     assert [(x["slot"], x["opacity"], x["visible"]) for x in f["fillers"]] == [(10, 0, False), (11, 0, False)]
@@ -188,6 +198,7 @@ def test_handler_sees_the_settled_pose(make_page, base_url):
         log_modes(page)
         page.add_init_script(SETTLED_POSE)
     page, errors = open_live(make_page, base_url, before_goto=before)
+    wait_for_quilt(page)
     unstitch(page)
     mean = page.evaluate("window.__tileMean")
     want = [*layout(page)["tiles"][0], 0]
@@ -322,6 +333,7 @@ TILE_CORNERS = r"""el => {
 @pytest.mark.parametrize("size", [(1440, 900), (1024, 768)], ids=["1440x900", "1024x768"])
 def test_tile_corners_stay_in_the_canvas(make_page, base_url, size):
     page, errors = open_live(make_page, base_url, viewport={"width": size[0], "height": size[1]})
+    wait_for_quilt(page)
     unstitch(page)
     r = page.eval_on_selector("[data-hero]", TILE_CORNERS)
     assert r == {"count": 48, "outside": []}
@@ -354,17 +366,19 @@ STOP_WINDOW_MS = 5000
 
 def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
     page, errors = open_live(make_page, base_url, before_goto=log_modes)
+    wait_for_quilt(page)
     press(page, UNSTITCH_NAME)
     page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('too-slow'); }")
     assert_still_page(page)
     logged = len(modes(page))
     page.wait_for_timeout(STOP_WINDOW_MS)
-    assert len(modes(page)) == logged == 2
+    assert len(modes(page)) == logged == len(plain_start(page)) + 1
     assert hero_result(page) == ["still", "context-lost"]
     assert weave(page, ".mode") == "unstitching"
     assert errors == []
     # Control: without the stop, the same press reaches tiles inside the same window.
     control, _ = open_live(make_page, base_url, before_goto=log_modes)
+    wait_for_quilt(control)
     press(control, UNSTITCH_NAME)
     wait_for_data_mode(control, "tiles", timeout=STOP_WINDOW_MS)
     assert ("tiles", "unstitching") in modes(control)
@@ -392,6 +406,7 @@ def test_a_settle_that_stops_counts_no_frame(make_page, base_url):
         log_modes(page)
         page.add_init_script(STOP_ON_TILES)
     page, errors = open_live(make_page, base_url, before_goto=before)
+    wait_for_quilt(page)
     press(page, UNSTITCH_NAME)
     page.wait_for_function("() => window.__framesAtStop !== undefined", timeout=5000)
     page.wait_for_timeout(300)
@@ -405,12 +420,13 @@ def test_stop_inside_a_mode_handler_halts_the_cycle(make_page, base_url):
         log_modes(page)
         page.add_init_script(STOP_IN_HANDLER)
     page, errors = open_live(make_page, base_url, before_goto=before)
+    wait_for_quilt(page)
     page.locator("[data-pause]").click()
     press(page, UNSTITCH_NAME)
     assert page.eval_on_selector("[data-hero]", "el => el.hasAttribute('data-mode')") is False
     assert hint(page) == STILL_HINT
-    assert modes(page) == CYCLE[:2]
+    assert modes(page) == plain_start(page) + CYCLE[1:2]
     page.wait_for_timeout(500)
-    assert modes(page) == CYCLE[:2]
+    assert modes(page) == plain_start(page) + CYCLE[1:2]
     assert weave(page, ".mode") == "unstitching"
     assert errors == []
