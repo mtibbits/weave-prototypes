@@ -69,6 +69,25 @@ def png_rows(png):
     return width, height, bpp, rows
 
 
+def jpeg_size(data):
+    """(width, height) from a JPEG's baseline or progressive frame header (SOF0/SOF2): an independent reader, never
+    the capture tool's."""
+    assert data[:2] == b"\xff\xd8", data[:2]
+    pos = 2
+    while pos + 4 <= len(data):
+        assert data[pos] == 0xFF, (pos, data[pos])
+        marker = data[pos + 1]
+        if marker == 0xFF:
+            pos += 1
+            continue
+        length = struct.unpack(">H", data[pos + 2:pos + 4])[0]
+        if marker in (0xC0, 0xC2):
+            height, width = struct.unpack(">HH", data[pos + 5:pos + 9])
+            return width, height
+        pos += 2 + length
+    raise AssertionError("no SOF0/SOF2 marker")
+
+
 def ink_fraction(png, background=LINEN, tolerance=40):
     """Share of pixels in a screenshot that clearly differ from the page's linen paper colour."""
     width, height, bpp, rows = png_rows(png)
