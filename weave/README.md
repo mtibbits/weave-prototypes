@@ -57,7 +57,7 @@ python -m pip install -r weave/requirements-dev.txt
 python -m playwright install chromium
 ```
 
-To check the page's budgets (transfer size, time to the first live frame, frame times over five seconds of idle plus one unstitch and sew-back cycle, and the still) and its hero states, run `verify.py` from the repo root with the venv active. It opens a visible browser, so the frame times use the real GPU; keep each window in front until it closes (they open one at a time). `--headless` is only a smoke run, never evidence for the frame times. The report lands in `weave/verify-output/report.json`.
+To check the page's budgets (transfer size, time to the first live frame, frame times over five seconds of idle plus one unstitch and sew-back cycle, and the still) and its hero states, run `verify.py` from the repo root with the venv active. It opens a visible browser, so the frame times use the real GPU; keep its windows in front until the run ends. `--headless` is only a smoke run, never evidence for the frame times. The report lands in `weave/verify-output/report.json`.
 
 ```
 python weave/tools/verify.py
@@ -112,7 +112,7 @@ The page has four bars, checked on the owner's dev laptop:
 - frame times over 5 s of idle plus one unstitch and sew-back cycle: a median of at most 16.7 ms (or the empty page's median plus 1 ms, on a display slower than 60 Hz) and a p95 of at most 33 ms;
 - the still: at most 250 KB, at 1600 x 1000.
 
-The full run is the `verify.py` command under Tests, in a visible browser on the owner's dev laptop; keep each window in front until it closes (they open one at a time). After the budgets it checks every hero state (the quilt, the full page and its labels, hover, tiles, a reorder, the sew-back, Pause, the three still fallbacks and the phone) and screenshots each into `weave/verify-output/shots/`. The report is `weave/verify-output/report.json`, stamped with the commit it ran at. Each run also keeps its own report and shots under `weave/verify-output/runs/`, named for the kind of run and the commit, so a later run never overwrites an earlier run's evidence.
+The full run is the `verify.py` command under Tests, in a visible browser on the owner's dev laptop; keep its windows in front until the run ends. After the budgets it checks every hero state (the quilt, the full page and its labels, hover, tiles, a reorder, the sew-back, Pause, the three still fallbacks and the phone) and screenshots each into `weave/verify-output/shots/`. The report is `weave/verify-output/report.json`, stamped with the commit of the checkout it ran from. Each run also keeps its own report and shots under `weave/verify-output/runs/`, in a folder named for the kind of run and that commit, so a run at another commit leaves them alone; a second run of the same kind at the same commit replaces its folder.
 
 For how much room is left under the transfer bar, `weave/verify-output/report.json`'s measured `headroom_bytes` (1.5 MB less the measured transfer) is the figure to trust. "Headers included" means Chromium's Resource Timing `transferSize`, which counts headers as 300 B per response, not their real size.
 
@@ -123,7 +123,7 @@ To check the deployed copy, run the states alone against it:
 python weave/tools/verify.py --base https://mtibbits.github.io/weave-prototypes/weave/
 ```
 
-That run checks and screenshots the states only. The budgets stay local, because Pages compresses the files and the first live frame would include the download.
+That run checks and screenshots the states only. Its stamp names your checkout, not what Pages serves, so pull `main` and let the Pages deploy finish first. The budgets stay local, because Pages compresses the files and the first live frame would include the download.
 
 ## Licenses
 

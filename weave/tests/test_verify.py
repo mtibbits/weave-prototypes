@@ -308,6 +308,28 @@ def test_report_is_written_when_a_run_throws(verify, monkeypatch, tmp_path):
         assert "git" in report and "verify.py stopped: states blew up" in report["failures"], report["failures"]
 
 
+def test_report_is_written_when_old_shots_survive(verify, monkeypatch, tmp_path):
+    """A locked file (Windows) can leave the old shots/ behind after rmtree; the run still writes its report."""
+    def throws(*args, **kwargs):
+        raise RuntimeError("states blew up")
+
+    stamp = {"sha": "b" * 40, "dirty": False}
+    for old in (tmp_path / "runs" / "local-bbbbbbb" / "shots", tmp_path / "shots"):
+        old.mkdir(parents=True)
+        (old / "01-quilt.png").write_bytes(b"old")
+    monkeypatch.setattr(verify, "OUT", tmp_path)
+    monkeypatch.setattr(verify, "git_stamp", lambda: stamp)
+    monkeypatch.setattr(verify.shutil, "rmtree", lambda *args, **kwargs: None)
+    monkeypatch.setattr(verify, "sync_playwright", FakePlaywright)
+    monkeypatch.setattr(verify.serve, "start", lambda directory: (FakeServer(), "http://127.0.0.1:1"))
+    monkeypatch.setattr(verify, "run", lambda report, base, headless: None)
+    monkeypatch.setattr(verify, "run_states", throws)
+    assert verify.main(["--headless"]) == 1
+    for path in (tmp_path / "runs" / "local-bbbbbbb" / "report.json", tmp_path / "report.json"):
+        report = json.loads(path.read_text(encoding="utf-8"))
+        assert report["git"] == stamp and "verify.py stopped: states blew up" in report["failures"]
+
+
 def png_size(path):
     data = path.read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n", path

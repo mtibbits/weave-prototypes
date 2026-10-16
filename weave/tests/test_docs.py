@@ -166,6 +166,11 @@ def test_weave_readme_has_the_owner_sections():
         assert phrase in budgets, phrase
     assert "137 KB" not in budgets
 
+    # Write each claim to the width of the code: run()'s budget windows open together, a run at the same commit replaces
+    # its own folder, and a --base report's stamp names the local checkout, not what Pages serves.
+    assert "one at a time" not in text and "never overwrites an earlier" not in budgets
+    assert "checkout" in budgets and "pull" in budgets
+
 
 def test_readme_commands_match_the_scripts():
     """Executed docs: every fenced `python weave/tools/...` line in Stills and Budgets names a real script, and each

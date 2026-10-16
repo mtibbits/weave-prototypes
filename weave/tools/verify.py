@@ -608,9 +608,9 @@ def main(argv=None):
               "shots": {}, "failures": []}
     run_path = run_dir(OUT, args.base, report["git"])
     shots_dir = run_path / "shots"
-    # Only this run's own directory is emptied.
+    # Only this run's own directory is emptied; a locked file (Windows) may survive, and the run goes on regardless.
     shutil.rmtree(shots_dir, ignore_errors=True)
-    shots_dir.mkdir(parents=True)
+    shots_dir.mkdir(parents=True, exist_ok=True)
     stopped = []
     try:
         if args.base is None:
@@ -635,7 +635,7 @@ def main(argv=None):
         # The plain report.json and shots/ are copies of the latest run.
         (OUT / "report.json").write_text(text, encoding="utf-8")
         shutil.rmtree(OUT / "shots", ignore_errors=True)
-        shutil.copytree(shots_dir, OUT / "shots")
+        shutil.copytree(shots_dir, OUT / "shots", dirs_exist_ok=True)
     print(json.dumps({"git": report["git"], "measures": report["measures"], "states": report["states"],
                       "checks": report["checks"]}, indent=2))
     print(f"Run directory: {run_path}")
