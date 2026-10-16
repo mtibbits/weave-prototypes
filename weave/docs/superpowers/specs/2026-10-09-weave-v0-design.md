@@ -48,7 +48,7 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
     ├── public/                   served at /weave/
     ├── dev/                      dev-only review pages (faces.html); never published
     ├── tests/                    pytest + Playwright
-    ├── tools/                    verify.py: the budget and hero-state check
+    ├── tools/                    verify.py and capture_still.py: the budget and state check, and the still capture
     └── docs/superpowers/         this spec and the plan
 ```
 
@@ -164,7 +164,8 @@ All motion is springs toward per-block targets plus a few scripted timelines.
 - Once live, the scene is torn down and the still restored when the frame watchdog finds it too slow (`too-slow`), a
   module or asset fails to load (`load-failed`), WebGL setup fails (`webgl-failed`) or the context is lost
   (`context-lost`).
-- The still is a JPEG captured from the live render.
+- The still is a JPEG captured from the live render by `weave/tools/capture_still.py` (D4: the `home` target; #19 adds
+  `help`), at the rest-pose recipe, after the watchdog has ruled, at ≤ 250 KB.
 - The panel lists carry the content in plain HTML, so nothing depends on the canvas.
 - The controls are real buttons. The stage (`role="img"`) carries the descriptive `aria-label`, and the canvas is
   `aria-hidden`.
@@ -211,6 +212,8 @@ pytest + Playwright, with Chromium on the GPU, as in Coalesce:
   - with WebGL disabled, the still shows;
   - the lists match `panels.js`.
 - **Build:** `build_site.py` produces the expected tree.
+- **Budgets and states:** `verify.py` checks every budget row and every hero state with a screenshot; `--base URL`
+  checks the states only, against a deployed copy.
 
 ## 11. Later (not v0)
 

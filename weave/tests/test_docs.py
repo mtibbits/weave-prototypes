@@ -1,5 +1,7 @@
 """The READMEs carry the commands a reader needs, each in the section where it belongs."""
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 WEAVE = Path(__file__).resolve().parents[1]
@@ -75,7 +77,7 @@ def test_weave_readme_tests_says_how_to_run_verify():
 
 def test_root_readme_layout_lists_weave_tools():
     layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
-    assert "weave/tools/" in layout and "verify.py" in layout
+    assert "weave/tools/" in layout and "verify.py" in layout and "capture_still.py" in layout
 
 
 def test_spec_lists_the_mode_hooks():
@@ -122,3 +124,71 @@ def test_scene_js_documents_the_pin_and_dash_frames():
     # Planted control: the same source with the pin frame's comment trimmed fails the check.
     trimmed = text.replace(frame_comment(text, "PIN_LENGTH"), "// Pins.")
     assert frame_claims(trimmed) is False
+
+
+# --- #11: the owner's sections (editing panels.js, stills, budgets), each command checked against its script. ---
+
+EDITING = "Editing `panels.js`"
+EDITOR_NOTE = "<!-- read by tests/test_docs.py::test_readme_commands_match_the_scripts: keep flags in sync with --help -->"
+
+
+def sentences(text):
+    prose = " ".join(re.sub(r"```.*?```", " ", text, flags=re.S).split())
+    return re.split(r"(?<=[.!?])\s+", prose)
+
+
+def fenced(text):
+    return [line.strip() for fence in re.findall(r"```(.*?)```", text, re.S) for line in fence.splitlines() if line.strip()]
+
+
+def test_weave_readme_has_the_owner_sections():
+    readme = WEAVE / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    headings = re.findall(r"^## (.+?)\s*$", text, re.M)
+    at = {heading: i for i, heading in enumerate(headings)}
+    assert at["Tests"] < at[EDITING] < at["Stills"] < at["Budgets"] < at["Licenses"], headings
+
+    editing = section(readme, EDITING)
+    for phrase in ("'live'", "'planned'", "'suggest'", "sample", "null", "since", "No sample yet", "skipped",
+                   "The panel list couldn't be loaded.", "first 12", "filler"):
+        assert phrase in editing, phrase
+    assert any("still" in s and "recapture" in s for s in sentences(editing)), sentences(editing)
+
+    stills = section(readme, "Stills")
+    assert "python weave/tools/capture_still.py" in fenced(stills)
+    for phrase in ("--which", "stale", "repo root", EDITOR_NOTE):
+        assert phrase in stills, phrase
+
+    budgets = section(readme, "Budgets")
+    assert "python weave/tools/verify.py --base https://mtibbits.github.io/weave-prototypes/weave/" in fenced(budgets)
+    for phrase in ("1.5 MB", "250 KB", "33 ms", "weave/verify-output/report.json", "headroom_bytes", "shots",
+                   "runs/", EDITOR_NOTE):
+        assert phrase in budgets, phrase
+    assert "137 KB" not in budgets
+
+
+def test_readme_commands_match_the_scripts():
+    """Executed docs: every fenced `python weave/tools/...` line in Stills and Budgets names a real script, and each
+    of its --flags appears in that script's --help."""
+    readme = WEAVE / "README.md"
+    lines = [line for heading in ("Stills", "Budgets") for line in fenced(section(readme, heading))
+             if line.startswith("python weave/tools/")]
+    assert len(lines) >= 2, lines
+    for line in lines:
+        script = REPO / line.split()[1]
+        assert script.is_file(), line
+        result = subprocess.run([sys.executable, str(script), "--help"], cwd=REPO, capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, (line, result.stderr)
+        for flag in re.findall(r"(?<!\S)--[a-z][a-z-]*", line):
+            assert flag in result.stdout, (line, flag)
+
+
+def test_spec_names_the_capture_and_the_state_run():
+    spec = (WEAVE / "docs" / "superpowers" / "specs" / "2026-10-09-weave-v0-design.md").read_text(encoding="utf-8")
+    fallbacks = re.search(r"^## 9\..*?(?=^### URL)", spec, re.M | re.S).group(0)
+    assert "capture_still.py" in fallbacks and "watchdog" in fallbacks
+    testing = re.search(r"^## 10\..*?(?=^## 11\.)", spec, re.M | re.S).group(0)
+    assert "--base" in testing
+    tree = re.search(r"^## 3\..*?```(.*?)```", spec, re.M | re.S).group(1)
+    assert "capture_still.py" in tree
