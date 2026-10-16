@@ -152,3 +152,47 @@ def test_which_help_names_the_missing_target(tmp_path):
     assert "no 'help' target is registered yet" in result.stderr and "registered: home" in result.stderr, result.stderr
     assert not out.exists()
     assert elapsed < 10, elapsed
+
+
+# --- The capture (Task 2): headless Chromium on the suite's server; tests always pass --out or call capture(). ---
+
+
+def tree_guard():
+    """What a capture must never change: git's view of weave/public, and the committed still's bytes."""
+    status = subprocess.run(["git", "status", "--porcelain", "--", "public"], cwd=WEAVE, capture_output=True,
+                            text=True, check=True).stdout
+    return status, hashlib.sha256(STILL.read_bytes()).hexdigest()
+
+
+def test_capture_waits_for_live_fade_and_watchdog(capture, browser, base_url):
+    data, quality, info = capture.capture(browser, f"{base_url}/public", "home", [])
+    assert info["state"] == "live" and info["still_opacity"] == "0", info
+    assert info["after_live_ms"] >= 2500 and info["frames_advanced"] > 0, info
+    assert helpers.jpeg_size(data) == (1600, 1000)
+    assert len(data) <= 250_000 and quality in capture.QUALITIES, (len(data), quality)
+
+
+def test_capture_writes_only_under_out(tmp_path):
+    before = tree_guard()
+    out = tmp_path / "o"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    result = run_script("--out", str(out), cwd=elsewhere)
+    assert result.returncode == 0, (result.returncode, result.stderr)
+    assert re.fullmatch(r"capture_still\.py: wrote .*weave-still\.jpg \(1600 x 1000, JPEG quality \d+, [\d,]+ B\)",
+                        result.stdout.strip()), result.stdout
+    assert sorted(p.name for p in out.iterdir()) == ["weave-still.jpg"]
+    data = (out / "weave-still.jpg").read_bytes()
+    assert helpers.jpeg_size(data) == (1600, 1000) and len(data) <= 250_000, len(data)
+    assert tree_guard() == before
+
+
+def test_forced_fallback_writes_nothing(tmp_path):
+    """The positive control is test_capture_writes_only_under_out: the same harness, rc 0, one file."""
+    before = tree_guard()
+    out = tmp_path / "o"
+    result = run_script("--query", "watchdogLimitMs=0", "--out", str(out), cwd=tmp_path)
+    assert result.returncode == 1, (result.returncode, result.stderr)
+    assert "home: the scene fell back to the still (too-slow); nothing written" in result.stderr, result.stderr
+    assert not out.exists() or list(out.iterdir()) == []
+    assert tree_guard() == before

@@ -89,8 +89,69 @@ def fit(shoot, qualities=QUALITIES, limit=LIMIT):
     raise CaptureError(f"{len(data):,} B at quality {quality} is over {limit:,} B")
 
 
+# Synchronous predicates (a returned Promise reads as truthy; Issue-9). FADED: the still has faded out under the live
+# scene, or the stage has left live (the next check then says why).
+FADED = """() => { const el = document.querySelector('[data-hero]');
+  if (el.dataset.heroState !== 'live') return true;
+  return el.classList.contains('is-live') && getComputedStyle(el.querySelector('.hero-still')).opacity === '0'; }"""
+SINCE_LIVE = """() => { const m = performance.getEntriesByName('weave:first-live-frame')[0];
+  return m ? performance.now() - m.startTime : null; }"""
+AFTER_LIVE = """(ms) => { const m = performance.getEntriesByName('weave:first-live-frame')[0];
+  return !!m && performance.now() - m.startTime >= ms; }"""
+STAGE_RECT = "el => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }"
+STILL_OPACITY = "el => getComputedStyle(el.querySelector('.hero-still')).opacity"
+
+
+def hero(page):
+    return page.eval_on_selector("[data-hero]", verify.HERO)
+
+
+def wait(page, what, predicate, timeout, arg=None):
+    """wait_for_function, with a timeout read as a fallback when the stage has left live."""
+    try:
+        page.wait_for_function(predicate, arg=arg, timeout=timeout)
+    except PlaywrightError as exc:
+        state, reason = hero(page)
+        if state != "live":
+            raise CaptureError(f"the scene fell back to the still ({reason})") from exc
+        raise CaptureError(f"timed out waiting for {what}") from exc
+
+
 def capture(browser, base, name, queries):
-    raise NotImplementedError
+    """(bytes, quality, info) of target `name`'s JPEG, taken in memory; CaptureError when it must write nothing."""
+    path, _ = TARGETS[name]
+    context = open_context(browser)
+    try:
+        page = context.new_page()
+        page.goto(target_url(base, path, queries))
+        wait(page, "the hero to settle", verify.SETTLED, 30000)
+        state, reason = hero(page)
+        if state != "live":
+            raise CaptureError(f"the scene fell back to the still ({reason})")
+        wait(page, "the settled quilt", verify.QUILT_SETTLED, verify.SETTLED_TIMEOUT_MS)
+        before = page.eval_on_selector("[data-hero]", verify.FRAMES)
+        wait(page, "the still to fade out", FADED, 5000)
+        wait(page, "the watchdog's window", AFTER_LIVE, verify.SETTLE_AFTER_LIVE_MS + 10000,
+             arg=verify.SETTLE_AFTER_LIVE_MS)
+        # The state first, so a teardown during the wait reports its reason, not a stopped loop.
+        state, reason = hero(page)
+        if state != "live":
+            raise CaptureError(f"the scene fell back to the still ({reason})")
+        advanced = page.eval_on_selector("[data-hero]", verify.FRAMES) - before
+        if advanced <= 0:
+            raise CaptureError("the frame loop stopped before the watchdog ruled")
+        x, y, w, h = page.eval_on_selector("[data-hero]", STAGE_RECT)
+        if [x, y, w, h] != [0, 0, VIEWPORT["width"], VIEWPORT["height"]]:
+            raise CaptureError(f"the stage is {w:g} x {h:g}, not 1600 x 1000")
+        info = {"state": state, "reason": reason, "after_live_ms": round(page.evaluate(SINCE_LIVE), 1),
+                "frames_advanced": advanced, "still_opacity": page.eval_on_selector("[data-hero]", STILL_OPACITY)}
+        quality, data = fit(lambda q: page.screenshot(type="jpeg", quality=q))
+        state, reason = hero(page)
+        if state != "live":
+            raise CaptureError(f"the scene fell back to the still ({reason})")
+        return data, quality, info
+    finally:
+        context.close()
 
 
 def main(argv=None):
@@ -101,7 +162,35 @@ def main(argv=None):
             print(f"capture_still.py: no '{name}' target is registered yet; registered: {', '.join(TARGETS)}",
                   file=sys.stderr)
             return 2
-    raise NotImplementedError
+    out = Path(args.out) if args.out else DEFAULT_OUT
+    # Every target is captured in memory first; nothing is written unless all of them succeeded.
+    shots = []
+    server, base = verify.serve.start(PUBLIC)
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(args=verify.GPU_ARGS)
+            try:
+                for name in names:
+                    try:
+                        data, quality, _ = capture(browser, base, name, args.query)
+                    except CaptureError as exc:
+                        print(f"capture_still.py: {name}: {exc}; nothing written", file=sys.stderr)
+                        return 1
+                    shots.append((name, data, quality))
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+    out.mkdir(parents=True, exist_ok=True)
+    for name, data, quality in shots:
+        path = out / TARGETS[name][1]
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+        print(f"capture_still.py: wrote {path} ({VIEWPORT['width']} x {VIEWPORT['height']}, JPEG quality {quality},"
+              f" {len(data):,} B)")
+    return 0
 
 
 if __name__ == "__main__":
