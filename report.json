@@ -1,0 +1,123 @@
+{
+  "git": {
+    "sha": "3719ff52973f5b217b0e41b95b0202f791fddfd5",
+    "dirty": false
+  },
+  "base": null,
+  "headless": false,
+  "budgets": {
+    "home_transfer_bytes": 1500000,
+    "first_live_frame_ms": 4000,
+    "frame_median_ms": 17.7,
+    "frame_p95_ms": 33.0,
+    "still_bytes": 250000
+  },
+  "measures": {
+    "baseline_frame_median_ms": 16.7,
+    "intro_frame_max_ms": 316.6,
+    "first_live_frame_ms": 870.3,
+    "frame_median_ms": 16.7,
+    "frame_p95_ms": 16.8,
+    "cycle_frame_median_ms": 16.7,
+    "cycle_frame_p95_ms": 16.8,
+    "cycle_frame_max_ms": 16.9,
+    "pick_block_median_ms": 0.8,
+    "home_transfer_bytes": 1157132,
+    "headroom_bytes": 342868,
+    "still_size": [
+      1600,
+      1000
+    ],
+    "still_bytes": 238449
+  },
+  "states": {
+    "desktop": [
+      "live",
+      "ok"
+    ],
+    "desktop_cycle": [
+      "unstitching",
+      "tiles",
+      "restitching",
+      "quilt"
+    ],
+    "desktop_after_idle": {
+      "state": "live",
+      "reason": "ok",
+      "frames_rose": true
+    },
+    "reduced_motion": [
+      "still",
+      "reduced-motion"
+    ],
+    "phone": [
+      "still",
+      "no-hover"
+    ],
+    "phone_no_horizontal_scroll": true
+  },
+  "checks": {
+    "quilt": {
+      "ok": true,
+      "detail": ""
+    },
+    "full_page": {
+      "ok": true,
+      "detail": ""
+    },
+    "labels": {
+      "ok": true,
+      "detail": ""
+    },
+    "hover": {
+      "ok": true,
+      "detail": ""
+    },
+    "tiles": {
+      "ok": true,
+      "detail": ""
+    },
+    "reorder": {
+      "ok": true,
+      "detail": ""
+    },
+    "sewn_back": {
+      "ok": true,
+      "detail": ""
+    },
+    "paused": {
+      "ok": true,
+      "detail": ""
+    },
+    "still_no_webgl": {
+      "ok": true,
+      "detail": ""
+    },
+    "still_reduced_motion": {
+      "ok": true,
+      "detail": ""
+    },
+    "still_watchdog": {
+      "ok": true,
+      "detail": ""
+    },
+    "phone": {
+      "ok": true,
+      "detail": ""
+    }
+  },
+  "shots": {
+    "quilt": "shots/01-quilt.png",
+    "full_page": "shots/11-full-page.png",
+    "hover": "shots/02-hover.png",
+    "tiles": "shots/03-tiles.png",
+    "reorder": "shots/04-reorder.png",
+    "sewn_back": "shots/05-sewn-back.png",
+    "paused": "shots/06-paused.png",
+    "still_no_webgl": "shots/07-still-no-webgl.png",
+    "still_reduced_motion": "shots/08-still-reduced-motion.png",
+    "still_watchdog": "shots/09-still-watchdog.png",
+    "phone": "shots/10-phone.png"
+  },
+  "failures": []
+}
