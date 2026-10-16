@@ -244,6 +244,8 @@ def test_run_dir_is_tagged_by_mode_and_sha(verify):
     assert verify.run_dir(out, "https://x/weave/", clean) == out / "runs" / "base-aaaaaaa"
     assert verify.run_dir(out, None, {"sha": "a" * 40, "dirty": True}) == out / "runs" / "local-aaaaaaa-dirty"
     assert verify.run_dir(out, None, {"sha": None, "dirty": None}) == out / "runs" / "local-nogit"
+    assert verify.run_dir(out, None, clean, headless=True) == out / "runs" / "local-aaaaaaa-headless"
+    assert verify.run_dir(out, "https://x/weave/", clean, True) == out / "runs" / "base-aaaaaaa-headless"
 
 
 def test_git_stamp_reads_head(verify, monkeypatch, tmp_path):
@@ -302,10 +304,11 @@ def test_report_is_written_when_a_run_throws(verify, monkeypatch, tmp_path):
     monkeypatch.setattr(verify, "run_states", throws)
     assert verify.main(["--headless"]) == 1
     runs = list((tmp_path / "runs").iterdir())
-    assert len(runs) == 1 and runs[0].name.startswith("local-"), runs
+    assert len(runs) == 1 and runs[0].name.startswith("local-") and runs[0].name.endswith("-headless"), runs
     for path in (runs[0] / "report.json", tmp_path / "report.json"):
         report = json.loads(path.read_text(encoding="utf-8"))
         assert "git" in report and "verify.py stopped: states blew up" in report["failures"], report["failures"]
+        assert report["headless"] is True
 
 
 def test_report_is_written_when_old_shots_survive(verify, monkeypatch, tmp_path):
@@ -314,7 +317,7 @@ def test_report_is_written_when_old_shots_survive(verify, monkeypatch, tmp_path)
         raise RuntimeError("states blew up")
 
     stamp = {"sha": "b" * 40, "dirty": False}
-    for old in (tmp_path / "runs" / "local-bbbbbbb" / "shots", tmp_path / "shots"):
+    for old in (tmp_path / "runs" / "local-bbbbbbb-headless" / "shots", tmp_path / "shots"):
         old.mkdir(parents=True)
         (old / "01-quilt.png").write_bytes(b"old")
     monkeypatch.setattr(verify, "OUT", tmp_path)
@@ -325,7 +328,7 @@ def test_report_is_written_when_old_shots_survive(verify, monkeypatch, tmp_path)
     monkeypatch.setattr(verify, "run", lambda report, base, headless: None)
     monkeypatch.setattr(verify, "run_states", throws)
     assert verify.main(["--headless"]) == 1
-    for path in (tmp_path / "runs" / "local-bbbbbbb" / "report.json", tmp_path / "report.json"):
+    for path in (tmp_path / "runs" / "local-bbbbbbb-headless" / "report.json", tmp_path / "report.json"):
         report = json.loads(path.read_text(encoding="utf-8"))
         assert report["git"] == stamp and "verify.py stopped: states blew up" in report["failures"]
 

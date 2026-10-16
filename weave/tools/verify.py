@@ -6,7 +6,7 @@ From the repo root, with the venv active:
 
 Measures every budget row, then checks every hero state (the quilt, hover, tiles, a reorder, the sew-back, Pause, the
 three still fallbacks and the phone) and screenshots each, as shots/01-quilt.png to shots/11-full-page.png. Each run
-keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}-<sha7>[-dirty]/, and
+keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}-<sha7>[-dirty][-headless]/, and
 weave/verify-output/report.json and shots/ are copies of the latest run. Exits 1 if any row fails. It runs a visible
 browser by default so the frame times use the real GPU; --headless is a smoke run only, never evidence for the frame
 rows. --base URL checks the states alone against a deployed copy (the budgets stay local: Pages compresses).
@@ -441,7 +441,8 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
             after = weave(".order")
             shoot(page, "sewn_back")
             assert after == before, f"the order is {after} after the sew-back, was {before}"
-            assert seams["missing"] == 0 and seams["checked"] == 160 * seams["sewn"] and seams["off"] <= 1e-6, \
+            assert seams["sewn"] > 0 and seams["missing"] == 0 and seams["checked"] == 160 * seams["sewn"] \
+                and seams["off"] <= 1e-6, \
                 f"seams {seams}"
 
         def paused():
@@ -489,8 +490,8 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
     still_row("still_no_webgl", no_webgl, ["still", "no-webgl"], viewport=DESKTOP)
     still_row("still_reduced_motion", lambda: browser, ["still", "reduced-motion"], viewport=DESKTOP,
               reduced_motion="reduce")
-    still_row("still_watchdog", lambda: browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0", reason="too-slow",
-              viewport=DESKTOP)
+    still_row("still_watchdog", lambda: browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0",
+              reason="too-slow", viewport=DESKTOP)
     still_row("phone", lambda: browser, ["still", "no-hover"], **PHONE)
     return checks, shots
 
@@ -597,10 +598,11 @@ def git_stamp():
     return {"sha": sha, "dirty": bool(status.strip())}
 
 
-def run_dir(out, base, git):
-    """This run's own directory: runs/{local|base}-<sha7>[-dirty], or -nogit without git."""
+def run_dir(out, base, git, headless=False):
+    """This run's own directory: runs/{local|base}-<sha7>[-dirty][-headless], or -nogit without git. A headless smoke
+    run never shares a folder with the headed run that is the evidence."""
     tag = f"{git['sha'][:7]}{'-dirty' if git['dirty'] else ''}" if git.get("sha") else "nogit"
-    return out / "runs" / f"{'base' if base else 'local'}-{tag}"
+    return out / "runs" / f"{'base' if base else 'local'}-{tag}{'-headless' if headless else ''}"
 
 
 def main(argv=None):
@@ -609,9 +611,9 @@ def main(argv=None):
         # The state rows fail through assert, which -O strips: every row would pass.
         print("verify.py: run without -O (the state checks are asserts)", file=sys.stderr)
         return 2
-    report = {"git": git_stamp(), "base": args.base, "budgets": {}, "measures": {}, "states": {}, "checks": {},
-              "shots": {}, "failures": []}
-    run_path = run_dir(OUT, args.base, report["git"])
+    report = {"git": git_stamp(), "base": args.base, "headless": args.headless, "budgets": {}, "measures": {},
+              "states": {}, "checks": {}, "shots": {}, "failures": []}
+    run_path = run_dir(OUT, args.base, report["git"], args.headless)
     shots_dir = run_path / "shots"
     # Only this run's own directory is emptied; a locked file (Windows) may survive, and the run goes on regardless.
     shutil.rmtree(shots_dir, ignore_errors=True)

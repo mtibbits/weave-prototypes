@@ -165,7 +165,8 @@ All motion is springs toward per-block targets plus a few scripted timelines.
   module or asset fails to load (`load-failed`), WebGL setup fails (`webgl-failed`) or the context is lost
   (`context-lost`).
 - The still is a JPEG captured from the live render by `weave/tools/capture_still.py` (D4: the `home` target; #19 adds
-  `help`), at the rest-pose recipe, after the watchdog has ruled, at ≤ 250 KB.
+  `help`), at the rest-pose recipe, once the watchdog's 2 s window has elapsed (2.5 s of wall time, a lower bound
+  while frames take ≤ 100 ms), at ≤ 250 KB.
 - The panel lists carry the content in plain HTML, so nothing depends on the canvas.
 - The controls are real buttons. The stage (`role="img"`) carries the descriptive `aria-label`, and the canvas is
   `aria-hidden`.

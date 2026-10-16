@@ -252,7 +252,8 @@ def test_no_module_writes_html():
     assert all(lines == [] for lines in found.values()), found
 
 
-# The hand-drawn sketch #7 committed, before #11 replaced it with a capture of the live render.
+# The placeholder sketch #5 rasterized from the baseline SVG, before #11 replaced it with a capture of the live
+# render.
 SKETCH_SHA256 = "dd4588b5d775f63bdb5b3e9eeeb10c92695042c3a8508ae725dbc5732c31e249"
 
 
