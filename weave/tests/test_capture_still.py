@@ -86,6 +86,25 @@ def test_fit_steps_down_until_it_fits(capture):
     assert capture.fit(lambda q: b"x" * 250_000)[0] == 90
 
 
+class TimingOutPage:
+    """wait_for_function always times out; the hero reads as `state`."""
+    def __init__(self, error, state):
+        self.error, self.state = error, state
+
+    def wait_for_function(self, predicate, arg=None, timeout=None):
+        raise self.error("Timeout 10ms exceeded.")
+
+    def eval_on_selector(self, selector, script):
+        return [self.state, "too-slow" if self.state == "still" else "ok"]
+
+
+def test_a_timed_out_wait_names_the_wait_or_the_fallback(capture):
+    with pytest.raises(capture.CaptureError, match=r"^timed out waiting for the settled quilt$"):
+        capture.wait(TimingOutPage(capture.PlaywrightError, "live"), "the settled quilt", "() => true", 10)
+    with pytest.raises(capture.CaptureError, match=r"^the scene fell back to the still \(too-slow\)$"):
+        capture.wait(TimingOutPage(capture.PlaywrightError, "still"), "the settled quilt", "() => true", 10)
+
+
 class FakeClock:
     def __init__(self):
         self.pinned = []
@@ -194,5 +213,5 @@ def test_forced_fallback_writes_nothing(tmp_path):
     result = run_script("--query", "watchdogLimitMs=0", "--out", str(out), cwd=tmp_path)
     assert result.returncode == 1, (result.returncode, result.stderr)
     assert "home: the scene fell back to the still (too-slow); nothing written" in result.stderr, result.stderr
-    assert not out.exists() or list(out.iterdir()) == []
+    assert not out.exists()
     assert tree_guard() == before

@@ -330,6 +330,52 @@ def test_report_is_written_when_old_shots_survive(verify, monkeypatch, tmp_path)
         assert report["git"] == stamp and "verify.py stopped: states blew up" in report["failures"]
 
 
+class BrokenPage:
+    """A page whose every call but goto and close raises a TypeError: an error no row expects."""
+    def goto(self, url):
+        pass
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        def broken(*args, **kwargs):
+            raise TypeError(f"boom in {name}")
+        return broken
+
+
+class BrokenBrowser:
+    def new_context(self, **options):
+        context = type("BrokenContext", (), {})()
+        context.new_page = BrokenPage
+        context.close = lambda: None
+        return context
+
+
+def test_a_row_error_stays_in_its_row(verify, monkeypatch, tmp_path):
+    """Any exception fails its own row and the run goes on, so no row's result is lost; the WebGL-off launcher runs
+    inside its row."""
+    def no_launch():
+        raise RuntimeError("no WebGL-off browser")
+
+    monkeypatch.setattr(verify, "fixed_instant", lambda: None)
+    checks, shots = verify.run_states("http://127.0.0.1:1/", tmp_path, BrokenBrowser(), no_launch)
+    assert sorted(checks) == sorted(CHECKS) and shots == {}
+    assert not any(entry["ok"] for entry in checks.values()), checks
+    assert checks["quilt"]["detail"].startswith("boom in "), checks["quilt"]
+    assert checks["hover"]["detail"] == "skipped: quilt failed"
+    assert checks["still_no_webgl"]["detail"] == "no WebGL-off browser"
+    assert checks["phone"]["detail"].startswith("boom in "), checks["phone"]
+
+
+def test_optimized_python_is_refused():
+    """-O strips the asserts the state rows fail through, so every row would pass: verify.py refuses to run."""
+    result = subprocess.run([sys.executable, "-O", str(SCRIPT), "--headless"], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert "run without -O" in result.stderr, result.stderr
+
+
 def png_size(path):
     data = path.read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n", path

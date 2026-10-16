@@ -375,7 +375,7 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
         try:
             fn()
             checks[name] = {"ok": True, "detail": ""}
-        except (PlaywrightError, AssertionError) as exc:
+        except Exception as exc:  # a row's failure, of any kind, is that row's alone
             checks[name] = {"ok": False, "detail": first_line(exc)}
 
     def shoot(page, name):
@@ -467,7 +467,7 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
 
     def still_row(name, target, expected, row_query="", reason=None, **options):
         def row():
-            context = new_context(target, **options)
+            context = new_context(target(), **options)
             try:
                 page = context.new_page()
                 page.goto(page_url(base, row_query))
@@ -486,11 +486,12 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
 
         attempt(name, row)
 
-    still_row("still_no_webgl", no_webgl(), ["still", "no-webgl"], viewport=DESKTOP)
-    still_row("still_reduced_motion", browser, ["still", "reduced-motion"], viewport=DESKTOP, reduced_motion="reduce")
-    still_row("still_watchdog", browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0", reason="too-slow",
+    still_row("still_no_webgl", no_webgl, ["still", "no-webgl"], viewport=DESKTOP)
+    still_row("still_reduced_motion", lambda: browser, ["still", "reduced-motion"], viewport=DESKTOP,
+              reduced_motion="reduce")
+    still_row("still_watchdog", lambda: browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0", reason="too-slow",
               viewport=DESKTOP)
-    still_row("phone", browser, ["still", "no-hover"], **PHONE)
+    still_row("phone", lambda: browser, ["still", "no-hover"], **PHONE)
     return checks, shots
 
 
@@ -604,6 +605,10 @@ def run_dir(out, base, git):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if not __debug__:
+        # The state rows fail through assert, which -O strips: every row would pass.
+        print("verify.py: run without -O (the state checks are asserts)", file=sys.stderr)
+        return 2
     report = {"git": git_stamp(), "base": args.base, "budgets": {}, "measures": {}, "states": {}, "checks": {},
               "shots": {}, "failures": []}
     run_path = run_dir(OUT, args.base, report["git"])
