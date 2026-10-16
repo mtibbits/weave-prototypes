@@ -96,14 +96,17 @@ FADED = """() => { const el = document.querySelector('[data-hero]');
   return el.classList.contains('is-live') && getComputedStyle(el.querySelector('.hero-still')).opacity === '0'; }"""
 SINCE_LIVE = """() => { const m = performance.getEntriesByName('weave:first-live-frame')[0];
   return m ? performance.now() - m.startTime : null; }"""
-AFTER_LIVE = """(ms) => { const m = performance.getEntriesByName('weave:first-live-frame')[0];
-  return !!m && performance.now() - m.startTime >= ms; }"""
+AFTER_LIVE = f"(ms) => ({SINCE_LIVE})() >= ms"
 STAGE_RECT = "el => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }"
 STILL_OPACITY = "el => getComputedStyle(el.querySelector('.hero-still')).opacity"
 
 
-def hero(page):
-    return page.eval_on_selector("[data-hero]", verify.HERO)
+def require_live(page):
+    """(state, reason) of the hero; CaptureError when it has fallen back to the still."""
+    state, reason = page.eval_on_selector("[data-hero]", verify.HERO)
+    if state != "live":
+        raise CaptureError(f"the scene fell back to the still ({reason})")
+    return state, reason
 
 
 def wait(page, what, predicate, timeout, arg=None):
@@ -111,9 +114,7 @@ def wait(page, what, predicate, timeout, arg=None):
     try:
         page.wait_for_function(predicate, arg=arg, timeout=timeout)
     except PlaywrightError as exc:
-        state, reason = hero(page)
-        if state != "live":
-            raise CaptureError(f"the scene fell back to the still ({reason})") from exc
+        require_live(page)
         raise CaptureError(f"timed out waiting for {what}") from exc
 
 
@@ -125,30 +126,25 @@ def capture(browser, base, name, queries):
         page = context.new_page()
         page.goto(target_url(base, path, queries))
         wait(page, "the hero to settle", verify.SETTLED, 30000)
-        state, reason = hero(page)
-        if state != "live":
-            raise CaptureError(f"the scene fell back to the still ({reason})")
+        require_live(page)
         wait(page, "the settled quilt", verify.QUILT_SETTLED, verify.SETTLED_TIMEOUT_MS)
         before = page.eval_on_selector("[data-hero]", verify.FRAMES)
         wait(page, "the still to fade out", FADED, 5000)
         wait(page, "the watchdog's window", AFTER_LIVE, verify.SETTLE_AFTER_LIVE_MS + 10000,
              arg=verify.SETTLE_AFTER_LIVE_MS)
         # The state first, so a teardown during the wait reports its reason, not a stopped loop.
-        state, reason = hero(page)
-        if state != "live":
-            raise CaptureError(f"the scene fell back to the still ({reason})")
+        state, reason = require_live(page)
         advanced = page.eval_on_selector("[data-hero]", verify.FRAMES) - before
         if advanced <= 0:
             raise CaptureError("the frame loop stopped before the watchdog ruled")
-        x, y, w, h = page.eval_on_selector("[data-hero]", STAGE_RECT)
-        if [x, y, w, h] != [0, 0, VIEWPORT["width"], VIEWPORT["height"]]:
-            raise CaptureError(f"the stage is {w:g} x {h:g}, not 1600 x 1000")
+        rect = page.eval_on_selector("[data-hero]", STAGE_RECT)
+        if rect != [0, 0, VIEWPORT["width"], VIEWPORT["height"]]:
+            raise CaptureError(f"the stage is {rect[2]:g} x {rect[3]:g},"
+                               f" not {VIEWPORT['width']} x {VIEWPORT['height']}")
         info = {"state": state, "reason": reason, "after_live_ms": round(page.evaluate(SINCE_LIVE), 1),
                 "frames_advanced": advanced, "still_opacity": page.eval_on_selector("[data-hero]", STILL_OPACITY)}
         quality, data = fit(lambda q: page.screenshot(type="jpeg", quality=q))
-        state, reason = hero(page)
-        if state != "live":
-            raise CaptureError(f"the scene fell back to the still ({reason})")
+        require_live(page)
         return data, quality, info
     finally:
         context.close()

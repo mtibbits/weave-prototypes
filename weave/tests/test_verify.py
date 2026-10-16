@@ -346,7 +346,7 @@ def repo_url():
 
 
 def test_state_checks_pass_on_a_subpath_base(verify, browser, browser_no_webgl, repo_url, tmp_path):
-    checks, shots = verify.run_states(f"{repo_url}/weave/public/", tmp_path, browser, browser_no_webgl,
+    checks, shots = verify.run_states(f"{repo_url}/weave/public/", tmp_path, browser, lambda: browser_no_webgl,
                                       query="?nowatchdog")
     failing = {name: entry["detail"] for name, entry in checks.items() if not entry["ok"]}
     assert sorted(checks) == sorted(CHECKS) and failing == {}, failing

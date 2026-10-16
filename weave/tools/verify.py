@@ -120,6 +120,7 @@ PICK_TIMES = """el => {
   return times[100];
 }"""
 FRAMES = "el => Number(el.dataset.heroFrames || 0)"
+NO_SIDEWAYS_SCROLL = "document.documentElement.scrollWidth <= window.innerWidth"
 
 # --- The state checks (#11): one shot per state, named as the PR and epic #1 cite them. ---
 
@@ -275,7 +276,7 @@ def run(report, base, headless):
     measures, states = report["measures"], report["states"]
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless, args=GPU_ARGS)
-        desktop = new_context(browser, viewport={"width": 1440, "height": 900})
+        desktop = new_context(browser, viewport=DESKTOP)
 
         # An empty page shows what this display and browser can do at best (not every screen is exactly 60 Hz).
         page = desktop.new_page()
@@ -310,20 +311,18 @@ def run(report, base, headless):
         measures["home_transfer_bytes"] = page.evaluate(TRANSFER)
         measures["headroom_bytes"] = BUDGETS["home_transfer_bytes"] - measures["home_transfer_bytes"]
 
-        calm = new_context(browser, viewport={"width": 1440, "height": 900}, reduced_motion="reduce")
+        calm = new_context(browser, viewport=DESKTOP, reduced_motion="reduce")
         page = calm.new_page()
         page.goto(f"{base}/")
         states["reduced_motion"] = settle(page)
         page.wait_for_function("document.querySelector('.hero-still').complete")
         measures["still_size"] = page.eval_on_selector(".hero-still", "img => [img.naturalWidth, img.naturalHeight]")
 
-        phone = new_context(browser, viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True,
-                            device_scale_factor=2)
+        phone = new_context(browser, **PHONE)
         page = phone.new_page()
         page.goto(f"{base}/")
         states["phone"] = settle(page)
-        states["phone_no_horizontal_scroll"] = page.evaluate(
-            "document.documentElement.scrollWidth <= window.innerWidth")
+        states["phone_no_horizontal_scroll"] = page.evaluate(NO_SIDEWAYS_SCROLL)
         browser.close()
 
 
@@ -364,8 +363,9 @@ def still_shown(page):
 def run_states(base, shots_dir, browser, no_webgl, query=""):
     """(checks, shots) for every name in CHECKS. Each page is opened, checked, shot and closed before the next, so
     only one window is open at a time. `query` goes on the desktop rows only (the suite passes ?nowatchdog);
-    still_watchdog always loads ?watchdogLimitMs=0. `no_webgl` is a browser, or a function that launches one, which
-    is then launched for its own row only and closed after it. Every wait predicate is synchronous (Issue-9)."""
+    still_watchdog always loads ?watchdogLimitMs=0. `no_webgl` is a function that returns the WebGL-off browser; it
+    is called for that row only, and the caller owns the browser it returns. Every wait predicate is synchronous
+    (Issue-9)."""
     checks, shots = {}, {}
 
     def attempt(name, fn, needs=None):
@@ -476,7 +476,7 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
                     page.wait_for_function(REASON_IS, arg=reason, timeout=20000)
                 state = page.eval_on_selector("[data-hero]", HERO)
                 shown = still_shown(page)
-                narrow = page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                narrow = page.evaluate(NO_SIDEWAYS_SCROLL)
                 shoot(page, name)
             finally:
                 context.close()
@@ -486,13 +486,7 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
 
         attempt(name, row)
 
-    launched = callable(no_webgl)
-    target = no_webgl() if launched else no_webgl
-    try:
-        still_row("still_no_webgl", target, ["still", "no-webgl"], viewport=DESKTOP)
-    finally:
-        if launched:
-            target.close()
+    still_row("still_no_webgl", no_webgl(), ["still", "no-webgl"], viewport=DESKTOP)
     still_row("still_reduced_motion", browser, ["still", "reduced-motion"], viewport=DESKTOP, reduced_motion="reduce")
     still_row("still_watchdog", browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0", reason="too-slow",
               viewport=DESKTOP)
@@ -502,13 +496,19 @@ def run_states(base, shots_dir, browser, no_webgl, query=""):
 
 def run_all_states(report, base, shots_dir, headless):
     """run_states in its own browsers (the GPU flags; the WebGL-off one launched for its row only)."""
+    launched = []
+
+    def no_webgl():
+        launched.append(pw.chromium.launch(headless=headless, args=NO_WEBGL_ARGS))
+        return launched[-1]
+
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless, args=GPU_ARGS)
         try:
-            report["checks"], report["shots"] = run_states(
-                base, shots_dir, browser, lambda: pw.chromium.launch(headless=headless, args=NO_WEBGL_ARGS))
+            report["checks"], report["shots"] = run_states(base, shots_dir, browser, no_webgl)
         finally:
-            browser.close()
+            for opened in (browser, *launched):
+                opened.close()
 
 
 def budgets_for(measures):
