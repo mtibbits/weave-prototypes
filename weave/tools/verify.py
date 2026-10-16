@@ -2,18 +2,26 @@
 
 From the repo root, with the venv active:
 
-  python weave/tools/verify.py [--headless]
+  python weave/tools/verify.py [--headless] [--base URL]
 
-Writes weave/verify-output/report.json and exits 1 if a budget or state check fails. It runs a visible browser by
-default so the frame times use the real GPU; --headless is a smoke run only, never evidence for the frame rows.
+Measures every budget row, then checks every hero state (the quilt, hover, tiles, a reorder, the sew-back, Pause, the
+three still fallbacks and the phone) and screenshots each, as shots/01-quilt.png to shots/11-full-page.png. Each run
+keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}-<sha7>[-dirty][-headless]/, and
+weave/verify-output/report.json and shots/ are copies of the latest run. Exits 1 if any row fails. It runs a visible
+browser by default so the frame times use the real GPU; --headless is a smoke run only, never evidence for the frame
+rows. --base URL checks the states alone against a deployed copy (the budgets stay local: Pages compresses).
 """
 import argparse
 import importlib.util
 import json
+import re
+import shutil
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 WEAVE = Path(__file__).resolve().parents[1]
@@ -24,8 +32,9 @@ OUT = WEAVE / "verify-output"
 sys.path.append(str(REPO / "tools"))
 import serve  # noqa: E402
 
-# A copy of tests/conftest.py's GPU_ARGS (test_verify.py pins the two equal).
+# Copies of tests/conftest.py's GPU_ARGS and NO_WEBGL_ARGS (test_verify.py pins them equal).
 GPU_ARGS = ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"]
+NO_WEBGL_ARGS = ["--disable-webgl", "--disable-webgl2", "--disable-3d-apis"]
 BUDGETS = {"home_transfer_bytes": 1_500_000, "first_live_frame_ms": 4000, "frame_median_ms": 16.7,
            "frame_p95_ms": 33.0, "still_bytes": 250_000}
 STILL_SIZE = (1600, 1000)
@@ -111,6 +120,101 @@ PICK_TIMES = """el => {
   return times[100];
 }"""
 FRAMES = "el => Number(el.dataset.heroFrames || 0)"
+NO_SIDEWAYS_SCROLL = "document.documentElement.scrollWidth <= window.innerWidth"
+
+# --- The state checks (#11): one shot per state, named as the PR and epic #1 cite them. ---
+
+STATE_SHOTS = {"quilt": "01-quilt.png", "hover": "02-hover.png", "tiles": "03-tiles.png", "reorder": "04-reorder.png",
+               "sewn_back": "05-sewn-back.png", "paused": "06-paused.png", "still_no_webgl": "07-still-no-webgl.png",
+               "still_reduced_motion": "08-still-reduced-motion.png", "still_watchdog": "09-still-watchdog.png",
+               "phone": "10-phone.png", "full_page": "11-full-page.png"}
+CHECKS = (*STATE_SHOTS, "labels")
+# Shot as the whole page; the rest at the viewport.
+FULL_PAGE_SHOTS = ("still_no_webgl", "still_reduced_motion", "still_watchdog", "phone", "full_page")
+DESKTOP = {"width": 1440, "height": 900}
+PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True, "device_scale_factor": 2}
+# The hover amount eases to exactly 1 in about 0.58 s (tests/test_hover.py's HOVER_SETTLE_MS).
+HOVER_SETTLE_MS = 2000
+# Every module the checks import resolves from the page's own URL, so a sub-path base (Pages) works unchanged.
+LAYOUT_JS = "new URL('js/layout.js', document.baseURI).href"
+# Byte-equal to tests/helpers.py's SEAMS_JS (test_verify.py pins the two): every non-planned block's 160 edge vertices
+# against the sashing, and each block's centre against its quilt slot (off).
+SEAMS_JS = r"""
+    const seams = (snap, L, nudge = 0) => {
+      const sp = snap.sashing.positions;
+      let checked = 0; let missing = 0; let off = 0;
+      for (const b of snap.blocks) {
+        const p = b.positions;
+        const mean = [0, 1].map((k) => [0, 40, 1640, 1680].reduce((s, j) => s + p[3 * j + k], 0) / 4);
+        off = Math.max(off, ...mean.map((v, k) => Math.abs(v - L.slotCentre(b.slot)[k])));
+        if (b.face === 'planned') continue;
+        const dx = b.slot === 0 ? nudge : 0;
+        for (let r = 0; r <= 40; r += 1) {
+          for (let c = 0; c <= 40; c += 1) {
+            if (r !== 0 && r !== 40 && c !== 0 && c !== 40) continue;
+            const j = 3 * (r * 41 + c);
+            checked += 1;
+            let hit = false;
+            for (let k = 0; k < sp.length && !hit; k += 3) {
+              hit = Math.hypot(sp[k] - p[j] - dx, sp[k + 1] - p[j + 1], sp[k + 2] - p[j + 2]) <= 1e-4;
+            }
+            if (!hit) missing += 1;
+          }
+        }
+      }
+      return { checked, missing, off };
+    };
+"""
+# local(snap, m): the snapshot's block and sashing positions mapped into the quilt group's own frame (m is
+# __weave.groupMatrix(): a rotation about the rod plus a translation), so the sway and the pointer tilt drop out and
+# the slot centres apply on a plain load as they do at rest.
+LOCAL_JS = r"""
+    const local = (snap, m) => {
+      const f = (p) => {
+        const out = new Array(p.length);
+        for (let j = 0; j < p.length; j += 3) {
+          const d = [p[j] - m[12], p[j + 1] - m[13], p[j + 2] - m[14]];
+          for (let k = 0; k < 3; k += 1) out[j + k] = d[0] * m[4 * k] + d[1] * m[4 * k + 1] + d[2] * m[4 * k + 2];
+        }
+        return out;
+      };
+      return { ...snap, blocks: snap.blocks.map((b) => ({ ...b, positions: f(b.positions) })),
+               sashing: { ...snap.sashing, positions: f(snap.sashing.positions) } };
+    };
+"""
+# SEAMS_JS on a fresh snapshot in the group's frame, with the count of blocks it checks (the non-planned ones).
+SEAMS = f"""async (el) => {{ const L = await import({LAYOUT_JS}); {SEAMS_JS} {LOCAL_JS}
+    const snap = local(el.__weave.snapshot(), el.__weave.groupMatrix());
+    return {{ ...seams(snap, L), sewn: snap.blocks.filter((b) => b.face !== 'planned').length }}; }}"""
+TILE_CENTRES = (f"async () => {{ const L = await import({LAYOUT_JS});"
+                " return [...Array(12).keys()].map((k) => L.slotCentre(k, 'tiles')); }")
+# The client point of the block now in `slot`: its four corners' world mean, through __weave.project.
+SLOT_POINT = """(el, slot) => { const b = el.__weave.snapshot().blocks.find((x) => x.slot === slot);
+  const p = b.positions;
+  return el.__weave.project([0, 1, 2].map((k) => [0, 40, 1640, 1680].reduce((s, j) => s + p[3 * j + k], 0) / 4)); }"""
+# Synchronous: the order is as expected and every block's corner mean (in the group's frame) is within 1e-3 of its
+# tile slot.
+TILES_AT = f"""([tiles, order]) => {{ const el = document.querySelector('[data-hero]'); {LOCAL_JS}
+  const snap = local(el.__weave.snapshot(), el.__weave.groupMatrix());
+  return JSON.stringify(el.__weave.order) === JSON.stringify(order) && snap.blocks.every((b) => [0, 1].every((k) =>
+    Math.abs([0, 40, 1640, 1680].reduce((s, j) => s + b.positions[3 * j + k], 0) / 4 - tiles[b.slot][k]) <= 1e-3)); }}"""
+# The pill through textContent (CSS upper-cases it), the panel figures and the footer.
+LABELS = """() => ({ pill: document.querySelector('.pill')?.textContent.trim() ?? null,
+  figures: [...document.querySelectorAll('.panel-figure')].map((e) => e.textContent.trim()),
+  footer: document.querySelector('.site-footer')?.textContent ?? '' })"""
+STILL_STATE = """() => { const el = document.querySelector('[data-hero]'); const img = el.querySelector('.hero-still');
+  const seen = (sel) => [...document.querySelectorAll(sel)].some((e) => e.getClientRects().length > 0
+    && getComputedStyle(e).visibility !== 'hidden');
+  return { complete: img.complete, width: img.naturalWidth, opacity: getComputedStyle(img).opacity,
+           live: el.classList.contains('is-live'), canvas: !!el.querySelector('canvas'),
+           live_panels: seen('[data-list="live"] .panel'), planned_panels: seen('[data-list="planned"] .panel') }; }"""
+STILL_OPAQUE = """() => { const img = document.querySelector('[data-hero] .hero-still');
+  return img.complete && getComputedStyle(img).opacity === '1'; }"""
+REASON_IS = "(reason) => document.querySelector('[data-hero]').dataset.heroReason === reason"
+TILES_MODE = ("() => { const el = document.querySelector('[data-hero]');"
+              " return el.dataset.mode === 'tiles' && el.__weave.mode === 'tiles'; }")
+HOVERED = ("(id) => { const h = document.querySelector('[data-hero]').__weave.hover;"
+           " return h.id === id && h.amount === 1; }")
 
 
 def frame_budget(baseline_ms):
@@ -128,6 +232,11 @@ def fixed_instant():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.FIXED_INSTANT
+
+
+def page_url(base, query=""):
+    """The page at `base` (a site root or a sub-path, with or without its trailing slash), with `query`."""
+    return base.rstrip("/") + "/" + query
 
 
 def wait_settled(page):
@@ -167,7 +276,7 @@ def run(report, base, headless):
     measures, states = report["measures"], report["states"]
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless, args=GPU_ARGS)
-        desktop = new_context(browser, viewport={"width": 1440, "height": 900})
+        desktop = new_context(browser, viewport=DESKTOP)
 
         # An empty page shows what this display and browser can do at best (not every screen is exactly 60 Hz).
         page = desktop.new_page()
@@ -202,21 +311,206 @@ def run(report, base, headless):
         measures["home_transfer_bytes"] = page.evaluate(TRANSFER)
         measures["headroom_bytes"] = BUDGETS["home_transfer_bytes"] - measures["home_transfer_bytes"]
 
-        calm = new_context(browser, viewport={"width": 1440, "height": 900}, reduced_motion="reduce")
+        calm = new_context(browser, viewport=DESKTOP, reduced_motion="reduce")
         page = calm.new_page()
         page.goto(f"{base}/")
         states["reduced_motion"] = settle(page)
         page.wait_for_function("document.querySelector('.hero-still').complete")
         measures["still_size"] = page.eval_on_selector(".hero-still", "img => [img.naturalWidth, img.naturalHeight]")
 
-        phone = new_context(browser, viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True,
-                            device_scale_factor=2)
+        phone = new_context(browser, **PHONE)
         page = phone.new_page()
         page.goto(f"{base}/")
         states["phone"] = settle(page)
-        states["phone_no_horizontal_scroll"] = page.evaluate(
-            "document.documentElement.scrollWidth <= window.innerWidth")
+        states["phone_no_horizontal_scroll"] = page.evaluate(NO_SIDEWAYS_SCROLL)
         browser.close()
+
+
+def first_line(exc):
+    return (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+
+
+def move(items, i, j):
+    """`items` with the one at i moved to j: the drag's reorder, computed apart from the page."""
+    items = list(items)
+    items.insert(j, items.pop(i))
+    return items
+
+
+def still_shown(page):
+    """{ok, detail}: the still is loaded at 1600 px and opaque (within 2 s), nothing live is left on the stage, and
+    both panel lists show."""
+    try:
+        page.wait_for_function(STILL_OPAQUE, timeout=2000)
+    except PlaywrightError:
+        pass
+    s = page.evaluate(STILL_STATE)
+    problems = []
+    if not (s["complete"] and s["width"] == STILL_SIZE[0]):
+        problems.append(f"the still is not loaded at {STILL_SIZE[0]} px (complete {s['complete']}, width {s['width']})")
+    if s["opacity"] != "1":
+        problems.append(f"the still's opacity is {s['opacity']}")
+    if s["live"]:
+        problems.append("the stage is still is-live")
+    if s["canvas"]:
+        problems.append("the stage still has a canvas")
+    for key in ("live_panels", "planned_panels"):
+        if not s[key]:
+            problems.append(f"no visible {key.split('_')[0]} panel")
+    return {"ok": not problems, "detail": "; ".join(problems)}
+
+
+def run_states(base, shots_dir, browser, no_webgl, query=""):
+    """(checks, shots) for every name in CHECKS. Each page is opened, checked, shot and closed before the next, so
+    only one window is open at a time. `query` goes on the desktop rows only (the suite passes ?nowatchdog);
+    still_watchdog always loads ?watchdogLimitMs=0. `no_webgl` is a function that returns the WebGL-off browser; it
+    is called for that row only, and the caller owns the browser it returns. Every wait predicate is synchronous
+    (Issue-9)."""
+    checks, shots = {}, {}
+
+    def attempt(name, fn, needs=None):
+        if needs is not None and checks.get(needs, {}).get("ok") is not True:
+            checks[name] = {"ok": False, "detail": f"skipped: {needs} failed"}
+            return
+        try:
+            fn()
+            checks[name] = {"ok": True, "detail": ""}
+        except Exception as exc:  # a row's failure, of any kind, is that row's alone
+            checks[name] = {"ok": False, "detail": first_line(exc)}
+
+    def shoot(page, name):
+        page.screenshot(path=str(shots_dir / STATE_SHOTS[name]), full_page=name in FULL_PAGE_SHOTS)
+        shots[name] = f"shots/{STATE_SHOTS[name]}"
+
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    context = new_context(browser, viewport=DESKTOP)
+    try:
+        page = context.new_page()
+        page.goto(page_url(base, query))
+
+        def weave(expr):
+            return page.eval_on_selector("[data-hero]", f"el => el.__weave{expr}")
+
+        def quilt():
+            state = settle(page)
+            assert state == ["live", "ok"], f"hero is {state}"
+            page.locator("[data-hero]").scroll_into_view_if_needed()
+            wait_settled(page)
+            count = len(weave(".order"))
+            shoot(page, "quilt")
+            assert count == 12, f"{count} slots"
+
+        def full_page():
+            shoot(page, "full_page")
+
+        def labels():
+            found = page.evaluate(LABELS)
+            assert found["pill"] == "Prototype · work in progress", f"the pill reads {found['pill']!r}"
+            assert any(f.endswith("(sample)") for f in found["figures"]), f"no (sample) figure in {found['figures']}"
+            assert "Sample data only" in found["footer"], f"the footer reads {found['footer']!r}"
+
+        def hover():
+            first, name = weave(".order[0]"), weave(".slots[0].name")
+            page.mouse.move(*page.eval_on_selector("[data-hero]", SLOT_POINT, 0))
+            page.wait_for_function(HOVERED, arg=first, timeout=HOVER_SETTLE_MS, polling=50)
+            tip = page.eval_on_selector("[data-tooltip]", "t => [t.hidden, t.querySelector('.hero-tip-name').textContent]")
+            shoot(page, "hover")
+            assert tip == [False, name], f"the tooltip is {tip}, expected shown with {name!r}"
+
+        def tiles():
+            page.locator("[data-toggle]").click()
+            page.wait_for_function(TILES_MODE, timeout=10000)
+            shoot(page, "tiles")
+
+        def reorder():
+            expected = move(weave(".order"), 0, 5)
+            a, b = (page.eval_on_selector("[data-hero]", SLOT_POINT, slot) for slot in (0, 5))
+            page.mouse.move(*a)
+            page.mouse.down()
+            page.mouse.move(*b, steps=12)
+            page.mouse.up()
+            page.wait_for_function(TILES_AT, arg=[page.evaluate(TILE_CENTRES), expected], timeout=5000)
+            shoot(page, "reorder")
+
+        def sewn_back():
+            before = weave(".order")
+            # The toggle sits outside the stage, so the pointer leaves the canvas with this click.
+            page.locator("[data-toggle]").click()
+            wait_settled(page)
+            seams = page.eval_on_selector("[data-hero]", SEAMS)
+            after = weave(".order")
+            shoot(page, "sewn_back")
+            assert after == before, f"the order is {after} after the sew-back, was {before}"
+            assert seams["sewn"] > 0 and seams["missing"] == 0 and seams["checked"] == 160 * seams["sewn"] \
+                and seams["off"] <= 1e-6, \
+                f"seams {seams}"
+
+        def paused():
+            page.locator("[data-pause]").click()
+            pressed = page.get_attribute("[data-pause]", "aria-pressed")
+            before = page.eval_on_selector("[data-hero]", FRAMES)
+            page.wait_for_timeout(600)
+            after = page.eval_on_selector("[data-hero]", FRAMES)
+            shoot(page, "paused")
+            assert pressed == "true", f"aria-pressed is {pressed}"
+            assert after == before, f"frames went {before} -> {after} while paused"
+
+        attempt("quilt", quilt)
+        attempt("full_page", full_page, needs="quilt")
+        attempt("labels", labels)
+        attempt("hover", hover, needs="quilt")
+        attempt("tiles", tiles, needs="quilt")
+        attempt("reorder", reorder, needs="tiles")
+        attempt("sewn_back", sewn_back, needs="tiles")
+        attempt("paused", paused, needs="quilt")
+    finally:
+        context.close()
+
+    def still_row(name, target, expected, row_query="", reason=None, **options):
+        def row():
+            context = new_context(target(), **options)
+            try:
+                page = context.new_page()
+                page.goto(page_url(base, row_query))
+                settle(page)
+                if reason is not None:
+                    page.wait_for_function(REASON_IS, arg=reason, timeout=20000)
+                state = page.eval_on_selector("[data-hero]", HERO)
+                shown = still_shown(page)
+                narrow = page.evaluate(NO_SIDEWAYS_SCROLL)
+                shoot(page, name)
+            finally:
+                context.close()
+            assert state == expected, f"hero is {state} (expected {expected})"
+            assert narrow, "the page scrolls sideways"
+            assert shown["ok"], shown["detail"]
+
+        attempt(name, row)
+
+    still_row("still_no_webgl", no_webgl, ["still", "no-webgl"], viewport=DESKTOP)
+    still_row("still_reduced_motion", lambda: browser, ["still", "reduced-motion"], viewport=DESKTOP,
+              reduced_motion="reduce")
+    still_row("still_watchdog", lambda: browser, ["still", "too-slow"], row_query="?watchdogLimitMs=0",
+              reason="too-slow", viewport=DESKTOP)
+    still_row("phone", lambda: browser, ["still", "no-hover"], **PHONE)
+    return checks, shots
+
+
+def run_all_states(report, base, shots_dir, headless):
+    """run_states in its own browsers (the GPU flags; the WebGL-off one launched for its row only)."""
+    launched = []
+
+    def no_webgl():
+        launched.append(pw.chromium.launch(headless=headless, args=NO_WEBGL_ARGS))
+        return launched[-1]
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=headless, args=GPU_ARGS)
+        try:
+            report["checks"], report["shots"] = run_states(base, shots_dir, browser, no_webgl)
+        finally:
+            for opened in (browser, *launched):
+                opened.close()
 
 
 def budgets_for(measures):
@@ -226,8 +520,25 @@ def budgets_for(measures):
 
 
 def check(report):
-    """Every failing row of `report`, named by its key; pure, and closed: a missing measure or state fails."""
-    measures, states = report.get("measures", {}), report.get("states", {})
+    """Every failing row of `report`, named by its key; pure, and closed: a missing measure, state, check or shot
+    fails. A --base report (report["base"] set) has the state checks only."""
+    failures = [] if report.get("base") else budget_failures(report)
+    checks, shots = report.get("checks") or {}, report.get("shots") or {}
+    for name in CHECKS:
+        entry = checks.get(name)
+        if entry is None:
+            failures.append(f"{name}: not run")
+        elif entry.get("ok") is not True:
+            failures.append(f"{name}: {entry.get('detail')}")
+    for name in STATE_SHOTS:
+        if not shots.get(name):
+            failures.append(f"{name}: no screenshot")
+    return failures
+
+
+def budget_failures(report):
+    """The local run's rows: every budget, the cycle measures, headroom, the still's size and the run's hero states."""
+    measures, states = report.get("measures") or {}, report.get("states") or {}
     failures = []
     budgets = budgets_for(measures)
     if measures.get("baseline_frame_median_ms") is None:
@@ -248,6 +559,8 @@ def check(report):
     for key in CYCLE_MEASURES:
         if measures.get(key) is None:
             failures.append(f"{key} is missing")
+    if measures.get("headroom_bytes") is None:
+        failures.append("headroom_bytes: not run")
     if measures.get("still_size") != list(STILL_SIZE):
         failures.append(f"still_size = {measures.get('still_size')} (expected {list(STILL_SIZE)})")
     for name, expected in EXPECTED_STATES.items():
@@ -258,23 +571,81 @@ def check(report):
     return failures
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Check WEAVE's budgets and hero states on this machine.")
+def http_url(value):
+    if not re.match(r"https?://[^/\s]+", value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not an http(s):// URL")
+    return value
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="verify.py",
+                                     description="Check WEAVE's budgets and hero states on this machine.")
     parser.add_argument("--headless", action="store_true", help="a smoke run only; frame times need a visible window")
-    args = parser.parse_args()
-    OUT.mkdir(exist_ok=True)
-    report = {"budgets": {}, "measures": {}, "states": {}, "failures": []}
-    server, base = serve.start(PUBLIC)
+    parser.add_argument("--base", metavar="URL", type=http_url,
+                        help="check the hero states only, against a deployed copy at URL (no budgets)")
+    return parser
+
+
+def git_stamp():
+    """{sha, dirty} of the checkout verify.py runs from (tracked files only); None for both without git."""
     try:
-        run(report, base, args.headless)
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True,
+                             check=True).stdout.strip()
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO,
+                                capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return {"sha": None, "dirty": None}
+    return {"sha": sha, "dirty": bool(status.strip())}
+
+
+def run_dir(out, base, git, headless=False):
+    """This run's own directory: runs/{local|base}-<sha7>[-dirty][-headless], or -nogit without git. A headless smoke
+    run never shares a folder with the headed run that is the evidence."""
+    tag = f"{git['sha'][:7]}{'-dirty' if git['dirty'] else ''}" if git.get("sha") else "nogit"
+    return out / "runs" / f"{'base' if base else 'local'}-{tag}{'-headless' if headless else ''}"
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if not __debug__:
+        # The state rows fail through assert, which -O strips: every row would pass.
+        print("verify.py: run without -O (the state checks are asserts)", file=sys.stderr)
+        return 2
+    report = {"git": git_stamp(), "base": args.base, "headless": args.headless, "budgets": {}, "measures": {},
+              "states": {}, "checks": {}, "shots": {}, "failures": []}
+    run_path = run_dir(OUT, args.base, report["git"], args.headless)
+    shots_dir = run_path / "shots"
+    # Only this run's own directory is emptied; a locked file (Windows) may survive, and the run goes on regardless.
+    shutil.rmtree(shots_dir, ignore_errors=True)
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    stopped = []
+    try:
+        if args.base is None:
+            server, base = serve.start(PUBLIC)
+            try:
+                run(report, base, args.headless)
+                run_all_states(report, base, shots_dir, args.headless)
+            finally:
+                server.shutdown()
+                server.server_close()
+        else:
+            run_all_states(report, args.base, shots_dir, args.headless)
+    except Exception as exc:
+        stopped.append(f"verify.py stopped: {first_line(exc)}")
     finally:
-        server.shutdown()
-        server.server_close()
-    report["measures"]["still_bytes"] = (PUBLIC / "assets" / "weave-still.jpg").stat().st_size
-    report["budgets"] = budgets_for(report["measures"])
-    report["failures"] = check(report)
-    (OUT / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({"measures": report["measures"], "states": report["states"]}, indent=2))
+        if args.base is None:
+            report["measures"]["still_bytes"] = (PUBLIC / "assets" / "weave-still.jpg").stat().st_size
+            report["budgets"] = budgets_for(report["measures"])
+        report["failures"] = check(report) + stopped
+        text = json.dumps(report, indent=2)
+        (run_path / "report.json").write_text(text, encoding="utf-8")
+        # The plain report.json and shots/ are copies of the latest run.
+        (OUT / "report.json").write_text(text, encoding="utf-8")
+        shutil.rmtree(OUT / "shots", ignore_errors=True)
+        shutil.copytree(shots_dir, OUT / "shots", dirs_exist_ok=True)
+    print(json.dumps({"git": report["git"], "measures": report["measures"], "states": report["states"],
+                      "checks": report["checks"]}, indent=2))
+    print(f"Run directory: {run_path}")
     print("\n".join(["FAILURES:", *report["failures"]]) if report["failures"] else "All budgets and states OK.")
     return 1 if report["failures"] else 0
 

@@ -1,4 +1,5 @@
 """The WEAVE page's static parts, its accessibility basics, its still and its stage."""
+import hashlib
 import json
 import os
 import posixpath
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import open_page
+from helpers import jpeg_size, open_page
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 SOURCE = "https://github.com/mtibbits/weave-prototypes"
@@ -249,3 +250,15 @@ def test_no_module_writes_html():
     assert dev_pages, "no dev page to scan"
     found = {p.name: html_sinks(p.read_text(encoding="utf-8")) for p in modules + dev_pages}
     assert all(lines == [] for lines in found.values()), found
+
+
+# The placeholder sketch #5 rasterized from the baseline SVG, before #11 replaced it with a capture of the live
+# render.
+SKETCH_SHA256 = "dd4588b5d775f63bdb5b3e9eeeb10c92695042c3a8508ae725dbc5732c31e249"
+
+
+def test_committed_still_is_a_capture():
+    """#11: the still is no longer the sketch; byte-level provenance is preship's compare with a fresh capture."""
+    data = (PUBLIC / "assets" / "weave-still.jpg").read_bytes()
+    assert hashlib.sha256(data).hexdigest() != SKETCH_SHA256
+    assert jpeg_size(data) == (1600, 1000)
