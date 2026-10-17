@@ -1,4 +1,5 @@
 """#12's release rules (release.js), their boot wiring (stage.__weaveRelease), and the fixed test clock."""
+import json
 import os
 import subprocess
 import sys
@@ -9,7 +10,9 @@ import pytest
 
 import conftest
 import fixed_clock
+import helpers
 from conftest import FIXED_DATE, FIXED_INSTANT
+from helpers import DEFAULTS_JS, LAST_SEEN_KEY, SIM_KEY
 
 WEAVE = Path(__file__).resolve().parents[1]
 
@@ -137,3 +140,327 @@ def test_clock_env_replaces_the_default_for_a_run():
                             env=clean_env(**{conftest.CLOCK_ENV: "2026-10-10T09:00:00"}), timeout=180)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     assert "1 passed" in result.stdout, result.stdout
+
+
+# --- The pure rules (release.js), over the shipped panels.js through #5's cleanPanels. ---
+
+# DEFAULTS is the shipped list through cleanPanels and RAW is window.WEAVE_PANELS; SAMPLE carries its settings.
+PRELUDE = DEFAULTS_JS + r"""
+    const R = await import('/public/js/release.js');
+    const RAW = window.WEAVE_PANELS;
+    const SAMPLE = { panels: DEFAULTS, release: RAW.release, windowDays: RAW.newsWindowDays };
+    const withPanels = (over) => DEFAULTS.map((p) => (p.id in over ? { ...p, ...over[p.id] } : p));
+    const sinceAll = (since) => DEFAULTS.map((p) => (p.status === 'live' ? { ...p, since } : p));
+    const fakeStorage = (initial = {}) => {
+      const data = { ...initial };
+      const log = [];
+      return { data, log, getItem: (k) => (k in data ? data[k] : null),
+               setItem: (k, v) => { log.push([k, v]); data[k] = String(v); } };
+    };
+    const make = (over = {}) => {
+      const warned = [];
+      const storage = fakeStorage();
+      const hook = R.createRelease({ now: null, whatsnew: false, rest: false, raw: RAW, panels: DEFAULTS,
+                                     date: new Date(2026, 9, 10, 9), getStorage: () => storage,
+                                     warn: (m) => warned.push(m), ...over });
+      return { hook, warned, log: storage.log, data: storage.data };
+    };
+"""
+
+
+def run(js, body):
+    return js(PRELUDE + body)
+
+
+TRAVEL_DESKS = ["travel", "desks"]
+LIVE_IDS = ["manpower", "hiring", "training", "awards", "travel", "actions", "desks"]
+HOOK_KEYS = ["today", "force", "key", "lastSeen", "newIds", "taggedIds", "recordSeen"]
+
+
+@pytest.mark.parametrize("a, b, expected", [
+    ("1.10", "1.9", 1), ("1.1.0", "1.1", 0), ("1.0", "1.1", -1), ("2", "1.99", 1), ("01.1", "1.1", 0),
+    ("1.1", "1.1.1", -1), ("1." + "9" * 25, "1." + "9" * 24 + "8", 1),
+], ids=["1.10-1.9", "1.1.0-1.1", "1.0-1.1", "2-1.99", "01.1-1.1", "1.1-1.1.1", "25-digits"])
+def test_compare_versions(js, a, b, expected):
+    got = run(js, f"return [R.compareVersions({json.dumps(a)}, {json.dumps(b)}),"
+                  f" R.compareVersions({json.dumps(b)}, {json.dumps(a)})];")
+    assert got == [expected, -expected]
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("1.10", True), (1.1, False), ("1.", False), ("", False), ("v1", False), (" 1.1", False), ("1..1", False),
+    (None, False),
+], ids=["1.10", "number", "trailing-dot", "empty", "v1", "space", "double-dot", "null"])
+def test_is_version(js, value, expected):
+    assert run(js, f"return R.isVersion({json.dumps(value)});") is expected
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("2024-02-29", True), ("2026-02-29", False), ("2026-02-30", False), ("2026-10-9", False), ("2026-13-01", False),
+    ("0099-01-01", False),
+], ids=["leap", "not-leap", "feb-30", "unpadded", "month-13", "year-99"])
+def test_is_date(js, value, expected):
+    assert run(js, f"return R.isDate({json.dumps(value)});") is expected
+
+
+def test_day_number_ignores_daylight_saving(js):
+    pairs = [("2026-03-07", "2026-03-08"), ("2026-03-08", "2026-03-09"), ("2026-10-31", "2026-11-01"),
+             ("2026-11-01", "2026-11-02")]
+    got = run(js, f"return {json.dumps(pairs)}.map(([a, b]) => R.dayNumber(b) - R.dayNumber(a));")
+    assert got == [1, 1, 1, 1]
+
+
+def test_local_date_pads_the_local_calendar_day(js):
+    got = run(js, "return [R.localDate(new Date(2026, 9, 8, 21)), R.localDate(new Date(2026, 0, 2, 0, 30))];")
+    assert got == ["2026-10-08", "2026-01-02"]
+
+
+def test_window_edges_with_the_sample_data(js):
+    """AC1: 10-08 out, 10-09 in, 10-15 in, 10-16 out, for the new and the tagged sets alike."""
+    days = ["2026-10-08", "2026-10-09", "2026-10-15", "2026-10-16"]
+    got = run(js, f"""return {json.dumps(days)}.map((today) => [
+        R.newPanelIds({{ ...SAMPLE, lastSeen: null, today, force: false }}),
+        R.taggedPanelIds({{ ...SAMPLE, today }})]);""")
+    assert got == [[[], []], [TRAVEL_DESKS, TRAVEL_DESKS], [TRAVEL_DESKS, TRAVEL_DESKS], [[], []]]
+
+
+def test_window_days_bounds(js):
+    got = run(js, """const at = (windowDays, today) => R.newPanelIds({ ...SAMPLE, windowDays, lastSeen: null, today });
+        return [at(1, '2026-10-09'), at(1, '2026-10-10'), at(60, '2026-12-07'), at(60, '2026-12-08')];""")
+    assert got == [TRAVEL_DESKS, [], TRAVEL_DESKS, []]
+
+
+MALFORMED = {
+    "date-unpadded": ("release", "{ ...RAW.release, date: '2026-10-9' }", "W_NEWS_DATE"),
+    "date-impossible": ("release", "{ ...RAW.release, date: '2026-02-30' }", "W_NEWS_DATE"),
+    "window-string": ("windowDays", "'7'", "W_NEWS_WINDOW"),
+    "window-zero": ("windowDays", "0", "W_NEWS_WINDOW"),
+    "window-61": ("windowDays", "61", "W_NEWS_WINDOW"),
+    "window-fraction": ("windowDays", "7.5", "W_NEWS_WINDOW"),
+    "version-number": ("release", "{ ...RAW.release, version: 1.1 }", "W_NEWS_VERSION"),
+    "version-v": ("release", "{ ...RAW.release, version: 'v1.1' }", "W_NEWS_VERSION"),
+}
+
+
+@pytest.mark.parametrize("case", MALFORMED, ids=list(MALFORMED))
+def test_malformed_release_settings_mean_nothing_new(js, case):
+    """AC2 and AC11: nothing new even with force, no tags, recordSeen writes nothing, and that field's warning."""
+    field, value, warning = MALFORMED[case]
+    raw_field = "release" if field == "release" else "newsWindowDays"
+    got = run(js, f"""const bad = {{ ...SAMPLE, {field}: {value} }};
+        const visit = make({{ raw: {{ ...RAW, {raw_field}: {value} }}, now: '2026-10-20' }});
+        return {{ plain: R.newPanelIds({{ ...bad, lastSeen: null, today: '2026-10-10', force: false }}),
+                  forced: R.newPanelIds({{ ...bad, lastSeen: null, today: '2026-10-10', force: true }}),
+                  tagged: R.taggedPanelIds({{ ...bad, today: '2026-10-10' }}),
+                  hookNew: visit.hook.newIds, recorded: visit.hook.recordSeen(), log: visit.log,
+                  warned: visit.warned }};""")
+    assert got == {"plain": [], "forced": [], "tagged": [], "hookNew": [], "recorded": False, "log": [],
+                   "warned": [getattr(helpers, warning)]}
+
+
+def test_well_formed_settings_record_the_release(js):
+    """The control for test_malformed_release_settings_mean_nothing_new: the sample records once, on the .sim key."""
+    got = run(js, """const visit = make({ now: '2026-10-20' });
+        return { recorded: visit.hook.recordSeen(), log: visit.log, warned: visit.warned };""")
+    assert got == {"recorded": True, "log": [[SIM_KEY, "1.1"]], "warned": []}
+
+
+FIRST = "{ panels: sinceAll('1.0'), release: { version: '1.0', date: '2026-10-09' }, windowDays: 7 }"
+
+
+def test_first_release_gives_nothing_new(js):
+    """AC5: a first release with no lastSeen gives nothing new and no tags."""
+    got = run(js, f"""const first = {FIRST};
+        return [R.newPanelIds({{ ...first, lastSeen: null, today: '2026-10-10' }}),
+                R.taggedPanelIds({{ ...first, today: '2026-10-10' }})];""")
+    assert got == [[], []]
+
+
+def test_whatsnew_on_the_first_release_gives_every_launch_panel(js):
+    got = run(js, f"""const first = {FIRST};
+        return R.newPanelIds({{ ...first, lastSeen: null, today: '2026-10-10', force: true }});""")
+    assert got == LIVE_IDS
+
+
+def test_sample_release_gives_a_fresh_profile_travel_and_desks(js):
+    got = run(js, "return [R.newPanelIds({ ...SAMPLE, lastSeen: null, today: '2026-10-10' }),"
+                  " R.taggedPanelIds({ ...SAMPLE, today: '2026-10-10' })];")
+    assert got == [TRAVEL_DESKS, TRAVEL_DESKS]
+
+
+V12 = "{ version: '1.2', date: '2026-10-09', label: 'sample release' }"
+
+
+def test_gap_with_promotions_in_1_2(js):
+    """AC6: the sequence set, the tag set and the heading together."""
+    got = run(js, f"""const panels = withPanels({{ promotions: {{ status: 'live', since: '1.2' }} }});
+        const settings = {{ panels, release: {V12}, windowDays: 7 }};
+        const newIds = R.newPanelIds({{ ...settings, lastSeen: '1.0', today: '2026-10-10' }});
+        return {{ newIds, tagged: R.taggedPanelIds({{ ...settings, today: '2026-10-10' }}),
+                  heading: R.cardHeading({{ panels, newIds, release: settings.release }}) }};""")
+    assert got == {"newIds": ["promotions", "travel", "desks"], "tagged": ["promotions"],
+                   "heading": {"kind": "since-last-visit", "text": "New since your last visit",
+                               "groups": [{"version": "1.1", "names": ["Travel", "Desk Allocation"]},
+                                          {"version": "1.2", "names": ["Promotions"]}]}}
+
+
+def test_gap_when_1_2_ships_no_panels(js):
+    got = run(js, f"""const settings = {{ panels: DEFAULTS, release: {V12}, windowDays: 7 }};
+        const newIds = R.newPanelIds({{ ...settings, lastSeen: '1.0', today: '2026-10-10' }});
+        return {{ newIds, tagged: R.taggedPanelIds({{ ...settings, today: '2026-10-10' }}),
+                  heading: R.cardHeading({{ panels: DEFAULTS, newIds, release: settings.release }}) }};""")
+    assert got == {"newIds": TRAVEL_DESKS, "tagged": [],
+                   "heading": {"kind": "since-last-visit", "text": "New since your last visit",
+                               "groups": [{"version": "1.1", "names": ["Travel", "Desk Allocation"]}]}}
+    assert got["heading"]["text"] != "New this release · v1.2"
+
+
+def test_planned_panel_is_never_new_or_tagged(js):
+    """AC7: Promotions planned with since '1.1' is in neither set."""
+    got = run(js, """const settings = { ...SAMPLE, panels: withPanels({ promotions: { since: '1.1' } }) };
+        return [[false, null], [true, null], [false, '1.0'], [true, '1.0']].map(([force, lastSeen]) =>
+          [R.newPanelIds({ ...settings, lastSeen, force, today: '2026-10-10' }),
+           R.taggedPanelIds({ ...settings, today: '2026-10-10' })]);""")
+    assert got == [[TRAVEL_DESKS, TRAVEL_DESKS]] * 4
+
+
+def test_live_panel_without_a_usable_since_is_never_new_and_makes_a_later_release(js):
+    """AC8: a first-release set plus one live panel with since missing, then 'soon'; only 'soon' warns."""
+    got = run(js, f"""const first = {FIRST};
+        return [undefined, 'soon'].map((since) => {{
+          const odd = {{ id: 'odd', name: 'Odd', status: 'live', sample: null }};
+          if (since !== undefined) odd.since = since;
+          const settings = {{ ...first, panels: [...first.panels, odd] }};
+          return [R.newPanelIds({{ ...settings, lastSeen: null, today: '2026-10-10' }}),
+                  R.releaseWarnings(settings)];
+        }});""")
+    assert got == [[LIVE_IDS, []], [LIVE_IDS, [helpers.W_NEWS_SINCE.format(id="odd")]]]
+
+
+def test_launch_set_written_as_numbers_warns_and_still_gives_travel_and_desks(js):
+    got = run(js, """const panels = DEFAULTS.map((p) => (p.since === '1.0' ? { ...p, since: 1.0 } : p));
+        const settings = { ...SAMPLE, panels };
+        return [R.releaseWarnings(settings), R.newPanelIds({ ...settings, lastSeen: null, today: '2026-10-10' })];""")
+    assert got == [[helpers.W_NEWS_SINCE.format(id=i) for i in ("manpower", "hiring", "training", "awards", "actions")],
+                   TRAVEL_DESKS]
+
+
+def test_since_written_as_a_number_warns_and_is_never_new(js):
+    """AC9: since: 1.1 as a number warns naming the panel, which is never new."""
+    got = run(js, """const settings = { ...SAMPLE, panels: withPanels({ travel: { since: 1.1 } }) };
+        return [R.releaseWarnings(settings), R.newPanelIds({ ...settings, lastSeen: null, today: '2026-10-10' }),
+                R.taggedPanelIds({ ...settings, today: '2026-10-10' })];""")
+    assert got == [[helpers.W_NEWS_SINCE.format(id="travel")], ["desks"], ["desks"]]
+
+
+def test_1_1_0_is_the_1_1_release(js):
+    """AC10: since '1.1.0' under release '1.1' is new and tagged, with the "New this release" heading."""
+    got = run(js, """const panels = withPanels({ desks: { since: '1.1.0' } });
+        const settings = { ...SAMPLE, panels };
+        const newIds = R.newPanelIds({ ...settings, lastSeen: null, today: '2026-10-10' });
+        return { newIds, tagged: R.taggedPanelIds({ ...settings, today: '2026-10-10' }),
+                 heading: R.cardHeading({ panels, newIds, release: RAW.release }) };""")
+    assert got["newIds"] == TRAVEL_DESKS and got["tagged"] == TRAVEL_DESKS
+    assert got["heading"]["kind"] == "release"
+    assert got["heading"]["text"] == "New this release · v1.1 (sample release)"
+
+
+@pytest.mark.parametrize("travel, desks, first", [("1.1.0", "1.1", "1.1.0"), ("1.1", "1.1.0", "1.1")],
+                         ids=["1.1.0-first", "1.1-first"])
+def test_equal_versions_share_a_group_spelled_first_in_list_order(js, travel, desks, first):
+    got = run(js, f"""const panels = withPanels({{ promotions: {{ status: 'live', since: '1.2' }},
+                                               travel: {{ since: '{travel}' }}, desks: {{ since: '{desks}' }} }});
+        const release = {V12};
+        const newIds = R.newPanelIds({{ panels, release, windowDays: 7, lastSeen: '1.0', today: '2026-10-10' }});
+        return R.cardHeading({{ panels, newIds, release }}).groups;""")
+    assert got == [{"version": first, "names": ["Travel", "Desk Allocation"]},
+                   {"version": "1.2", "names": ["Promotions"]}]
+
+
+def test_card_heading_rules(js):
+    got = run(js, f"""const forced = R.newPanelIds({{ panels: DEFAULTS, release: {V12}, windowDays: 7,
+                                                      lastSeen: null, today: '2026-10-10', force: true }});
+        const text = (label) => R.cardHeading({{ panels: DEFAULTS, newIds: ['travel', 'desks'],
+                                                 release: {{ version: '1.1', date: '2026-10-09', label }} }}).text;
+        return {{ empty: R.cardHeading({{ ...SAMPLE, newIds: [] }}), forced,
+                  forcedHeading: R.cardHeading({{ panels: DEFAULTS, newIds: forced, release: {V12} }}),
+                  badVersion: R.cardHeading({{ panels: DEFAULTS, newIds: ['travel'], release: {{ version: 1.1 }} }}),
+                  labels: [text(''), text(undefined), text(7)] }};""")
+    assert got == {"empty": None, "forced": [], "forcedHeading": None, "badVersion": None,
+                   "labels": ["New this release · v1.1"] * 3}
+
+
+def test_last_seen_rules(js):
+    """Rule 5, and a malformed lastSeen falling back to rule 4."""
+    got = run(js, """return ['1.1', 'soon', '1.0'].map((lastSeen) =>
+        R.newPanelIds({ ...SAMPLE, lastSeen, today: '2026-10-10' }));""")
+    assert got == [[], TRAVEL_DESKS, TRAVEL_DESKS]
+
+
+def test_rules_never_throw_on_garbage(js):
+    got = run(js, """const day = { today: '2026-10-10', lastSeen: null };
+        const cases = [{ ...SAMPLE, ...day, panels: null }, { ...SAMPLE, ...day, panels: 7 },
+                       { ...SAMPLE, ...day, release: null }, { ...SAMPLE, today: undefined },
+                       { ...SAMPLE, ...day, panels: [null] }, null, undefined, 7];
+        return cases.map((c) => [R.newPanelIds(c), R.taggedPanelIds(c), R.cardHeading(c), R.releaseWarnings(c)]);""")
+    assert got == [[[], [], None, []]] * 8
+
+
+def test_storage_helpers_never_throw(js):
+    """AC13's pure leg: a throwing getter or storage gives null/false; only a version is read or written."""
+    got = run(js, """const boom = () => { throw new Error('blocked'); };
+        const throwing = { getItem: boom, setItem: boom };
+        const good = fakeStorage({ k: '1.1', bad: 'soon' });
+        return { getter: [R.readLastSeen(boom, 'k'), R.writeLastSeen(boom, 'k', '1.2')],
+                 storage: [R.readLastSeen(() => throwing, 'k'), R.writeLastSeen(() => throwing, 'k', '1.2')],
+                 soon: R.readLastSeen(() => good, 'bad'), control: R.readLastSeen(() => good, 'k'),
+                 absent: R.readLastSeen(() => good, 'none'),
+                 write: R.writeLastSeen(() => good, 'w', '1.2'), stored: good.data.w,
+                 writeBad: R.writeLastSeen(() => good, 'x', 'soon'), log: good.log };""")
+    assert got == {"getter": [None, False], "storage": [None, False], "soon": None, "control": "1.1", "absent": None,
+                   "write": True, "stored": "1.2", "writeBad": False, "log": [["w", "1.2"]]}
+
+
+def test_create_release_picks_the_key_and_force(js):
+    got = run(js, """const pick = (over) => { const v = make(over);
+          return { key: v.hook.key, force: v.hook.force, today: v.hook.today, warned: v.warned }; };
+        return { real: pick({}), now: pick({ now: '2026-10-20' }), bad: pick({ now: 'bad' }),
+                 whatsnew: pick({ whatsnew: true }), rest: pick({ rest: true }),
+                 local: R.localDate(new Date(2026, 9, 10, 9)) };""")
+    assert got["local"] == "2026-10-10"
+    assert got["real"] == {"key": LAST_SEEN_KEY, "force": False, "today": "2026-10-10", "warned": []}
+    assert got["now"] == {"key": SIM_KEY, "force": False, "today": "2026-10-20", "warned": []}
+    assert got["bad"] == {"key": SIM_KEY, "force": False, "today": "2026-10-10", "warned": [helpers.W_NEWS_NOW]}
+    assert got["whatsnew"] == {"key": SIM_KEY, "force": True, "today": "2026-10-10", "warned": []}
+    assert got["rest"] == {"key": SIM_KEY, "force": False, "today": "2026-10-10", "warned": []}
+
+
+def test_create_release_computes_the_sets_and_leaves_last_seen(js):
+    got = run(js, """const v = make({});
+        const recorded = v.hook.recordSeen();
+        return { keys: Object.keys(v.hook).sort(), newIds: v.hook.newIds, taggedIds: v.hook.taggedIds,
+                 lastSeen: v.hook.lastSeen, recorded, log: v.log };""")
+    assert got == {"keys": sorted(HOOK_KEYS), "newIds": TRAVEL_DESKS, "taggedIds": TRAVEL_DESKS, "lastSeen": None,
+                   "recorded": True, "log": [[LAST_SEEN_KEY, "1.1"]]}
+
+
+def test_release_warnings_with_the_shipped_panels_are_empty(js):
+    assert run(js, "return R.releaseWarnings(SAMPLE);") == []
+
+
+def test_release_warnings_and_create_release_never_throw(js):
+    got = run(js, """const boom = () => { throw new Error('blocked'); };
+        const out = [];
+        for (const raw of [{ release: null }, { release: 7, newsWindowDays: null }, null, 7]) {
+          for (const getStorage of [() => fakeStorage(), boom]) {
+            for (const panels of [DEFAULTS, null, [null]]) {
+              const hook = R.createRelease({ now: null, whatsnew: false, rest: false, raw, panels,
+                                             date: new Date(2026, 9, 10, 9), getStorage, warn: () => {} });
+              out.push({ warned: Array.isArray(R.releaseWarnings({ panels, release: raw?.release })),
+                         keys: Object.keys(hook).sort(), newIds: hook.newIds, taggedIds: hook.taggedIds,
+                         recorded: hook.recordSeen() });
+            }
+          }
+        }
+        return out;""")
+    assert got == [{"warned": True, "keys": sorted(HOOK_KEYS), "newIds": [], "taggedIds": [], "recorded": False}] * 24

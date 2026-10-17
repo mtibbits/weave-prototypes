@@ -106,6 +106,20 @@ HOME = "/public/index.html"
 
 PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 
+# The release rules' warnings (#12): their own family, disjoint from PANEL_WARNING_PREFIXES. Written out here, never
+# read from release.js, so a reworded warning fails the tests.
+RELEASE_WARNING_PREFIX = "WEAVE: news: "
+W_NEWS_VERSION = ("WEAVE: news: release.version in panels.js must be a version string such as '1.1', "
+                  "so no panel is new.")
+W_NEWS_DATE = "WEAVE: news: release.date in panels.js must be a real day written YYYY-MM-DD, so no panel is new."
+W_NEWS_WINDOW = "WEAVE: news: newsWindowDays in panels.js must be a whole number from 1 to 60, so no panel is new."
+W_NEWS_SINCE = ("WEAVE: news: the live panel '{id}' has a malformed since (write a string such as '1.1'), "
+                "so it is never new.")
+W_NEWS_NOW = "WEAVE: news: ?now= must be a real day written YYYY-MM-DD, so it is ignored and today is the local date."
+# The two lastSeen keys: real visits, and visits with ?now=, ?whatsnew or ?pose=rest.
+LAST_SEEN_KEY = "weave.lastSeenRelease"
+SIM_KEY = "weave.lastSeenRelease.sim"
+
 # --- Painting helpers (#6): console collection, font warnings, canvas hashing. ---
 
 FONT_WARNING_PREFIX = "WEAVE: the web font"
