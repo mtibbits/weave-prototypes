@@ -1,12 +1,19 @@
 """needle.js: the shared needle (#13): its frame, body, tail, posing on a curve and the clamp."""
 import math
+import re
+from pathlib import Path
 
 import pytest
+
+from helpers import HOME, hero_result
 
 EPS = 1e-6                        # positions and unit lengths; float32 geometry readback (pothole Issue-10)
 ANTI = -0.999                     # +X . tangent must be at most this
 COS_1_DEG = math.cos(math.radians(1))
 TAIL_REL = 0.01                   # tail arc length within 1 %
+
+WEAVE = Path(__file__).resolve().parents[1]
+NEEDLE = WEAVE / "public" / "js" / "needle.js"
 
 # The curves, frames and readers every contract test shares. The tail's centre line is read back from the rendered
 # TubeGeometry's rings, never from the module's own arc, so the length check cannot share production's maths.
@@ -408,3 +415,77 @@ def test_zero_tangent_leaves_the_quaternion(js):
     assert r["error"] is None
     assert close(r["position"], [0.1, 0.2, 0]), r
     assert r["after"] == r["before"]
+
+
+# --- The boundary: the header states the contract, nothing imports the module yet, and the still path never asks. ---
+
+HEADER_TOKENS = ("scene units", "tip", "+X", "0.18", "body", "tail", "#C9A227", "0.12", "tailLength", "threadColor",
+                 "clamp", "[0, 1]", "getTangentAt", "local Z", "clockwise", "metalness", "dispose")
+
+
+def header_lines(text):
+    """needle.js's header: the run of column-0 // lines at the top of the file, before the first import."""
+    lines = []
+    for line in text.splitlines():
+        if not line.startswith("//"):
+            break
+        lines.append(line)
+    return lines
+
+
+def header_claims(text):
+    """Whether the header states the contract #16, E3 and E4 build on. Lines are joined and whitespace collapsed,
+    as test_docs.py's frame_comment readers do, so a token split by a line wrap still matches."""
+    prose = " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+    return (all(token in prose for token in HEADER_TOKENS) and ("−Y" in prose or "-Y" in prose)
+            and re.search(r"live[- ]path", prose) is not None)
+
+
+def test_needle_js_header_states_the_contract():
+    text = NEEDLE.read_text(encoding="utf-8")
+    assert header_claims(text) is True
+    # Planted control: the same source with the header trimmed to one line fails the check.
+    rest = "\n".join(text.splitlines()[len(header_lines(text)):])
+    assert header_claims("// Needles.\n" + rest) is False
+
+
+def imports_needle(text):
+    """Whether a source names needle.js anywhere outside a comment: any import form, a script src or a preload."""
+    code = re.sub(r"/\*.*?\*/|<!--.*?-->", " ", text, flags=re.S)
+    code = re.sub(r"//[^\n]*", " ", code)
+    return re.search(r"needle\.js\b", code) is not None
+
+
+def test_imports_needle_catches_every_form():
+    forms = ["import { a } from './needle.js';", "await import('./js/needle.js')", "await import(`./needle.js`)",
+             "import './needle.js';", '<script type="module" src="js/needle.js">',
+             '<link rel="modulepreload" href="js/needle.js">']
+    assert [f for f in forms if not imports_needle(f)] == []
+    assert [f for f in ["// see needle.js", "<!-- needle.js -->", "const needleLift = 1;"] if imports_needle(f)] == []
+
+
+def test_no_page_or_module_imports_needle_yet():
+    """#16 and #18 replace this with their live-path imports; the still-path test stays."""
+    public = WEAVE / "public"
+    subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.glob("*.html"))
+                + [public / "panels.js"] + list((WEAVE / "dev").glob("*.html")))
+    # 12 modules at #13's base, plus panels.js, index.html and faces.html: a moved glob cannot empty the scan.
+    assert len(subjects) >= 15, subjects
+    assert [p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))] == []
+
+
+@pytest.mark.parametrize("context, reason", [
+    ({"reduced_motion": "reduce"}, "reduced-motion"),
+    ({"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}, "no-hover"),
+], ids=["reduced-motion", "phone"])
+def test_still_path_never_requests_needle(make_page, base_url, context, reason):
+    page = make_page(**context)
+    requested = []
+    page.on("request", lambda request: requested.append(request.url))
+    page.goto(base_url + HOME)
+    assert hero_result(page) == ["still", reason]
+    page.wait_for_load_state("networkidle")
+    # Positive control first: the listener does see module requests.
+    assert any(url.endswith("/public/js/main.js") for url in requested), requested
+    assert any(url.endswith("/public/js/release.js") for url in requested), requested
+    assert not [url for url in requested if url.endswith("/js/needle.js") or "three.module" in url], requested
