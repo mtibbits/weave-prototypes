@@ -1,4 +1,7 @@
+import os
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,42 @@ from helpers import canvas_hashes, font_warnings, open_faces, open_paint  # noqa
 
 GPU_ARGS = ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"]
 NO_WEBGL_ARGS = ["--disable-webgl", "--disable-webgl2", "--disable-3d-apis"]
+
+# The default clock (#12): every context the fixture makes is pinned to it before its first page. WEAVE_TEST_CLOCK
+# replaces it for a run (#16's in-window run); a bad value fails the run, never falling back to FIXED_INSTANT.
+CLOCK_ENV = "WEAVE_TEST_CLOCK"
+INSTANT_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?")
+DEFAULT_CLOCK = FIXED_INSTANT
+_DEFAULT = object()
+
+
+def check_instant(value, name):
+    """`value` when it is a full date-time Playwright and Python agree on; else ValueError naming `name`.
+
+    A bare date is refused: Playwright reads it as UTC midnight, the evening before in EDT."""
+    if isinstance(value, str) and INSTANT_RE.fullmatch(value):
+        try:
+            datetime.fromisoformat(value)
+            return value
+        except ValueError:
+            pass
+    raise ValueError(f"{name} must be a full local date-time such as 2026-10-10T09:00:00, or one with an "
+                     f"offset, never a bare date; got {value!r}")
+
+
+def resolve_default_clock(environ):
+    """The run's default instant: `environ[CLOCK_ENV]` when the key is set (even empty), checked; else FIXED_INSTANT."""
+    if CLOCK_ENV in environ:
+        return check_instant(environ[CLOCK_ENV], CLOCK_ENV)
+    return FIXED_INSTANT
+
+
+def pytest_configure(config):
+    global DEFAULT_CLOCK
+    try:
+        DEFAULT_CLOCK = resolve_default_clock(os.environ)
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 @pytest.fixture(scope="session")
@@ -45,9 +84,16 @@ def browser_no_webgl(playwright_session):
 
 
 def page_factory(browser, contexts):
-    """make(target_browser=None, **context_args): a page in a new 1440x900 context, recorded in `contexts`."""
-    def make(target_browser=None, **context_args):
+    """make(target_browser=None, clock=<the default>, **context_args): a page in a new 1440x900 context, recorded in
+    `contexts`. The context's clock is pinned to DEFAULT_CLOCK, to `clock` when it is another instant, or left real
+    when it is None."""
+    def make(target_browser=None, clock=_DEFAULT, **context_args):
+        # Read at call time, so the instant is the one pytest_configure resolved.
+        instant = DEFAULT_CLOCK if clock is _DEFAULT else None if clock is None else check_instant(
+            clock, "make_page(clock=...)")
         ctx = (target_browser or browser).new_context(**{"viewport": {"width": 1440, "height": 900}, **context_args})
+        if instant is not None:
+            ctx.clock.set_fixed_time(instant)
         contexts.append(ctx)
         return ctx.new_page()
 

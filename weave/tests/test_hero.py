@@ -1,6 +1,7 @@
 """The hero contract: the still path and its reasons, going live on desktop, the hooks, and every runtime fallback."""
 import pytest
 
+from conftest import FIXED_DATE
 from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, QUILT_HINT, SEW_NAME, STILL_HINT, TILES_HINT,
                      UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result, hidden_by_attribute,
                      ink_fraction, live_quilt, open_live, rising, wait_for_reason, weave)
@@ -62,8 +63,9 @@ def test_touch_device_keeps_still(make_page, base_url):
 
 def test_goes_live_on_desktop(make_page, base_url):
     """Port of coalesce/tests/test_hero.py::test_goes_live_on_desktop, with the first-frame mark and a non-blank
-    canvas (control: the same stage with the canvas hidden)."""
-    page, errors = live_quilt(make_page, base_url)
+    canvas (control: the same stage with the canvas hidden). The pinned clock empties the performance timeline, so
+    this test runs on the real clock, with now= keeping the release rules off the calendar."""
+    page, errors = live_quilt(make_page, base_url, clock=None, query=f"?nowatchdog&now={FIXED_DATE}")
     canvas = page.locator("[data-hero] canvas")
     assert canvas.count() == 1 and canvas.get_attribute("aria-hidden") == "true"
     assert page.locator("[data-pause]").is_visible()
