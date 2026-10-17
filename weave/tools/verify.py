@@ -10,6 +10,10 @@ keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}
 weave/verify-output/report.json and shots/ are copies of the latest run. Exits 1 if any row fails. It runs a visible
 browser by default so the frame times use the real GPU; --headless is a smoke run only, never evidence for the frame
 rows. --base URL checks the states alone against a deployed copy (the budgets stay local: Pages compresses).
+
+The clock (#12): every page opens through page_url, which adds NOW_QUERY, now= at fixed_clock.py's FIXED_DATE, so no
+run lands in a release window. The browser clock is never pinned (a pin empties the performance timeline the budgets
+read), and the run's clock variable for the tests is never read.
 """
 import argparse
 import importlib.util
@@ -31,6 +35,19 @@ OUT = WEAVE / "verify-output"
 # The root serve.py serves public/ at / (D35). Appended, so it never shadows a module the caller resolves first.
 sys.path.append(str(REPO / "tools"))
 import serve  # noqa: E402
+
+
+def _load_fixed_clock():
+    """weave/tools/fixed_clock.py, loaded by path: the one home of the tests' instant. A missing file raises."""
+    spec = importlib.util.spec_from_file_location("weave_fixed_clock", Path(__file__).with_name("fixed_clock.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+fixed_clock = _load_fixed_clock()
+NOW_DATE = fixed_clock.FIXED_DATE
+NOW_QUERY = f"now={NOW_DATE}"
 
 # Copies of tests/conftest.py's GPU_ARGS and NO_WEBGL_ARGS (test_verify.py pins them equal).
 GPU_ARGS = ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"]
@@ -223,20 +240,10 @@ def frame_budget(baseline_ms):
     return max(BUDGETS["frame_median_ms"], round(baseline_ms + 1.0, 2))
 
 
-def fixed_instant():
-    """#12's frozen instant from weave/tools/fixed_clock.py once it exists; None until then. Never the environment."""
-    path = Path(__file__).with_name("fixed_clock.py")
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location("fixed_clock", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.FIXED_INSTANT
-
-
 def page_url(base, query=""):
-    """The page at `base` (a site root or a sub-path, with or without its trailing slash), with `query`."""
-    return base.rstrip("/") + "/" + query
+    """The page at `base` (a site root or a sub-path, with or without its trailing slash), with `query` (a leading
+    '?' optional) and then NOW_QUERY."""
+    return base.rstrip("/") + "/?" + "&".join(part for part in (query.lstrip("?"), NOW_QUERY) if part)
 
 
 def wait_settled(page):
@@ -250,11 +257,8 @@ def settle(page):
 
 
 def new_context(browser, **options):
-    context = browser.new_context(**options)
-    instant = fixed_instant()
-    if instant is not None:
-        context.clock.set_fixed_time(instant)
-    return context
+    """The one place the tools make a context; its clock stays real (see the module docstring)."""
+    return browser.new_context(**options)
 
 
 def median_p95(deltas):
@@ -286,7 +290,7 @@ def run(report, base, headless):
 
         page = desktop.new_page()
         page.add_init_script(INTRO_FRAMES)
-        page.goto(f"{base}/")
+        page.goto(page_url(base))
         states["desktop"] = settle(page)
         if states["desktop"] == ["live", "ok"]:
             wait_settled(page)
@@ -313,14 +317,14 @@ def run(report, base, headless):
 
         calm = new_context(browser, viewport=DESKTOP, reduced_motion="reduce")
         page = calm.new_page()
-        page.goto(f"{base}/")
+        page.goto(page_url(base))
         states["reduced_motion"] = settle(page)
         page.wait_for_function("document.querySelector('.hero-still').complete")
         measures["still_size"] = page.eval_on_selector(".hero-still", "img => [img.naturalWidth, img.naturalHeight]")
 
         phone = new_context(browser, **PHONE)
         page = phone.new_page()
-        page.goto(f"{base}/")
+        page.goto(page_url(base))
         states["phone"] = settle(page)
         states["phone_no_horizontal_scroll"] = page.evaluate(NO_SIDEWAYS_SCROLL)
         browser.close()

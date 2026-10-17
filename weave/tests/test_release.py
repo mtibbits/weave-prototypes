@@ -41,6 +41,11 @@ def test_fixed_instant_has_one_home():
     assert conftest.FIXED_INSTANT is fixed_clock.FIXED_INSTANT
     assert "from fixed_clock import FIXED_DATE, FIXED_INSTANT" in (WEAVE / "tests" / "conftest.py").read_text(
         encoding="utf-8")
+    # The tools: verify.py loads the module, and capture_still.py takes the rule from verify.py alone.
+    verify_text = (WEAVE / "tools" / "verify.py").read_text(encoding="utf-8")
+    capture_text = (WEAVE / "tools" / "capture_still.py").read_text(encoding="utf-8")
+    assert '"fixed_clock.py"' in verify_text and "FIXED_DATE" in verify_text
+    assert "verify.NOW_QUERY" in capture_text and "fixed_clock" not in capture_text
 
 
 # --- The default clock and its opt-outs. ---
