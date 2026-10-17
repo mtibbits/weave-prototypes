@@ -463,6 +463,44 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
     return page, errors
 
 
+# --- The release object (#12). ---
+
+# Synchronous on purpose: a returned Promise reads as truthy (Issue-9).
+RELEASE_READY = "() => !!document.querySelector('[data-hero]')?.__weaveRelease"
+RELEASE_STATE = "el => { const { recordSeen, ...state } = el.__weaveRelease; return state; }"
+
+
+def open_release(make_page, base_url, query="", panels_body=None, before_goto=None, **context_args):
+    """Open the WEAVE page at `query` and wait for stage.__weaveRelease; returns (page, errors, warnings).
+
+    `warnings` collects the release (WEAVE: news: ) console warnings. Reduced motion is the default, so the page takes
+    the still path and never loads Three. Routes `panels_body` and runs `before_goto(page)` as open_live does.
+    """
+    context_args.setdefault("reduced_motion", "reduce")
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    warnings = []
+    page.on("console", lambda msg: warnings.append(msg.text)
+            if msg.type == "warning" and msg.text.startswith(RELEASE_WARNING_PREFIX) else None)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    if before_goto is not None:
+        before_goto(page)
+    page.goto(base_url + HOME + query)
+    page.wait_for_function(RELEASE_READY)
+    return page, errors, warnings
+
+
+def release_state(page):
+    """stage.__weaveRelease without recordSeen: { today, force, key, lastSeen, newIds, taggedIds }."""
+    return page.eval_on_selector("[data-hero]", RELEASE_STATE)
+
+
+def record_seen(page):
+    """Calls stage.__weaveRelease.recordSeen() and returns what it returned."""
+    return page.eval_on_selector("[data-hero]", "el => el.__weaveRelease.recordSeen()")
+
+
 def live_quilt(make_page, base_url, **kwargs):
     """open_live, then wait until the intro has settled into the quilt; returns (page, errors)."""
     page, errors = open_live(make_page, base_url, **kwargs)

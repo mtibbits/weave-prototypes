@@ -1,6 +1,7 @@
 """#12's release rules (release.js), their boot wiring (stage.__weaveRelease), and the fixed test clock."""
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -464,3 +465,156 @@ def test_release_warnings_and_create_release_never_throw(js):
         }
         return out;""")
     assert got == [{"warned": True, "keys": sorted(HOOK_KEYS), "newIds": [], "taggedIds": [], "recorded": False}] * 24
+
+
+# --- The boot wiring: stage.__weaveRelease on the real page (each test pins its own instant or uses ?now=). ---
+
+IN_WINDOW = "2026-10-10T09:00:00"
+AFTER_WINDOW = "2026-10-20T09:00:00"
+STORED = "(key) => localStorage.getItem(key)"
+
+
+@pytest.mark.parametrize("search, expected", [
+    ("", [None, False]), ("?now=2026-10-20&whatsnew", ["2026-10-20", True]), ("?now=", ["", False]),
+    ("?whatsnew=0", [None, True]),
+], ids=["none", "both", "empty-now", "whatsnew-0"])
+def test_read_hooks_reads_the_release_parameters(js, search, expected):
+    got = js(f"const h = (await import('/public/js/dom.js')).readHooks({json.dumps(search)});"
+             " return [h.now, h.whatsnew, Object.keys(h).sort()];")
+    assert got[:2] == expected
+    assert got[2] == sorted(["watchdog", "limitMs", "rest", "still", "now", "whatsnew"])
+
+
+@pytest.mark.parametrize("value", ["2026-10-9", "2026-02-30", "zz-not-a-date"])
+def test_invalid_now_is_ignored_with_a_warning(make_page, base_url, value):
+    """AC3: ignored with a warning; today is the local date, the key is the .sim key, the value is never written."""
+    page, errors, warnings = helpers.open_release(make_page, base_url, f"?now={value}", clock=IN_WINDOW)
+    state = helpers.release_state(page)
+    assert warnings == [helpers.W_NEWS_NOW] and errors == []
+    assert state["today"] == "2026-10-10" and state["key"] == SIM_KEY
+    assert value not in page.content()
+
+
+@pytest.mark.parametrize("instant, today, new_ids", [
+    ("2026-10-08T21:00:00-04:00", "2026-10-08", []),
+    ("2026-10-09T00:30:00-04:00", "2026-10-09", TRAVEL_DESKS),
+    ("2026-10-15T21:00:00-04:00", "2026-10-15", TRAVEL_DESKS),
+], ids=["eve-21h", "release-day-0h30", "last-day-21h"])
+def test_today_is_the_local_date_at_boot(make_page, base_url, instant, today, new_ids):
+    """AC4: a UTC-date bug fails the first case, where UTC is already 10-09."""
+    page, errors, _ = helpers.open_release(make_page, base_url, clock=instant, timezone_id="America/New_York")
+    state = helpers.release_state(page)
+    assert (state["today"], state["newIds"]) == (today, new_ids) and errors == []
+
+
+@pytest.mark.parametrize("query, new_ids", [("?now=2026-10-08", []), ("?now=2026-10-08&whatsnew", TRAVEL_DESKS)],
+                         ids=["plain", "whatsnew"])
+def test_before_the_window_nothing_is_written(make_page, base_url, query, new_ids):
+    """AC12; the positive control is test_simulated_visits_write_only_the_sim_key."""
+    page, errors, _ = helpers.open_release(make_page, base_url, query)
+    assert helpers.release_state(page)["newIds"] == new_ids
+    assert helpers.record_seen(page) is False
+    assert page.evaluate("() => localStorage.length") == 0 and errors == []
+
+
+@pytest.mark.parametrize("query, clock", [("?now=2026-10-20", None), ("?whatsnew", AFTER_WINDOW),
+                                          ("?pose=rest", IN_WINDOW)], ids=["now", "whatsnew", "pose-rest"])
+def test_simulated_visits_write_only_the_sim_key(make_page, base_url, query, clock):
+    """AC14: a simulated visit writes the .sim key and leaves the real one absent."""
+    options = {} if clock is None else {"clock": clock}
+    page, errors, _ = helpers.open_release(make_page, base_url, query, **options)
+    assert helpers.record_seen(page) is True
+    assert page.evaluate(STORED, SIM_KEY) == "1.1" and page.evaluate(STORED, LAST_SEEN_KEY) is None
+    assert errors == []
+
+
+def test_real_visit_writes_the_real_key(make_page, base_url):
+    """The control for test_simulated_visits_write_only_the_sim_key."""
+    page, errors, _ = helpers.open_release(make_page, base_url, clock=IN_WINDOW)
+    assert helpers.release_state(page)["key"] == LAST_SEEN_KEY
+    assert helpers.record_seen(page) is True
+    assert page.evaluate(STORED, LAST_SEEN_KEY) == "1.1" and page.evaluate(STORED, SIM_KEY) is None
+    assert errors == []
+
+
+# Makes the page's own window.localStorage read throw, as site data blocked by policy does (U3).
+BLOCK_STORAGE = """Object.defineProperty(window, 'localStorage', { configurable: true,
+  get() { throw new DOMException('blocked', 'SecurityError'); } });"""
+
+
+def test_blocked_local_storage_boots_and_applies_rule_4(make_page, base_url):
+    """AC13's page leg: no errors, no lastSeen, rule 4's set, and recordSeen writes nothing."""
+    page, errors, _ = helpers.open_release(make_page, base_url, clock=IN_WINDOW,
+                                           before_goto=lambda p: p.add_init_script(BLOCK_STORAGE))
+    # The planted precondition: the page's storage read really throws.
+    assert page.evaluate("() => { try { localStorage; return 'readable'; } catch { return 'threw'; } }") == "threw"
+    state = helpers.release_state(page)
+    assert errors == [] and state["lastSeen"] is None and state["newIds"] == TRAVEL_DESKS
+    assert helpers.record_seen(page) is False
+
+
+SKIPS_AND_DUPLICATES = """window.WEAVE_PANELS = { release: { version: '1.1', date: '2026-10-09' }, newsWindowDays: 7,
+  panels: [
+    { id: 'travel', name: 'Travel', status: 'live', since: '1.1', sample: null },
+    { id: 'ghost', name: ' ', status: 'live', since: '1.1', sample: null },
+    { id: 'travel', name: 'Travel again', status: 'live', since: '1.1', sample: null },
+    { id: 'old', name: 'Old', status: 'live', since: '1.0', sample: null },
+  ] };"""
+
+
+def test_skipped_and_duplicate_entries_are_never_candidates(make_page, base_url):
+    page, errors, warnings = helpers.open_release(make_page, base_url, panels_body=SKIPS_AND_DUPLICATES,
+                                                  clock=IN_WINDOW)
+    assert helpers.release_state(page)["newIds"] == ["travel"]
+    assert warnings == [] and errors == []
+
+
+BROKEN = {
+    "throws": "throw new Error('planted panels.js failure');",
+    "release-null": """window.WEAVE_PANELS = { release: null, newsWindowDays: 7, panels: [
+      { id: 'travel', name: 'Travel', status: 'live', since: '1.1', sample: null } ] };""",
+}
+
+
+@pytest.mark.parametrize("case", BROKEN, ids=list(BROKEN))
+def test_broken_panels_js_means_nothing_new(make_page, base_url, case):
+    """A missing or broken panels.js means nothing is new; release.js adds no error and the hero still settles."""
+    page, errors, warnings = helpers.open_release(make_page, base_url, panels_body=BROKEN[case], clock=IN_WINDOW)
+    state = helpers.release_state(page)
+    assert (state["newIds"], state["taggedIds"]) == ([], [])
+    assert warnings == []
+    # The one error a throwing panels.js may cause is its own throw (and E1's load message, which it reports).
+    pageerrors = [e for e in errors if e.startswith("pageerror:")]
+    assert [e for e in pageerrors if "planted panels.js failure" not in e] == [], errors
+    assert helpers.hero_result(page)[0] == "still"
+
+
+def test_shipped_panels_boot_cleanly_on_both_paths(make_page, base_url):
+    """AC17: no errors or release warnings on either path, release.js loads, the still path never requests Three."""
+    requested = []
+    page, errors, warnings = helpers.open_release(
+        make_page, base_url, clock=FIXED_INSTANT, before_goto=lambda p: p.on("request", lambda r: requested.append(r.url)))
+    page.wait_for_load_state("networkidle")
+    keys = page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
+    assert errors == [] and warnings == []
+    assert any(url.endswith("/public/js/release.js") for url in requested), requested
+    assert not [url for url in requested if "three.module" in url], requested
+    assert keys == sorted(HOOK_KEYS) and helpers.release_state(page)["newIds"] == []
+
+    live_warnings = []
+
+    def listen(p):
+        p.on("console", lambda msg: live_warnings.append(msg.text)
+             if msg.type == "warning" and msg.text.startswith(helpers.RELEASE_WARNING_PREFIX) else None)
+
+    page, errors = helpers.open_live(make_page, base_url, before_goto=listen, clock=FIXED_INSTANT)
+    keys = page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
+    assert errors == [] and live_warnings == [] and keys == sorted(HOOK_KEYS)
+
+
+def test_release_js_imports_nothing():
+    """AC17, a source property on purpose: with comments stripped, release.js has no import of any kind."""
+    text = (WEAVE / "public" / "js" / "release.js").read_text(encoding="utf-8")
+    code = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", text, flags=re.S))
+    assert "export function newPanelIds" in code
+    assert not re.search(r"^\s*import\b", code, re.M) and "import(" not in code
