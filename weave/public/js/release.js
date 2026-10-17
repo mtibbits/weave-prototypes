@@ -30,8 +30,9 @@ export function isDate(s) {
 }
 
 // Whole UTC day numbers, so daylight saving never enters the arithmetic. A date string is never parsed by Date
-// itself: that reads it as UTC midnight, the evening before in EDT.
+// itself: that reads it as UTC midnight, the evening before in EDT. NaN for a non-string.
 export function dayNumber(s) {
+  if (typeof s !== 'string') return NaN;
   const [y, m, d] = s.split('-').map(Number);
   return Date.UTC(y, m - 1, d) / DAY_MS;
 }
@@ -129,6 +130,9 @@ export function releaseWarnings(input) {
   if (isObject(release)) {
     if (release.version !== undefined && !isVersion(release.version)) warnings.push(W_VERSION);
     if (release.date !== undefined && !isDate(release.date)) warnings.push(W_DATE);
+  } else if (release !== undefined) {
+    // A present release that is no object (null, '1.1', an array) has neither field.
+    warnings.push(W_VERSION, W_DATE);
   }
   if (windowDays !== undefined && !goodWindow(windowDays)) warnings.push(W_WINDOW);
   for (const panel of candidates(panels)) {

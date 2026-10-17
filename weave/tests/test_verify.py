@@ -270,8 +270,10 @@ def test_base_mode_checks_the_states_only(verify):
 
 def test_page_url_joins_a_sub_path(verify):
     assert verify.page_url("http://h:1") == f"http://h:1/?now={FIXED_DATE}"
-    assert verify.page_url("https://u/weave", "?q=0") == f"https://u/weave/?q=0&now={FIXED_DATE}"
-    assert verify.page_url("https://u/weave/", "q=0") == f"https://u/weave/?q=0&now={FIXED_DATE}"
+    assert verify.page_url("https://u/weave", "?q=0") == f"https://u/weave/?now={FIXED_DATE}&q=0"
+    assert verify.page_url("https://u/weave/", "q=0") == f"https://u/weave/?now={FIXED_DATE}&q=0"
+    # A caller's own now= comes second, so URLSearchParams.get still reads the tool's date.
+    assert verify.page_url("http://h:1", "now=2026-10-10") == f"http://h:1/?now={FIXED_DATE}&now=2026-10-10"
 
 
 @pytest.mark.parametrize("value", ["ftp://x", "weave/"])

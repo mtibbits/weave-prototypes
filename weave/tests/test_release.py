@@ -220,6 +220,7 @@ def test_day_number_ignores_daylight_saving(js):
              ("2026-11-01", "2026-11-02")]
     got = run(js, f"return {json.dumps(pairs)}.map(([a, b]) => R.dayNumber(b) - R.dayNumber(a));")
     assert got == [1, 1, 1, 1]
+    assert run(js, "return [undefined, null, 7].map((s) => Number.isNaN(R.dayNumber(s)));") == [True] * 3
 
 
 def test_local_date_pads_the_local_calendar_day(js):
@@ -309,7 +310,9 @@ def test_gap_with_promotions_in_1_2(js):
         const settings = {{ panels, release: {V12}, windowDays: 7 }};
         const newIds = R.newPanelIds({{ ...settings, lastSeen: '1.0', today: '2026-10-10' }});
         return {{ newIds, tagged: R.taggedPanelIds({{ ...settings, today: '2026-10-10' }}),
-                  heading: R.cardHeading({{ panels, newIds, release: settings.release }}) }};""")
+                  heading: R.cardHeading({{ panels, newIds, release: settings.release }}),
+                  from11: R.newPanelIds({{ ...settings, lastSeen: '1.1', today: '2026-10-10' }}) }};""")
+    assert got.pop("from11") == ["promotions"]
     assert got == {"newIds": ["promotions", "travel", "desks"], "tagged": ["promotions"],
                    "heading": {"kind": "since-last-visit", "text": "New since your last visit",
                                "groups": [{"version": "1.1", "names": ["Travel", "Desk Allocation"]},
@@ -415,7 +418,9 @@ def test_rules_never_throw_on_garbage(js):
                        { ...SAMPLE, ...day, release: null }, { ...SAMPLE, today: undefined },
                        { ...SAMPLE, ...day, panels: [null] }, null, undefined, 7];
         return cases.map((c) => [R.newPanelIds(c), R.taggedPanelIds(c), R.cardHeading(c), R.releaseWarnings(c)]);""")
-    assert got == [[[], [], None, []]] * 8
+    calm = [[], [], None, []]
+    # release: null is present and no object, so releaseWarnings names both fields (and still never throws).
+    assert got == [calm, calm, [[], [], None, [helpers.W_NEWS_VERSION, helpers.W_NEWS_DATE]]] + [calm] * 5
 
 
 def test_storage_helpers_never_throw(js):
@@ -458,6 +463,13 @@ def test_create_release_computes_the_sets_and_leaves_last_seen(js):
 
 def test_release_warnings_with_the_shipped_panels_are_empty(js):
     assert run(js, "return R.releaseWarnings(SAMPLE);") == []
+
+
+def test_a_release_that_is_no_object_warns_for_both_fields(js):
+    """Present but not an object (null, a version string, a number, an array) warns; absent stays silent."""
+    got = run(js, """return [null, '1.1', 7, ['1.1'], undefined].map((release) =>
+        R.releaseWarnings({ ...SAMPLE, release }));""")
+    assert got == [[helpers.W_NEWS_VERSION, helpers.W_NEWS_DATE]] * 4 + [[]]
 
 
 def test_release_warnings_and_create_release_never_throw(js):
@@ -581,19 +593,21 @@ def test_skipped_and_duplicate_entries_are_never_candidates(make_page, base_url)
 
 
 BROKEN = {
-    "throws": "throw new Error('planted panels.js failure');",
-    "release-null": """window.WEAVE_PANELS = { release: null, newsWindowDays: 7, panels: [
+    "throws": ("throw new Error('planted panels.js failure');", []),
+    "release-null": ("""window.WEAVE_PANELS = { release: null, newsWindowDays: 7, panels: [
       { id: 'travel', name: 'Travel', status: 'live', since: '1.1', sample: null } ] };""",
+                     [helpers.W_NEWS_VERSION, helpers.W_NEWS_DATE]),
 }
 
 
 @pytest.mark.parametrize("case", BROKEN, ids=list(BROKEN))
 def test_broken_panels_js_means_nothing_new(make_page, base_url, case):
     """A missing or broken panels.js means nothing is new; release.js adds no error and the hero still settles."""
-    page, errors, warnings = helpers.open_release(make_page, base_url, panels_body=BROKEN[case], clock=IN_WINDOW)
+    body, expected_warnings = BROKEN[case]
+    page, errors, warnings = helpers.open_release(make_page, base_url, panels_body=body, clock=IN_WINDOW)
     state = helpers.release_state(page)
     assert (state["newIds"], state["taggedIds"]) == ([], [])
-    assert warnings == []
+    assert warnings == expected_warnings
     # The one error a throwing panels.js may cause is its own throw (and E1's load message, which it reports).
     pageerrors = [e for e in errors if e.startswith("pageerror:")]
     assert [e for e in pageerrors if "planted panels.js failure" not in e] == [], errors

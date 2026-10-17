@@ -241,9 +241,10 @@ def frame_budget(baseline_ms):
 
 
 def page_url(base, query=""):
-    """The page at `base` (a site root or a sub-path, with or without its trailing slash), with `query` (a leading
-    '?' optional) and then NOW_QUERY."""
-    return base.rstrip("/") + "/?" + "&".join(part for part in (query.lstrip("?"), NOW_QUERY) if part)
+    """The page at `base` (a site root or a sub-path, with or without its trailing slash), with NOW_QUERY and then
+    `query` (a leading '?' optional). NOW_QUERY comes first because URLSearchParams.get keeps the first now=, as in
+    capture_still.py's RECIPE."""
+    return base.rstrip("/") + "/?" + "&".join(part for part in (NOW_QUERY, query.lstrip("?")) if part)
 
 
 def wait_settled(page):

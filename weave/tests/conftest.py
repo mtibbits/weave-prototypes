@@ -96,9 +96,10 @@ def page_factory(browser, contexts):
         else:
             instant = check_instant(clock, "make_page(clock=...)")
         ctx = (target_browser or browser).new_context(**{"viewport": {"width": 1440, "height": 900}, **context_args})
+        # Recorded before the pin, so a context whose pin Playwright rejects is still closed.
+        contexts.append(ctx)
         if instant is not None:
             ctx.clock.set_fixed_time(instant)
-        contexts.append(ctx)
         return ctx.new_page()
 
     return make
