@@ -7,6 +7,9 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / "tools"))
 import serve  # noqa: E402
+# weave/tools holds #12's fixed instant (D11), as Coalesce's conftest puts its tools/ on the path for serve.py.
+sys.path.insert(0, str(ROOT / "tools"))
+from fixed_clock import FIXED_DATE, FIXED_INSTANT  # noqa: E402
 from helpers import canvas_hashes, font_warnings, open_faces, open_paint  # noqa: E402
 
 GPU_ARGS = ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"]
