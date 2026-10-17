@@ -178,6 +178,27 @@ def test_pose_on_line_and_circle(js, curve, u):
     assert dot(r["z"], [0, 0, 1]) >= COS_1_DEG, r
 
 
+def test_pose_reads_the_returned_point_and_tangent(js):
+    """A curve may return fresh vectors and ignore the target, as Three's own callers allow (they read the return)."""
+    r = run(js, r"""
+        class Fresh extends THREE.Curve {
+          getPoint(t) { return V(-0.3 + 0.7 * t, -0.1 + 0.35 * t, 0); }
+          getTangent() { return V(0.7, 0.35, 0).normalize(); }
+        }
+        const c = new Fresh();
+        const scene = new THREE.Scene();
+        const n = N.createNeedle();
+        scene.add(n);
+        N.poseOnCurve(n, curves().circle, 0.3);         // leave the scratch tangent holding another curve's value
+        N.poseOnCurve(n, c, 0.8);
+        scene.updateMatrixWorld(true);
+        return { tip: n.getWorldPosition(new THREE.Vector3()).toArray(), point: c.getPointAt(0.8).toArray(),
+                 tangent: c.getTangentAt(0.8).toArray(), x: axis(n, 0).toArray() };
+    """)
+    assert close(r["tip"], r["point"]), r
+    assert dot(r["x"], r["tangent"]) <= ANTI, r
+
+
 @pytest.mark.parametrize("curve", ["line", "circle", "catmull"])
 def test_clamp_holds_the_ends(js, curve):
     r = run(js, f"""
@@ -223,10 +244,12 @@ def test_clamp_maps_non_finite_u_to_an_end(js):
         };
         const start = pose(0); const end = pose(1);
         return { errors, start, end, nan: pose(NaN), undef: pose(), text: pose('x'), minusInf: pose(-Infinity),
-                 plusInf: pose(Infinity) };
+                 plusInf: pose(Infinity), numeric: pose('0.5'), bool: pose(true), list: pose([0.7]), nil: pose(null),
+                 big: pose(1n), symbol: pose(Symbol('u')) };
     """)
     assert r["errors"] == []
-    for leg in ("nan", "undef", "text", "minusInf"):
+    # Non-numbers that JavaScript would coerce to a number (or throw on) still pose at the start, as the header says.
+    for leg in ("nan", "undef", "text", "minusInf", "numeric", "bool", "list", "nil", "big", "symbol"):
         assert r[leg] == r["start"], leg
     assert r["plusInf"] == r["end"]
 

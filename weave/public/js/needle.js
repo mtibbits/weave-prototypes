@@ -80,10 +80,11 @@ export function createNeedle({ threadColor = '#C9A227', tailLength = 0.12 } = {}
 
 export function poseOnCurve(needle, curve, u) {
   // Clamped here, never by Three (see the header): NaN and non-numbers pose at the start.
-  let t = Math.min(1, Math.max(0, u));
+  let t = typeof u === 'number' ? Math.min(1, Math.max(0, u)) : 0;
   if (Number.isNaN(t)) t = 0;
-  curve.getPointAt(t, needle.position);
-  curve.getTangentAt(t, _x).negate();                        // +X trails the tip
+  // Read the returned vectors: a curve may ignore the target, as Three's own callers allow.
+  needle.position.copy(curve.getPointAt(t, needle.position));
+  _x.copy(curve.getTangentAt(t, _x)).negate();               // +X trails the tip
   if (_x.lengthSq() === 0) return;                           // zero tangent: keep the last roll (D-g)
   _x.normalize();
   _up.set(0, 0, 1);                                          // world +Z, taken into the parent's space
