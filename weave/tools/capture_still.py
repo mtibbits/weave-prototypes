@@ -4,12 +4,12 @@ From the repo root, with the venv active:
 
   python weave/tools/capture_still.py [--which {home,help,all}] [--out DIR] [--query K=V]...
 
-Opens each target at ?pose=rest&frame=still in headless Chromium (1600 x 1000, scale 1, verify.py's GPU flags and
-clock rule), waits until the scene is live, the quilt has settled, the still has faded out and 2.5 s have passed
-since the first live frame with frames still advancing, then saves a JPEG at the first quality of a ladder whose file
-fits 250 KB. Writes weave/public/assets/<file> (or DIR/<file> with --out) only when every requested target was
-captured; a fallback to the still, a stopped loop or an over-budget file writes nothing and exits 1. --which help
-exits 2 until the Help page registers its target (#19). --out and --query are for tests.
+Opens each target at ?pose=rest&frame=still plus verify.NOW_QUERY (the clock rule's now=) in headless Chromium
+(1600 x 1000, scale 1, verify.py's GPU flags), waits until the scene is live, the quilt has settled, the still has
+faded out and 2.5 s have passed since the first live frame with frames still advancing, then saves a JPEG at the first
+quality of a ladder whose file fits 250 KB. Writes weave/public/assets/<file> (or DIR/<file> with --out) only when
+every requested target was captured; a fallback to the still, a stopped loop or an over-budget file writes nothing and
+exits 1. --which help exits 2 until the Help page registers its target (#19). --out and --query are for tests.
 
 The watchdog: __weave exposes no watchdog verdict, so the 2.5 s wall-time wait is a lower bound on the watchdog's
 2 s window only while frames take no more than 100 ms (its per-frame delta is capped); the state is read again after
@@ -42,7 +42,7 @@ verify = _load_verify()
 
 # name -> (page path served from weave/public, output file name). #19 adds help; #23 moves home's output.
 TARGETS = {"home": ("/index.html", "weave-still.jpg")}
-RECIPE = "pose=rest&frame=still"
+RECIPE = f"pose=rest&frame=still&{verify.NOW_QUERY}"
 VIEWPORT = {"width": 1600, "height": 1000}
 QUALITIES = (90, 85, 80, 75, 70, 65, 60)
 LIMIT = verify.BUDGETS["still_bytes"]
@@ -60,7 +60,8 @@ def query_pair(value):
 
 
 def target_url(base, path, queries):
-    """The target's page at the capture recipe, with each extra K=V pair appended in order."""
+    """The target's page at the capture recipe, with each extra K=V pair appended in order (a second now= loses:
+    URLSearchParams.get keeps the first)."""
     return f"{base}{path}?" + "&".join([RECIPE, *queries])
 
 
@@ -76,7 +77,7 @@ def build_parser():
 
 
 def open_context(browser):
-    """The recipe's context; verify.new_context pins the clock, so the clock rule has one home."""
+    """The recipe's context, from verify.new_context; the clock rule (verify.NOW_QUERY in RECIPE) has one home."""
     return verify.new_context(browser, viewport=VIEWPORT, device_scale_factor=1)
 
 

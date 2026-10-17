@@ -106,9 +106,32 @@ HOME = "/public/index.html"
 
 PANEL_WARNING_PREFIXES = ("WEAVE: panels.js ", "WEAVE: the live panel ")
 
+# The release rules' warnings (#12): their own family, disjoint from PANEL_WARNING_PREFIXES. Written out here, never
+# read from release.js, so a reworded warning fails the tests.
+RELEASE_WARNING_PREFIX = "WEAVE: news: "
+W_NEWS_VERSION = ("WEAVE: news: release.version in panels.js must be a version string such as '1.1', "
+                  "so no panel is new.")
+W_NEWS_DATE = "WEAVE: news: release.date in panels.js must be a real day written YYYY-MM-DD, so no panel is new."
+W_NEWS_WINDOW = "WEAVE: news: newsWindowDays in panels.js must be a whole number from 1 to 60, so no panel is new."
+W_NEWS_SINCE = ("WEAVE: news: the live panel '{id}' has a malformed since (write a string such as '1.1'), "
+                "so it is never new.")
+W_NEWS_NOW = "WEAVE: news: ?now= must be a real day written YYYY-MM-DD, so it is ignored and today is the local date."
+# The two lastSeen keys: real visits, and visits with ?now=, ?whatsnew or ?pose=rest.
+LAST_SEEN_KEY = "weave.lastSeenRelease"
+SIM_KEY = "weave.lastSeenRelease.sim"
+
 # --- Painting helpers (#6): console collection, font warnings, canvas hashing. ---
 
 FONT_WARNING_PREFIX = "WEAVE: the web font"
+
+
+def collect_warnings(page, prefixes, warnings=None):
+    """Record console warnings starting with `prefixes` (a str or tuple) into `warnings` (a new list if None);
+    returns it."""
+    warnings = [] if warnings is None else warnings
+    page.on("console", lambda msg: warnings.append(msg.text)
+            if msg.type == "warning" and msg.text.startswith(prefixes) else None)
+    return warnings
 
 
 def collect_console(page, messages=None):
@@ -255,8 +278,7 @@ def open_page(make_page, base_url, panels_body=None, warnings=None, **context_ar
     page = make_page(**context_args)
     errors = collect_errors(page)
     if warnings is not None:
-        page.on("console", lambda msg: warnings.append(msg.text)
-                if msg.type == "warning" and msg.text.startswith(PANEL_WARNING_PREFIXES) else None)
+        collect_warnings(page, PANEL_WARNING_PREFIXES, warnings)
     if panels_body is not None:
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     page.goto(base_url + HOME)
@@ -447,6 +469,52 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
     assert hero_result(page) == ["live", "ok"], errors
     page.locator("[data-hero]").scroll_into_view_if_needed()
     return page, errors
+
+
+# --- The release object (#12). ---
+
+# Synchronous on purpose: a returned Promise reads as truthy (Issue-9).
+RELEASE_READY = "() => !!document.querySelector('[data-hero]')?.__weaveRelease"
+RELEASE_STATE = "el => { const { recordSeen, ...state } = el.__weaveRelease; return state; }"
+# How far Date.now() moves across a 200 ms timer: about 200 on a real clock, 0 on a pinned one.
+CLOCK_ADVANCE = ("async () => { const a = Date.now(); await new Promise((r) => setTimeout(r, 200));"
+                 " return Date.now() - a; }")
+# A YYYY-MM-DD date literal in the 1900s or 2000s, for the tools' source guards.
+DATE_LITERAL_RE = r"(19|20)\d\d-[01]\d-[0-3]\d"
+
+
+def open_release(make_page, base_url, query="", panels_body=None, before_goto=None, **context_args):
+    """Open the WEAVE page at `query` and wait for stage.__weaveRelease; returns (page, errors, warnings).
+
+    `warnings` collects the release (WEAVE: news: ) console warnings. Reduced motion is the default, so the page takes
+    the still path and never loads Three. Routes `panels_body` and runs `before_goto(page)` as open_live does.
+    """
+    context_args.setdefault("reduced_motion", "reduce")
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    warnings = collect_warnings(page, RELEASE_WARNING_PREFIX)
+    if panels_body is not None:
+        page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
+    if before_goto is not None:
+        before_goto(page)
+    page.goto(base_url + HOME + query)
+    page.wait_for_function(RELEASE_READY)
+    return page, errors, warnings
+
+
+def release_keys(page):
+    """stage.__weaveRelease's own keys, sorted."""
+    return page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
+
+
+def release_state(page):
+    """stage.__weaveRelease without recordSeen: { today, force, key, lastSeen, newIds, taggedIds }."""
+    return page.eval_on_selector("[data-hero]", RELEASE_STATE)
+
+
+def record_seen(page):
+    """Calls stage.__weaveRelease.recordSeen() and returns what it returned."""
+    return page.eval_on_selector("[data-hero]", "el => el.__weaveRelease.recordSeen()")
 
 
 def live_quilt(make_page, base_url, **kwargs):

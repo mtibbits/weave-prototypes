@@ -6,6 +6,7 @@ import {
   setToggle, showLiveControls, showTooltip,
 } from './dom.js';
 import { decideMode, FrameWatchdog, readEnvironment } from './eligibility.js';
+import { createRelease } from './release.js';
 
 const LOAD_FAILED = 'WEAVE: the 3D quilt could not load, so the still image stays.';
 const WEBGL_FAILED = 'WEAVE: WebGL setup failed, so the still image stays.';
@@ -24,6 +25,12 @@ const toggle = document.querySelector('[data-toggle]');
 renderPanels(document.getElementById('panels'), result);
 // A broken file keeps the static label from the HTML.
 if (!result.error) setStageLabel(stage, result.panels);
+// #12's release object, on both paths before the hero starts: which panels are new for this visit, computed once
+// over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
+stage.__weaveRelease = createRelease({
+  now: hooks.now, whatsnew: hooks.whatsnew, rest: hooks.rest, raw: result.error ? null : window.WEAVE_PANELS,
+  panels: result.panels, date: new Date(), getStorage: () => window.localStorage, warn: (m) => console.warn(m),
+});
 
 async function startHero() {
   const decision = decideMode(readEnvironment(window));

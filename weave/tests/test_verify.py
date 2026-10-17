@@ -3,6 +3,7 @@ where the script finds and writes its files."""
 import ast
 import importlib.util
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -12,7 +13,7 @@ import pytest
 
 import conftest
 import helpers
-from conftest import GPU_ARGS
+from conftest import FIXED_DATE, GPU_ARGS
 
 WEAVE = Path(__file__).resolve().parents[1]
 REPO = WEAVE.parent
@@ -24,6 +25,14 @@ STATE_SHOTS = {"quilt": "01-quilt.png", "hover": "02-hover.png", "tiles": "03-ti
                "still_reduced_motion": "08-still-reduced-motion.png", "still_watchdog": "09-still-watchdog.png",
                "phone": "10-phone.png", "full_page": "11-full-page.png"}
 CHECKS = (*STATE_SHOTS, "labels")
+CAPTURE = WEAVE / "tools" / "capture_still.py"
+
+
+def load_verify():
+    spec = importlib.util.spec_from_file_location("weave_verify", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -31,10 +40,7 @@ def verify():
     """verify.py loaded from its path, with sys.path restored afterwards (the script appends the root tools/)."""
     saved = list(sys.path)
     try:
-        spec = importlib.util.spec_from_file_location("weave_verify", SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        yield module
+        yield load_verify()
     finally:
         sys.path[:] = saved
 
@@ -161,16 +167,64 @@ def test_paths_resolve_from_the_scripts_location(verify):
     assert "sys.path.append(" in text and "sys.path.insert" not in text
 
 
-def test_fixed_clock_ignores_the_environment(verify, monkeypatch):
-    monkeypatch.setenv("WEAVE_TEST_CLOCK", "2026-01-01T00:00:00")
-    fixed_clock = WEAVE / "tools" / "fixed_clock.py"
-    if fixed_clock.is_file():
-        spec = importlib.util.spec_from_file_location("fixed_clock_probe", fixed_clock)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        assert verify.fixed_instant() == module.FIXED_INSTANT
-    else:
-        assert verify.fixed_instant() is None
+def test_now_date_comes_from_the_fixed_instant(monkeypatch):
+    """The run's clock variable, set before verify.py loads, changes nothing: the date is FIXED_INSTANT's."""
+    monkeypatch.setenv(conftest.CLOCK_ENV, "2026-01-01T00:00:00")
+    saved = list(sys.path)
+    try:
+        verify = load_verify()
+    finally:
+        sys.path[:] = saved
+    assert verify.NOW_DATE == FIXED_DATE and verify.NOW_QUERY == f"now={FIXED_DATE}"
+    assert hasattr(verify, "fixed_instant") is False
+
+
+def code_nodes(tree):
+    """The AST nodes of `tree` outside docstrings (the first statement of the module, class and function bodies)."""
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
+                    and isinstance(first.value.value, str):
+                docstrings.add(id(first.value))
+    return [node for node in ast.walk(tree) if id(node) not in docstrings]
+
+
+def clock_findings(text):
+    """(clock pins or installs, strings naming the run's clock variable, every code string) in Python source."""
+    nodes = code_nodes(ast.parse(text))
+    pins = [ast.unparse(n) for n in nodes if isinstance(n, ast.Attribute) and (n.attr == "set_fixed_time" or (
+        n.attr == "install" and isinstance(n.value, ast.Attribute) and n.value.attr == "clock"))]
+    strings = [n.value for n in nodes if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    return pins, [s for s in strings if conftest.CLOCK_ENV in s], strings
+
+
+def test_every_verify_navigation_goes_through_page_url():
+    """Every page.goto in verify.py opens a page_url(...), so every page carries now= (the guard cannot empty)."""
+    calls = [node for node in ast.walk(ast.parse(SCRIPT.read_text(encoding="utf-8")))
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "goto"]
+    assert len(calls) >= 4, len(calls)
+    for call in calls:
+        first = call.args[0]
+        assert isinstance(first, ast.Call) and isinstance(first.func, ast.Name) and first.func.id == "page_url", \
+            ast.unparse(call)
+
+
+@pytest.mark.parametrize("path", [SCRIPT, CAPTURE], ids=["verify", "capture_still"])
+def test_tools_never_touch_the_clock_or_the_variable(path):
+    """In code (docstrings may describe them): no clock pin or install, and no string naming the run's variable."""
+    pins, named, strings = clock_findings(path.read_text(encoding="utf-8"))
+    assert pins == [] and named == [] and len(strings) > 5
+    if path == SCRIPT:
+        assert [s for s in strings if re.search(helpers.DATE_LITERAL_RE, s)] == []
+
+
+def test_the_clock_guard_sees_code():
+    """The planted positive for test_tools_never_touch_the_clock_or_the_variable: a pin and the name, in code."""
+    planted = SCRIPT.read_text(encoding="utf-8") + f"\ncontext.clock.set_fixed_time(NAME)\nNAME = {conftest.CLOCK_ENV!r}\n"
+    pins, named, _ = clock_findings(planted)
+    assert pins == ["context.clock.set_fixed_time"] and named == [conftest.CLOCK_ENV]
 
 
 # --- #11: the state checks and their shots, --base, the run directory and the git stamp. ---
@@ -215,9 +269,11 @@ def test_base_mode_checks_the_states_only(verify):
 
 
 def test_page_url_joins_a_sub_path(verify):
-    assert verify.page_url("http://h:1") == "http://h:1/"
-    assert verify.page_url("https://u/weave", "?q=0") == "https://u/weave/?q=0"
-    assert verify.page_url("https://u/weave/", "?q=0") == "https://u/weave/?q=0"
+    assert verify.page_url("http://h:1") == f"http://h:1/?now={FIXED_DATE}"
+    assert verify.page_url("https://u/weave", "?q=0") == f"https://u/weave/?now={FIXED_DATE}&q=0"
+    assert verify.page_url("https://u/weave/", "q=0") == f"https://u/weave/?now={FIXED_DATE}&q=0"
+    # A caller's own now= comes second, so URLSearchParams.get still reads the tool's date.
+    assert verify.page_url("http://h:1", "now=2026-10-10") == f"http://h:1/?now={FIXED_DATE}&now=2026-10-10"
 
 
 @pytest.mark.parametrize("value", ["ftp://x", "weave/"])
@@ -361,7 +417,6 @@ def test_a_row_error_stays_in_its_row(verify, monkeypatch, tmp_path):
     def no_launch():
         raise RuntimeError("no WebGL-off browser")
 
-    monkeypatch.setattr(verify, "fixed_instant", lambda: None)
     checks, shots = verify.run_states("http://127.0.0.1:1/", tmp_path, BrokenBrowser(), no_launch)
     assert sorted(checks) == sorted(CHECKS) and shots == {}
     assert not any(entry["ok"] for entry in checks.values()), checks
@@ -411,3 +466,20 @@ def test_still_shown_rejects_a_live_stage(verify, make_page, base_url):
     page, _ = helpers.open_live(make_page, base_url)
     result = verify.still_shown(page)
     assert result["ok"] is False and "is-live" in result["detail"], result
+
+
+def test_tool_pages_keep_the_timeline_and_sit_outside_every_window(verify, browser, base_url):
+    """A tool's page: the real clock (the timeline and the transfer are measurable) at FIXED_INSTANT's date."""
+    context = verify.new_context(browser, viewport=verify.DESKTOP)
+    try:
+        page = context.new_page()
+        page.goto(verify.page_url(f"{base_url}/public", "?nowatchdog"))
+        assert verify.settle(page) == ["live", "ok"]
+        page.wait_for_function("performance.getEntriesByName('weave:first-live-frame').length === 1")
+        assert page.evaluate(verify.TRANSFER) > 0
+        state = helpers.release_state(page)
+        assert (state["today"], state["newIds"], state["key"]) == (FIXED_DATE, [], helpers.SIM_KEY)
+        advanced = page.evaluate(helpers.CLOCK_ADVANCE)
+        assert advanced >= 150, advanced
+    finally:
+        context.close()

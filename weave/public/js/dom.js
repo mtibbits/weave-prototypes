@@ -155,7 +155,8 @@ export function showLiveControls(controls, buttons, live) {
 }
 
 // The page's URL hooks, read once at start: ?nowatchdog, ?watchdogLimitMs=<ms> (Coalesce's form: an absent key
-// keeps 45, never Number(null) === 0), ?pose=rest and ?frame=still.
+// keeps 45, never Number(null) === 0), ?pose=rest, ?frame=still, and #12's test-only ?now=YYYY-MM-DD (the raw value,
+// or null when absent; release.js checks it) and ?whatsnew (present means on, whatever its value).
 export function readHooks(search) {
   const params = new URLSearchParams(search);
   return {
@@ -163,6 +164,8 @@ export function readHooks(search) {
     limitMs: params.has('watchdogLimitMs') ? Number(params.get('watchdogLimitMs')) : 45,
     rest: params.get('pose') === 'rest',
     still: params.get('frame') === 'still',
+    now: params.has('now') ? params.get('now') : null,
+    whatsnew: params.has('whatsnew'),
   };
 }
 
