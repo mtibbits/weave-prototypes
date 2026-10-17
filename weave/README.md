@@ -74,6 +74,18 @@ On a plain load the quilt plays a short intro before it settles, so a test that 
 
 The tests drive headless Chromium with Playwright. The desktop hero tests need it to report WebGL and a mouse (hover). That is verified on Windows with the GPU flags in `tests/conftest.py`. Elsewhere, if the desktop hero tests fail, suspect those flags before the page code.
 
+## The fixed test clock
+
+The tests never depend on the calendar. `FIXED_INSTANT`, noon on 1 January 2000, is defined once, in `weave/tools/fixed_clock.py`, with `FIXED_DATE` worked out from it; no other file writes it. It is before every release, so no release's news window contains it. Every browser context the shared fixture makes (`make_page` in `tests/conftest.py`) has its clock pinned to it before its first page, so the page's `new Date()` reads that instant and `Date.now()` stands still.
+
+A test that needs another moment passes `make_page(clock="2026-10-10T09:00:00")`, and one that needs the real clock passes `make_page(clock=None)`. Release tests always pin their own instant or use `?now=`. To run the whole suite at another moment (#16 runs it inside the sample release's window), set `WEAVE_TEST_CLOCK` to a full local date-time such as `2026-10-10T09:00:00`, or one with an offset, never a bare date: Playwright reads a bare date as UTC midnight, the evening before in EDT. A bad value, a bare date included, fails the run with a message naming the variable instead of falling back, and `make_page(clock=...)` refuses one the same way.
+
+One clock times the page: animation advances on the `requestAnimationFrame` timestamp's dt, and timeouts and watchdogs use timers or `performance.now()`, so nothing on the page is timed by `Date`, which the pin stops. Under the pinned clock `requestAnimationFrame`, timers and `performance.now()` keep running, but `performance.now()` has its own origin and the performance timeline is empty: no marks, no resource entries. A test that reads the timeline (such as the first-live-frame mark) passes `clock=None` and adds `now=` to keep the release rules off the calendar.
+
+The page has two test-only parameters for the release rules. `?now=YYYY-MM-DD` sets the day the rules see (an invalid value is ignored with a console warning, and today stays the local date), and `?whatsnew` shows the current release's panels as new whatever was seen before. A visit with either of them, or with `?pose=rest` (the capture and test pose), stores what it saw under `weave.lastSeenRelease.sim` instead of `weave.lastSeenRelease`, so a demo link never changes what a real visit sees.
+
+A tool that loads `/weave/` outside the fixture (`verify.py`, `capture_still.py`, and any later one) never pins the browser clock, because the pin empties the performance timeline the tool measures with; it opens every page with `now=` set to `FIXED_INSTANT`'s date, worked out from `fixed_clock.py`, and ignores `WEAVE_TEST_CLOCK`, so a value left set in a shell can never move a still or a budget run into a release window.
+
 ## Editing `panels.js`
 
 `public/panels.js` is the one file to edit to change the panels the page lists and the quilt draws. Each entry in its `panels` list has:
@@ -99,7 +111,7 @@ Phones, reduced motion and any browser where the 3D scene can't run show `public
 python weave/tools/capture_still.py
 ```
 
-It opens the page at `?pose=rest&frame=still` in headless Chromium and waits until the quilt is live and settled, the still has faded out and the frame watchdog has had time to rule. Then it saves the JPEG at the first quality, from 90 down to 60, whose file fits 250 KB. If the scene falls back to the still, or no quality fits, it writes nothing and exits 1. `--which home|help|all` picks the target: today only `home` (this page) is registered, and `help` arrives with the Help page, so until then `--which help` exits 2 and names it. The default, `all`, captures every registered target. `--out DIR` and `--query K=V` are for tests: they write somewhere else and add to the page's query.
+It opens the page at `?pose=rest&frame=still&now=…` in headless Chromium (the `now=` is `FIXED_INSTANT`'s date, as The fixed test clock says) and waits until the quilt is live and settled, the still has faded out and the frame watchdog has had time to rule. Then it saves the JPEG at the first quality, from 90 down to 60, whose file fits 250 KB. If the scene falls back to the still, or no quality fits, it writes nothing and exits 1. `--which home|help|all` picks the target: today only `home` (this page) is registered, and `help` arrives with the Help page, so until then `--which help` exits 2 and names it. The default, `all`, captures every registered target. `--out DIR` and `--query K=V` are for tests: they write somewhere else and add to the page's query.
 
 The still is a snapshot, so it goes stale whenever `panels.js` or the scene changes, and stays stale until someone recaptures it. Every command in this section and the next runs from the repo root.
 

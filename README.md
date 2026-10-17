@@ -17,7 +17,8 @@ blazeahead/public/            the blazeAhead site, served at /blazeahead/
 weave/public/                 the WEAVE site, served at /weave/
 weave/dev/                    dev-only pages (faces.html); never published
 weave/tests/                  WEAVE's tests (pytest + Playwright)
-weave/tools/                  verify.py and capture_still.py: WEAVE's budget and state check, and the still capture
+weave/tools/                  verify.py and capture_still.py: WEAVE's budget and state check, and the still capture;
+                              fixed_clock.py: the tests' fixed instant
 weave/README.md               WEAVE's own preview and test steps
 weave/docs/superpowers/       WEAVE design notes
 tools/build_site.py           assembles _site/ from the folders above

@@ -78,6 +78,7 @@ def test_weave_readme_tests_says_how_to_run_verify():
 def test_root_readme_layout_lists_weave_tools():
     layout = re.search(r"```(.*?)```", section(REPO / "README.md", "Layout"), re.S).group(1)
     assert "weave/tools/" in layout and "verify.py" in layout and "capture_still.py" in layout
+    assert "fixed_clock.py" in layout
 
 
 def test_spec_lists_the_mode_hooks():
@@ -196,4 +197,32 @@ def test_spec_names_the_capture_and_the_state_run():
     testing = re.search(r"^## 10\..*?(?=^## 11\.)", spec, re.M | re.S).group(0)
     assert "--base" in testing
     tree = re.search(r"^## 3\..*?```(.*?)```", spec, re.M | re.S).group(1)
-    assert "capture_still.py" in tree
+    assert "capture_still.py" in tree and "fixed_clock.py" in tree
+
+
+# --- #12: the fixed test clock and the release hooks. ---
+
+CLOCK = "The fixed test clock"
+
+
+def test_weave_readme_has_the_fixed_clock_section():
+    readme = WEAVE / "README.md"
+    headings = re.findall(r"^## (.+?)\s*$", readme.read_text(encoding="utf-8"), re.M)
+    assert CLOCK in headings and headings.index("Tests") < headings.index(CLOCK) < headings.index(EDITING), headings
+    clock = section(readme, CLOCK)
+    for phrase in ("FIXED_INSTANT", "weave/tools/fixed_clock.py", "?now=YYYY-MM-DD", "?whatsnew",
+                   "weave.lastSeenRelease.sim", "?pose=rest", "performance.now()"):
+        assert phrase in clock, phrase
+    said = sentences(clock)
+    # The claims, each in one sentence: the variable and its format; the one-clock rule; the opt-out; the tool rule.
+    assert any("WEAVE_TEST_CLOCK" in s and "bare date" in s for s in said), said
+    assert any("requestAnimationFrame" in s and "Date" in s for s in said), said
+    assert any(("clock=None" in s or "make_page(clock=" in s) and "None" in s for s in said), said
+    assert any("tool" in s and "now=" in s and "WEAVE_TEST_CLOCK" in s for s in said), said
+
+
+def test_spec_lists_the_release_hooks():
+    spec = (WEAVE / "docs" / "superpowers" / "specs" / "2026-10-09-weave-v0-design.md").read_text(encoding="utf-8")
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
+    for phrase in ("?now=", "?whatsnew", "__weaveRelease", "recordSeen", "weave.lastSeenRelease.sim"):
+        assert phrase in hooks, phrase

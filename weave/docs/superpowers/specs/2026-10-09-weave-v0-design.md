@@ -48,7 +48,8 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
     ├── public/                   served at /weave/
     ├── dev/                      dev-only review pages (faces.html); never published
     ├── tests/                    pytest + Playwright
-    ├── tools/                    verify.py and capture_still.py: the budget and state check, and the still capture
+    ├── tools/                    verify.py and capture_still.py: the budget and state check, and the still capture;
+    │                             fixed_clock.py: the tests' fixed instant (#12)
     └── docs/superpowers/         this spec and the plan
 ```
 
@@ -176,8 +177,15 @@ All motion is springs toward per-block targets plus a few scripted timelines.
 These ship on the public page; the tests, the capture tools and the sibling epics use them.
 - `?pose=rest` holds the quilt at rest (no sway, the pointer ignored); the loop and the watchdog keep running.
 - `?frame=still` shows only the stage, filling the viewport. With `?pose=rest` it is the capture recipe, at
-  1600 × 1000 and a device pixel ratio of 1.
+  1600 × 1000 and a device pixel ratio of 1; the recipe also carries `now=` set to the tests' fixed date (#12).
 - `?nowatchdog` turns the frame watchdog off; `?watchdogLimitMs=N` sets its limit (an absent key keeps 45).
+- `?now=YYYY-MM-DD` (test-only, #12) sets the day the release rules see; an invalid value is ignored with a console
+  warning and is never written into the page. `?whatsnew` (test-only) shows the current release's panels as new. A
+  visit with `?now=`, `?whatsnew` or `?pose=rest` keeps its lastSeen under `weave.lastSeenRelease.sim`, never the real
+  visit's `weave.lastSeenRelease`.
+- `stage.__weaveRelease` on the `[data-hero]` element, on both paths, set before the hero starts (#12): `today`,
+  `force`, `key`, `lastSeen`, `newIds`, `taggedIds` and `recordSeen()`, the only writer of lastSeen (never before the
+  release date; #15 decides when to call it).
 - `stage.__weave` on the `[data-hero]` element: `mode`, `order`, `slots`, `clock`, `stop(reason)` and `snapshot()`
   (the scene's world-space geometry as JSON-safe arrays). `order` and `slots` list the slots, so they follow a
   drag (#9). `lastDt`, `project([x, y, z])`, `fades()` (each faded part's `{ opacity, visible }`: the sashing, rod,
