@@ -7,14 +7,13 @@ import re
 import struct
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 import conftest
 import helpers
-from conftest import FIXED_INSTANT, GPU_ARGS
+from conftest import FIXED_DATE, GPU_ARGS
 
 WEAVE = Path(__file__).resolve().parents[1]
 REPO = WEAVE.parent
@@ -26,8 +25,6 @@ STATE_SHOTS = {"quilt": "01-quilt.png", "hover": "02-hover.png", "tiles": "03-ti
                "still_reduced_motion": "08-still-reduced-motion.png", "still_watchdog": "09-still-watchdog.png",
                "phone": "10-phone.png", "full_page": "11-full-page.png"}
 CHECKS = (*STATE_SHOTS, "labels")
-# The fixed instant's date, worked out here as the tools must: never spelled.
-D = datetime.fromisoformat(FIXED_INSTANT).date().isoformat()
 CAPTURE = WEAVE / "tools" / "capture_still.py"
 
 
@@ -178,7 +175,7 @@ def test_now_date_comes_from_the_fixed_instant(monkeypatch):
         verify = load_verify()
     finally:
         sys.path[:] = saved
-    assert verify.NOW_DATE == D and verify.NOW_QUERY == f"now={D}"
+    assert verify.NOW_DATE == FIXED_DATE and verify.NOW_QUERY == f"now={FIXED_DATE}"
     assert hasattr(verify, "fixed_instant") is False
 
 
@@ -220,7 +217,7 @@ def test_tools_never_touch_the_clock_or_the_variable(path):
     pins, named, strings = clock_findings(path.read_text(encoding="utf-8"))
     assert pins == [] and named == [] and len(strings) > 5
     if path == SCRIPT:
-        assert [s for s in strings if re.search(r"(19|20)\d\d-[01]\d-[0-3]\d", s)] == []
+        assert [s for s in strings if re.search(helpers.DATE_LITERAL_RE, s)] == []
 
 
 def test_the_clock_guard_sees_code():
@@ -272,9 +269,9 @@ def test_base_mode_checks_the_states_only(verify):
 
 
 def test_page_url_joins_a_sub_path(verify):
-    assert verify.page_url("http://h:1") == f"http://h:1/?now={D}"
-    assert verify.page_url("https://u/weave", "?q=0") == f"https://u/weave/?q=0&now={D}"
-    assert verify.page_url("https://u/weave/", "q=0") == f"https://u/weave/?q=0&now={D}"
+    assert verify.page_url("http://h:1") == f"http://h:1/?now={FIXED_DATE}"
+    assert verify.page_url("https://u/weave", "?q=0") == f"https://u/weave/?q=0&now={FIXED_DATE}"
+    assert verify.page_url("https://u/weave/", "q=0") == f"https://u/weave/?q=0&now={FIXED_DATE}"
 
 
 @pytest.mark.parametrize("value", ["ftp://x", "weave/"])
@@ -478,10 +475,9 @@ def test_tool_pages_keep_the_timeline_and_sit_outside_every_window(verify, brows
         assert verify.settle(page) == ["live", "ok"]
         page.wait_for_function("performance.getEntriesByName('weave:first-live-frame').length === 1")
         assert page.evaluate(verify.TRANSFER) > 0
-        state = page.eval_on_selector("[data-hero]", helpers.RELEASE_STATE)
-        assert (state["today"], state["newIds"], state["key"]) == (D, [], helpers.SIM_KEY)
-        advanced = page.evaluate("async () => { const a = Date.now(); await new Promise((r) => setTimeout(r, 200));"
-                                 " return Date.now() - a; }")
+        state = helpers.release_state(page)
+        assert (state["today"], state["newIds"], state["key"]) == (FIXED_DATE, [], helpers.SIM_KEY)
+        advanced = page.evaluate(helpers.CLOCK_ADVANCE)
         assert advanced >= 150, advanced
     finally:
         context.close()

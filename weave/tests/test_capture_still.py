@@ -5,21 +5,18 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 import conftest
 import helpers
-from conftest import FIXED_INSTANT
+from conftest import FIXED_DATE
 
 WEAVE = Path(__file__).resolve().parents[1]
 REPO = WEAVE.parent
 SCRIPT = WEAVE / "tools" / "capture_still.py"
 STILL = WEAVE / "public" / "assets" / "weave-still.jpg"
-# The fixed instant's date, worked out here as the tools must: never spelled.
-D = datetime.fromisoformat(FIXED_INSTANT).date().isoformat()
 
 
 @pytest.fixture
@@ -43,7 +40,7 @@ def run_script(*args, cwd, timeout=120):
 def test_targets_are_home_only_until_19(capture):
     """An equality pin: #19's help registration must update it."""
     assert capture.TARGETS == {"home": ("/index.html", "weave-still.jpg")}
-    assert capture.RECIPE == f"pose=rest&frame=still&now={D}"
+    assert capture.RECIPE == f"pose=rest&frame=still&now={FIXED_DATE}"
     assert capture.DEFAULT_OUT == WEAVE / "public" / "assets"
 
 
@@ -56,8 +53,9 @@ def test_capture_shares_verifys_settings(capture):
 
 def test_target_url_appends_queries_after_the_recipe(capture):
     url = capture.target_url("http://h:1", "/index.html", ["watchdogLimitMs=0", "nowatchdog="])
-    assert url == f"http://h:1/index.html?pose=rest&frame=still&now={D}&watchdogLimitMs=0&nowatchdog="
-    assert capture.target_url("http://h:1", "/index.html", []) == f"http://h:1/index.html?pose=rest&frame=still&now={D}"
+    assert url == f"http://h:1/index.html?pose=rest&frame=still&now={FIXED_DATE}&watchdogLimitMs=0&nowatchdog="
+    assert capture.target_url("http://h:1", "/index.html", []) == (
+        f"http://h:1/index.html?pose=rest&frame=still&now={FIXED_DATE}")
 
 
 @pytest.mark.parametrize("value", ["x", "=1", "a=1&b=2", "a=b#c", "1a=2"])
@@ -142,7 +140,7 @@ def test_open_context_leaves_the_clock_alone(capture, monkeypatch):
 def test_capture_holds_no_date_literal():
     """A source grep on purpose: the AC (the clock rule lives in verify.NOW_QUERY alone) is a property of the text."""
     text = SCRIPT.read_text(encoding="utf-8")
-    assert not re.search(r"(19|20)\d\d-[01]\d-[0-3]\d", text)
+    assert not re.search(helpers.DATE_LITERAL_RE, text)
     assert "WEAVE_TEST_CLOCK" not in text
 
 

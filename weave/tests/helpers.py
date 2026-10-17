@@ -125,6 +125,15 @@ SIM_KEY = "weave.lastSeenRelease.sim"
 FONT_WARNING_PREFIX = "WEAVE: the web font"
 
 
+def collect_warnings(page, prefixes, warnings=None):
+    """Record console warnings starting with `prefixes` (a str or tuple) into `warnings` (a new list if None);
+    returns it."""
+    warnings = [] if warnings is None else warnings
+    page.on("console", lambda msg: warnings.append(msg.text)
+            if msg.type == "warning" and msg.text.startswith(prefixes) else None)
+    return warnings
+
+
 def collect_console(page, messages=None):
     """Record every console message from now on as (type, text) into `messages` (a new list if None); returns it."""
     messages = [] if messages is None else messages
@@ -269,8 +278,7 @@ def open_page(make_page, base_url, panels_body=None, warnings=None, **context_ar
     page = make_page(**context_args)
     errors = collect_errors(page)
     if warnings is not None:
-        page.on("console", lambda msg: warnings.append(msg.text)
-                if msg.type == "warning" and msg.text.startswith(PANEL_WARNING_PREFIXES) else None)
+        collect_warnings(page, PANEL_WARNING_PREFIXES, warnings)
     if panels_body is not None:
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     page.goto(base_url + HOME)
@@ -468,6 +476,11 @@ def open_live(make_page, base_url, query="?nowatchdog", panels_body=None, before
 # Synchronous on purpose: a returned Promise reads as truthy (Issue-9).
 RELEASE_READY = "() => !!document.querySelector('[data-hero]')?.__weaveRelease"
 RELEASE_STATE = "el => { const { recordSeen, ...state } = el.__weaveRelease; return state; }"
+# How far Date.now() moves across a 200 ms timer: about 200 on a real clock, 0 on a pinned one.
+CLOCK_ADVANCE = ("async () => { const a = Date.now(); await new Promise((r) => setTimeout(r, 200));"
+                 " return Date.now() - a; }")
+# A YYYY-MM-DD date literal in the 1900s or 2000s, for the tools' source guards.
+DATE_LITERAL_RE = r"(19|20)\d\d-[01]\d-[0-3]\d"
 
 
 def open_release(make_page, base_url, query="", panels_body=None, before_goto=None, **context_args):
@@ -479,9 +492,7 @@ def open_release(make_page, base_url, query="", panels_body=None, before_goto=No
     context_args.setdefault("reduced_motion", "reduce")
     page = make_page(**context_args)
     errors = collect_errors(page)
-    warnings = []
-    page.on("console", lambda msg: warnings.append(msg.text)
-            if msg.type == "warning" and msg.text.startswith(RELEASE_WARNING_PREFIX) else None)
+    warnings = collect_warnings(page, RELEASE_WARNING_PREFIX)
     if panels_body is not None:
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     if before_goto is not None:
@@ -489,6 +500,11 @@ def open_release(make_page, base_url, query="", panels_body=None, before_goto=No
     page.goto(base_url + HOME + query)
     page.wait_for_function(RELEASE_READY)
     return page, errors, warnings
+
+
+def release_keys(page):
+    """stage.__weaveRelease's own keys, sorted."""
+    return page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
 
 
 def release_state(page):

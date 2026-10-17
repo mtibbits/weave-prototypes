@@ -51,7 +51,7 @@ def test_fixed_instant_has_one_home():
 # --- The default clock and its opt-outs. ---
 
 GOOD_INSTANTS = ["2026-10-10T09:00:00", "2026-10-10T09:00", "2026-10-08T21:00:00-04:00", "2026-10-10T09:00:00Z",
-                 "2026-10-10T09:00:00.250"]
+                 "2026-10-10T09:00:00.250", FIXED_INSTANT]
 BAD_INSTANTS = ["soon", "2026-10-09", "2026-10-09T09", "2026-02-30T09:00:00", "20261010T090000", "2026-10-10 09:00:00",
                 "", 1234]
 
@@ -59,10 +59,6 @@ BAD_INSTANTS = ["soon", "2026-10-09", "2026-10-09T09", "2026-02-30T09:00:00", "2
 @pytest.mark.parametrize("value", GOOD_INSTANTS)
 def test_check_instant_accepts_a_full_date_time(value):
     assert conftest.check_instant(value, "make_page(clock=...)") == value
-
-
-def test_check_instant_accepts_the_fixed_instant():
-    assert conftest.check_instant(FIXED_INSTANT, "make_page(clock=...)") == FIXED_INSTANT
 
 
 @pytest.mark.parametrize("value", BAD_INSTANTS)
@@ -113,8 +109,7 @@ def test_make_page_takes_another_instant(make_page, base_url):
 def test_real_clock_opt_out_runs(make_page, base_url):
     page = make_page(clock=None)
     page.goto(f"{base_url}/tests/blank.html")
-    advanced = page.evaluate("async () => { const a = Date.now(); await new Promise((r) => setTimeout(r, 200));"
-                             " return Date.now() - a; }")
+    advanced = page.evaluate(helpers.CLOCK_ADVANCE)
     assert advanced >= 150, advanced
 
 
@@ -172,6 +167,17 @@ PRELUDE = DEFAULTS_JS + r"""
       return { hook, warned, log: storage.log, data: storage.data };
     };
 """
+
+
+@pytest.fixture(scope="module")
+def js(browser, base_url):
+    """conftest's js, one blank page for the whole module: the rules keep no state, and a context per case is waste."""
+    contexts = []
+    page = conftest.page_factory(browser, contexts)()
+    page.goto(f"{base_url}/tests/blank.html")
+    yield lambda body: page.evaluate(f"async () => {{ {body} }}")
+    for ctx in contexts:
+        ctx.close()
 
 
 def run(js, body):
@@ -600,21 +606,17 @@ def test_shipped_panels_boot_cleanly_on_both_paths(make_page, base_url):
     page, errors, warnings = helpers.open_release(
         make_page, base_url, clock=FIXED_INSTANT, before_goto=lambda p: p.on("request", lambda r: requested.append(r.url)))
     page.wait_for_load_state("networkidle")
-    keys = page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
+    keys = helpers.release_keys(page)
     assert errors == [] and warnings == []
     assert any(url.endswith("/public/js/release.js") for url in requested), requested
     assert not [url for url in requested if "three.module" in url], requested
     assert keys == sorted(HOOK_KEYS) and helpers.release_state(page)["newIds"] == []
 
     live_warnings = []
-
-    def listen(p):
-        p.on("console", lambda msg: live_warnings.append(msg.text)
-             if msg.type == "warning" and msg.text.startswith(helpers.RELEASE_WARNING_PREFIX) else None)
-
-    page, errors = helpers.open_live(make_page, base_url, before_goto=listen, clock=FIXED_INSTANT)
-    keys = page.eval_on_selector("[data-hero]", "el => Object.keys(el.__weaveRelease).sort()")
-    assert errors == [] and live_warnings == [] and keys == sorted(HOOK_KEYS)
+    page, errors = helpers.open_live(
+        make_page, base_url, clock=FIXED_INSTANT,
+        before_goto=lambda p: helpers.collect_warnings(p, helpers.RELEASE_WARNING_PREFIX, live_warnings))
+    assert errors == [] and live_warnings == [] and helpers.release_keys(page) == sorted(HOOK_KEYS)
 
 
 def test_release_js_imports_nothing():

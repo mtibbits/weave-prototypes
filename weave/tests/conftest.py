@@ -89,8 +89,12 @@ def page_factory(browser, contexts):
     when it is None."""
     def make(target_browser=None, clock=_DEFAULT, **context_args):
         # Read at call time, so the instant is the one pytest_configure resolved.
-        instant = DEFAULT_CLOCK if clock is _DEFAULT else None if clock is None else check_instant(
-            clock, "make_page(clock=...)")
+        if clock is _DEFAULT:
+            instant = DEFAULT_CLOCK
+        elif clock is None:
+            instant = None
+        else:
+            instant = check_instant(clock, "make_page(clock=...)")
         ctx = (target_browser or browser).new_context(**{"viewport": {"width": 1440, "height": 900}, **context_args})
         if instant is not None:
             ctx.clock.set_fixed_time(instant)

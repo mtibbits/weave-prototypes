@@ -70,8 +70,10 @@ const wellFormed = (release, windowDays) => isObject(release) && isVersion(relea
 // The live entries of E1's validated list, in order; a missing or malformed since counts as '0'.
 const candidates = (panels) => (Array.isArray(panels) ? panels.filter((p) => isObject(p) && p.status === 'live') : []);
 const since = (panel) => (isVersion(panel.since) ? panel.since : '0');
-const inWindow = (today, release, windowDays) => isDate(today)
-  && dayNumber(release.date) <= dayNumber(today) && dayNumber(today) < dayNumber(release.date) + windowDays;
+// The window has opened: today is a real day on or after the release date.
+const opened = (today, release) => isDate(today) && dayNumber(release.date) <= dayNumber(today);
+const inWindow = (today, release, windowDays) => opened(today, release)
+  && dayNumber(today) < dayNumber(release.date) + windowDays;
 // The first release: no candidate arrived before the current version.
 const isFirstRelease = (live, version) => !live.some((p) => compareVersions(since(p), version) < 0);
 const ids = (panels) => panels.map((p) => p.id);
@@ -163,12 +165,12 @@ export function writeLastSeen(getStorage, key, version) {
 export function createRelease(input) {
   const { now = null, whatsnew = false, rest = false, raw = null, panels, date, getStorage, warn } = input ?? {};
   const say = typeof warn === 'function' ? warn : () => {};
-  const asked = now !== null && now !== undefined;
+  const asked = now !== null;
   if (asked && !isDate(now)) say(W_NOW);
   const today = isDate(now) ? now : localDate(date);
-  // A simulated visit (any ?now=, even an ignored one; ?whatsnew; ?pose=rest) never touches the real key.
-  const key = asked || whatsnew === true || rest === true ? SIM_KEY : LAST_SEEN_KEY;
   const force = whatsnew === true;
+  // A simulated visit (any ?now=, even an ignored one; ?whatsnew; ?pose=rest) never touches the real key.
+  const key = asked || force || rest === true ? SIM_KEY : LAST_SEEN_KEY;
   const source = isObject(raw) ? raw : {};
   const { release, newsWindowDays: windowDays } = source;
   releaseWarnings({ panels, release, windowDays }).forEach(say);
@@ -176,7 +178,7 @@ export function createRelease(input) {
   const newIds = newPanelIds({ panels, release, lastSeen, today, windowDays, force });
   const taggedIds = taggedPanelIds({ panels, release, today, windowDays });
   // Never before the window opens, so a panels.js pushed the evening before doesn't spend early visitors' sequence.
-  const recordSeen = () => (wellFormed(release, windowDays) && isDate(today)
-    && dayNumber(today) >= dayNumber(release.date) ? writeLastSeen(getStorage, key, release.version) : false);
+  const recordSeen = () => (wellFormed(release, windowDays) && opened(today, release)
+    ? writeLastSeen(getStorage, key, release.version) : false);
   return { today, force, key, lastSeen, newIds, taggedIds, recordSeen };
 }
