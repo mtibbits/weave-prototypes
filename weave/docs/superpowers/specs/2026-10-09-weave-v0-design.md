@@ -221,6 +221,10 @@ pytest + Playwright, with Chromium on the GPU, as in Coalesce:
   - with WebGL disabled, the still shows;
   - the lists match `panels.js`.
 - **Build:** `build_site.py` produces the expected tree.
+- **The clock:** every context the shared fixture makes is pinned to `FIXED_INSTANT`, so no test depends on the
+  calendar. The pin also swaps the page's frame loop and timers for Playwright's fake timers, so frame pacing is
+  measured only by `verify.py`. `make_page(clock=...)` and `WEAVE_TEST_CLOCK` are the overrides (README, "The fixed
+  test clock").
 - **Budgets and states:** `verify.py` checks every budget row and every hero state with a screenshot; `--base URL`
   checks the states only, against a deployed copy.
 

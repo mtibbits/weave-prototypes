@@ -473,21 +473,26 @@ def test_a_release_that_is_no_object_warns_for_both_fields(js):
 
 
 def test_release_warnings_and_create_release_never_throw(js):
+    """Garbage raw settings, panels and storage: the hook still has its keys, nothing is new or written, and the
+    warning sink gets exactly the release warnings for that raw (the shipped panels add none)."""
     got = run(js, """const boom = () => { throw new Error('blocked'); };
         const out = [];
         for (const raw of [{ release: null }, { release: 7, newsWindowDays: null }, null, 7]) {
           for (const getStorage of [() => fakeStorage(), boom]) {
             for (const panels of [DEFAULTS, null, [null]]) {
+              const warned = [];
               const hook = R.createRelease({ now: null, whatsnew: false, rest: false, raw, panels,
-                                             date: new Date(2026, 9, 10, 9), getStorage, warn: () => {} });
-              out.push({ warned: Array.isArray(R.releaseWarnings({ panels, release: raw?.release })),
-                         keys: Object.keys(hook).sort(), newIds: hook.newIds, taggedIds: hook.taggedIds,
+                                             date: new Date(2026, 9, 10, 9), getStorage, warn: (m) => warned.push(m) });
+              out.push({ warned, keys: Object.keys(hook).sort(), newIds: hook.newIds, taggedIds: hook.taggedIds,
                          recorded: hook.recordSeen() });
             }
           }
         }
         return out;""")
-    assert got == [{"warned": True, "keys": sorted(HOOK_KEYS), "newIds": [], "taggedIds": [], "recorded": False}] * 24
+    both = [helpers.W_NEWS_VERSION, helpers.W_NEWS_DATE]
+    by_raw = [both, both + [helpers.W_NEWS_WINDOW], [], []]
+    assert got == [{"warned": warned, "keys": sorted(HOOK_KEYS), "newIds": [], "taggedIds": [], "recorded": False}
+                   for warned in by_raw for _ in range(6)]
 
 
 # --- The boot wiring: stage.__weaveRelease on the real page (each test pins its own instant or uses ?now=). ---
