@@ -1,0 +1,80 @@
+Mutation matrix for needle.js at HEAD bf8812b (test_needle.py, every node; collection error = no catch)
+
+BASELINE: 40 passed in 10.09s
+
+M1 CAUGHT: clamp line -> `const t = u;`
+  must redden: test_clamp_holds_the_ends[catmull-TypeError], test_clamp_holds_the_ends[circle-NaN]
+  observed reds (4): test_clamp_holds_the_ends[catmull-TypeError], test_clamp_holds_the_ends[circle-NaN], test_clamp_holds_the_ends[line-extrapolates], test_clamp_maps_non_finite_u_to_an_end
+  summary: 4 failed, 36 passed in 9.61s
+
+M2 CAUGHT: typeof gate dropped (`u > 0 ? Math.min(1, u) : 0`)
+  must redden: test_clamp_maps_non_finite_u_to_an_end
+  observed reds (1): test_clamp_maps_non_finite_u_to_an_end
+  summary: 1 failed, 39 passed in 9.98s
+
+M3 CAUGHT: parent line deleted (raw world Z)
+  must redden: test_parent_space_turns_the_eye_to_world_z
+  observed reds (6): test_parent_space_holds_through_a_nested_chain, test_parent_space_turns_the_eye_to_world_z[circle-0.25], test_parent_space_turns_the_eye_to_world_z[circle-0], test_parent_space_turns_the_eye_to_world_z[line-0.25], test_parent_space_turns_the_eye_to_world_z[line-0.5], test_parent_space_turns_the_eye_to_world_z[line-0]
+  summary: 6 failed, 34 passed in 9.53s
+
+M4 CAUGHT: vertical fallback block deleted
+  must redden: test_vertical_tangent_is_a_true_rotation
+  observed reds (2): test_vertical_tangent_is_a_true_rotation[down], test_vertical_tangent_is_a_true_rotation[up]
+  summary: 2 failed, 38 passed in 9.84s
+
+M5 CAUGHT: `.negate()` removed
+  must redden: test_pose_on_line_and_circle
+  observed reds (20): test_parent_space_holds_through_a_nested_chain, test_parent_space_turns_the_eye_to_world_z[circle-0.25], test_parent_space_turns_the_eye_to_world_z[circle-0.5], test_parent_space_turns_the_eye_to_world_z[circle-0], test_parent_space_turns_the_eye_to_world_z[line-0.25], test_parent_space_turns_the_eye_to_world_z[line-0.5], test_parent_space_turns_the_eye_to_world_z[line-0], test_pose_on_line_and_circle[circle-0.5], test_pose_on_line_and_circle[circle-0], test_pose_on_line_and_circle[circle-1], test_pose_on_line_and_circle[line-0.5], test_pose_on_line_and_circle[line-0], test_pose_on_line_and_circle[line-1], test_pose_reads_the_returned_point_and_tangent, test_tail_trails_outside_a_clockwise_loop[0.125], test_tail_trails_outside_a_clockwise_loop[0.5], test_vertical_tangent_is_a_true_rotation[down], test_vertical_tangent_is_a_true_rotation[nearly-up], test_vertical_tangent_is_a_true_rotation[turned-parent], test_vertical_tangent_is_a_true_rotation[up]
+  summary: 20 failed, 20 passed in 9.65s
+
+M6 CAUGHT: tail y sign flipped (+R(1 - cos))
+  must redden: test_tail_starts_at_the_eye_and_ends_below_it, test_tail_trails_outside_a_clockwise_loop
+  observed reds (3): test_tail_starts_at_the_eye_and_ends_below_it, test_tail_trails_outside_a_clockwise_loop[0.125], test_tail_trails_outside_a_clockwise_loop[0.5]
+  summary: 3 failed, 37 passed in 10.42s
+
+M7 CAUGHT: body metalness 0.85
+  must redden: test_every_body_material_is_at_most_0_3_metallic
+  observed reds (1): test_every_body_material_is_at_most_0_3_metallic
+  summary: 1 failed, 39 passed in 9.62s
+
+M8 CAUGHT: one tail material shared across needles
+  must redden: test_tail_uses_the_thread_color
+  observed reds (2): test_each_needle_owns_its_geometry_and_materials, test_tail_uses_the_thread_color
+  summary: 2 failed, 38 passed in 9.97s
+
+M9 CAUGHT: left-handed `_y.crossVectors(_x, _z)`
+  must redden: test_pose_on_line_and_circle, test_vertical_tangent_is_a_true_rotation
+  observed reds (20): test_parent_space_holds_through_a_nested_chain, test_parent_space_turns_the_eye_to_world_z[circle-0.25], test_parent_space_turns_the_eye_to_world_z[circle-0.5], test_parent_space_turns_the_eye_to_world_z[circle-0], test_parent_space_turns_the_eye_to_world_z[line-0.25], test_parent_space_turns_the_eye_to_world_z[line-0.5], test_parent_space_turns_the_eye_to_world_z[line-0], test_pose_on_line_and_circle[circle-0.5], test_pose_on_line_and_circle[circle-0], test_pose_on_line_and_circle[circle-1], test_pose_on_line_and_circle[line-0.5], test_pose_on_line_and_circle[line-0], test_pose_on_line_and_circle[line-1], test_pose_reads_the_returned_point_and_tangent, test_tail_trails_outside_a_clockwise_loop[0.125], test_tail_trails_outside_a_clockwise_loop[0.5], test_vertical_tangent_is_a_true_rotation[down], test_vertical_tangent_is_a_true_rotation[nearly-up], test_vertical_tangent_is_a_true_rotation[turned-parent], test_vertical_tangent_is_a_true_rotation[up]
+  summary: 20 failed, 20 passed in 11.48s
+
+M10 CAUGHT: parent-local `needle.parent.quaternion.clone().invert()`
+  must redden: test_parent_space_holds_through_a_nested_chain
+  observed reds (1): test_parent_space_holds_through_a_nested_chain
+  summary: 1 failed, 39 passed in 9.67s
+
+M11 CAUGHT: one body material shared by every needle
+  must redden: test_each_needle_owns_its_geometry_and_materials
+  observed reds (1): test_each_needle_owns_its_geometry_and_materials
+  summary: 1 failed, 39 passed in 10.63s
+
+M12 CAUGHT: body built once at module scope and cloned
+  must redden: test_importing_builds_nothing, test_each_needle_owns_its_geometry_and_materials
+  observed reds (2): test_each_needle_owns_its_geometry_and_materials, test_importing_builds_nothing
+  summary: 2 failed, 38 passed in 9.24s
+
+M13 CAUGHT: zero-tangent guard removed
+  must redden: test_zero_tangent_leaves_the_quaternion
+  observed reds (1): test_zero_tangent_leaves_the_quaternion
+  summary: 1 failed, 39 passed in 10.37s
+
+M14 CAUGHT: returned vectors ignored (write-in-place only)
+  must redden: test_pose_reads_the_returned_point_and_tangent
+  observed reds (1): test_pose_reads_the_returned_point_and_tangent
+  summary: 1 failed, 39 passed in 10.44s
+
+M15 CAUGHT: vertical fallback always takes X
+  must redden: test_vertical_tangent_is_a_true_rotation[turned-parent]
+  observed reds (1): test_vertical_tangent_is_a_true_rotation[turned-parent]
+  summary: 1 failed, 39 passed in 11.45s
+
+ALL CAUGHT
