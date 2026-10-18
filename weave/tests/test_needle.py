@@ -475,16 +475,21 @@ def test_needle_js_header_states_the_contract():
 def imports_needle(text):
     """Whether a source names needle.js anywhere outside a comment: any import form, a script src or a preload."""
     code = re.sub(r"/\*.*?\*/|<!--.*?-->", " ", text, flags=re.S)
-    code = re.sub(r"//[^\n]*", " ", code)
+    # A `//` comment starts a line or follows whitespace; one inside a URL (`https://`, `src="//cdn`) does not.
+    code = re.sub(r"(?m)(^|\s)//[^\n]*", " ", code)
     return re.search(r"needle\.js\b", code) is not None
 
 
 def test_imports_needle_catches_every_form():
     forms = ["import { a } from './needle.js';", "await import('./js/needle.js')", "await import(`./needle.js`)",
              "import './needle.js';", '<script type="module" src="js/needle.js">',
-             '<link rel="modulepreload" href="js/needle.js">']
+             '<link rel="modulepreload" href="js/needle.js">', "import('https://host/js/needle.js')",
+             '<script type="module" src="//cdn.example/js/needle.js">',
+             "const base = 'http://x'; import('./needle.js');"]
     assert [f for f in forms if not imports_needle(f)] == []
-    assert [f for f in ["// see needle.js", "<!-- needle.js -->", "const needleLift = 1;"] if imports_needle(f)] == []
+    comments = ["// see needle.js", "x = 1; // see needle.js", "<!-- needle.js -->", "/* needle.js */",
+                "const needleLift = 1;"]
+    assert [f for f in comments if imports_needle(f)] == []
 
 
 def test_no_page_or_module_imports_needle_yet():

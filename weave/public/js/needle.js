@@ -14,7 +14,9 @@
 // the start, and -Infinity and +Infinity at the nearer end. The tip goes to getPointAt(u), and +X runs along
 // getTangentAt(u).negate(). The roll brings local Z as close as possible to world +Z, taken into the parent's space;
 // when the tangent is vertical, any roll is used. The quaternion is always a unit quaternion; on a zero-length
-// tangent it is left as it was. Posing writes only position and quaternion.
+// tangent it is left as it was. Posing writes only the needle's position and quaternion; reading the parent's world
+// rotation refreshes the ancestors' world matrices, as a render does. The parent chain must have uniform positive
+// scale, or the roll is only approximate.
 // Frame ordering: pose a needle after its parent chain is posed for the frame, because posing reads the ancestors'
 // current rotation.
 // Disposal: a needle owns every geometry and material in it, so dispose it by traversal. #22 swaps the modelled body
