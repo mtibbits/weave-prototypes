@@ -111,10 +111,10 @@ function canvasTexture(canvas) {
 }
 
 // The dashboard face on a block's back (#8): #6's tile, rotated pi about y, hidden until the block flips. Unlit, so
-// the tile reads as painted; alphaTest drops its transparent corners.
-function buildTile(slot, entry) {
+// the tile reads as painted; alphaTest drops its transparent corners. `tagged` sews #14's "New" label on it.
+function buildTile(slot, entry, tagged) {
   const canvas = makeCanvas(512);
-  paintTile(canvas, entry);
+  paintTile(canvas, entry, { tagged });
   const tile = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({ map: canvasTexture(canvas), alphaTest: 0.5, toneMapped: false }));
   tile.rotation.y = Math.PI;
@@ -149,7 +149,7 @@ function foldBlock(geometry, slot, tilt) {
 // One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence 0 for
 // #8's flatten (#10's hover lift is the block's scale and z, not a morph). A filler is built transparent, since it
 // fades; every other block carries its tile face.
-function buildBlock(slot, entry, renderer) {
+function buildBlock(slot, entry, renderer, tagged) {
   const face = faceKind(entry);
   const [cx, cy] = slotCentre(slot);
   const tilt = face === 'planned' ? (rngFor(entry.id, 'tilt')() * 2 - 1) * TILT_MAX : 0;
@@ -171,7 +171,7 @@ function buildBlock(slot, entry, renderer) {
   mesh.position.set(cx, cy, face === 'planned' ? PLANNED_LIFT : 0);
   mesh.rotation.z = tilt;
   mesh.userData = { slot, id: entry ? entry.id : null, status: entry ? entry.status : null, face };
-  if (face !== 'filler') mesh.add(buildTile(slot, entry));
+  if (face !== 'filler') mesh.add(buildTile(slot, entry, tagged));
   return mesh;
 }
 
@@ -386,12 +386,16 @@ function flatWorld(mesh, count, read) {
 
 // Builds the quilt from `slots` (12 cleaned entries, null for a filler) once the caller has awaited
 // fontsReady(). The blocks, sashing and rod hang in `group`, which setAmbient sways; the shadow stays put.
-export function buildQuilt(renderer, { slots }) {
+// `tagged` (#14) is the ids whose tiles wear the "New" label, read once here; anything but an array tags nothing.
+export function buildQuilt(renderer, { slots, tagged = [] }) {
+  const wanted = new Set(Array.isArray(tagged) ? tagged : []);
+  // Each block's tag, by block index (not in userData: the snapshot's block keys are pinned).
+  const tags = slots.map((entry) => Boolean(entry) && wanted.has(entry.id));
   const scene = new THREE.Scene();
   addLights(scene);
   const camera = fitCamera(new THREE.PerspectiveCamera(35, 1.6, 0.1, 100), 1.6);
   const group = new THREE.Group();
-  const blocks = slots.map((entry, slot) => buildBlock(slot, entry, renderer));
+  const blocks = slots.map((entry, slot) => buildBlock(slot, entry, renderer, tags[slot]));
   const sashing = buildSashing(blocks);
   const { rod, caps, material: rodMaterial } = buildRod();
   const shadow = buildShadow();
@@ -830,6 +834,8 @@ export function buildQuilt(renderer, { slots }) {
     render, snapshot, project, dispose, placeBlock, reseam, blockBase, planePoint,
     revealStitches, popStitches, restorePins, popPins, setFace, stow, unstow, stowAll, unstowAll, unstowBlock, tick,
     setPaused, finishDecor, setHover, pickBlock,
+    // #14: whether block i's tile was painted with the "New" label.
+    isTagged: (i) => tags[i] === true,
     get decorIdle() { return decor.every(({ kinds }) => Object.values(kinds).every((k) => !k.anim)); },
   };
 }

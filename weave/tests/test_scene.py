@@ -103,16 +103,16 @@ def test_fit_camera_frames_the_bounds(js, bounds, aspect):
 
 # --- Part 2: buildQuilt, snapshot() and project(), with the shipped panels through cleanPanels. ---
 
-# Defines slotsOf(n) (the first n default entries, padded with null to 12) and build(slots) (a quilt on an
-# 800 x 500 canvas in the page, resized and rendered once).
+# Defines slotsOf(n) (the first n default entries, padded with null to 12) and build(slots, options) (a quilt on an
+# 800 x 500 canvas in the page, resized and rendered once; options, such as #14's tagged, join the slots).
 BUILD_JS = SCENE_JS + DEFAULTS_JS + r"""
     const L = await import('/public/js/layout.js');
     const slotsOf = (n = 12) => { const s = DEFAULTS.slice(0, n); while (s.length < 12) s.push(null); return s; };
-    const build = (slots = slotsOf()) => {
+    const build = (slots = slotsOf(), options = {}) => {
       const canvas = document.createElement('canvas');
       canvas.style.cssText = 'display:block;width:800px;height:500px';
       document.body.append(canvas);
-      const quilt = S.buildQuilt(S.createRenderer(canvas), { slots });
+      const quilt = S.buildQuilt(S.createRenderer(canvas), { ...options, slots });
       quilt.resize(800, 500, 1);
       quilt.render();
       return quilt;
@@ -1021,3 +1021,61 @@ def test_pick_block_ignores_the_sashing(paint_js):
     assert r["block"] == 0
     assert r["seam"] is None and r["pickSeam"] == "sashing"
     assert r["filler"] is None and r["pickFiller"] == "block"
+
+
+# --- #14: the scene passes each block's "New" tag to the tile painter. ---
+
+TAGS_JS = r"""
+    const T = await import('/public/js/tiles.js');
+    const { makeCanvas } = await import('/public/js/fabric.js');
+    const tileOf = (q, i) => q.blocks[i].children.find((c) => c.userData.part === 'tile');
+    const paintHash = (entry, options) => { const c = makeCanvas(512); T.paintTile(c, entry, options); return sha256Canvas(c); };
+    const flags = (q) => q.blocks.map((_, i) => q.isTagged(i));
+    const at = (q, id) => q.blocks.findIndex((b) => b.userData.id === id);
+"""
+
+
+def test_tagged_ids_reach_the_tile_painter(paint_js):
+    r = build(paint_js, TAGS_JS + r"""
+        const q = build(slotsOf(), { tagged: ['travel', 'desks'] });
+        const byId = (id) => DEFAULTS.find((e) => e.id === id);
+        const t = at(q, 'travel');
+        const m = at(q, 'manpower');
+        return {
+          tagged: q.blocks.filter((_, i) => q.isTagged(i)).map((b) => b.userData.id),
+          types: flags(q).map((f) => typeof f),
+          travel: await sha256Canvas(tileOf(q, t).material.map.image),
+          travelTagged: await paintHash(byId('travel'), { tagged: true }),
+          travelPlain: await paintHash(byId('travel')),
+          manpower: await sha256Canvas(tileOf(q, m).material.map.image),
+          manpowerPlain: await paintHash(byId('manpower')),
+          blockKeys: Object.keys(q.snapshot().blocks[t]).sort(),
+        };
+    """)
+    assert r["tagged"] == ["travel", "desks"]
+    assert r["types"] == ["boolean"] * 12
+    assert r["travel"] == r["travelTagged"] and r["travel"] != r["travelPlain"]
+    assert r["manpower"] == r["manpowerPlain"]
+    assert r["blockKeys"] == ["face", "id", "indices", "positions", "slot", "status", "uvs"]
+
+
+def test_default_build_tags_nothing(paint_js):
+    r = build(paint_js, TAGS_JS + r"""
+        const q = build();
+        return { flags: flags(q), travel: await sha256Canvas(tileOf(q, at(q, 'travel')).material.map.image),
+                 travelPlain: await paintHash(DEFAULTS.find((e) => e.id === 'travel')) };
+    """)
+    assert r["flags"] == [False] * 12
+    assert r["travel"] == r["travelPlain"]
+
+
+@pytest.mark.parametrize("tagged", ["['nope']", "new Set(['travel'])", "'travel'", "null"])
+def test_unknown_or_malformed_tagged_tags_nothing(paint_js, tagged):
+    r = build(paint_js, TAGS_JS + f"""
+        const flagsOf = (slots, tagged) => {{ try {{ return flags(build(slots, {{ tagged }})); }} catch (err) {{ return String(err); }} }};
+        return {{ all: flagsOf(slotsOf(), {tagged}), fillers: flags(build(slotsOf(10), {{ tagged: ['travel'] }})),
+                  ids: slotsOf(10).map((e) => (e ? e.id : null)) }};
+    """)
+    assert r["all"] == [False] * 12, r["all"]
+    assert [i for i, f in enumerate(r["fillers"]) if f] == [r["ids"].index("travel")]
+    assert r["ids"][10:] == [None, None]
