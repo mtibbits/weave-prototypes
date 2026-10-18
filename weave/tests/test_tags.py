@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import helpers
-from helpers import RELEASE_READY
+from helpers import RELEASE_READY, SEW_NAME, UNSTITCH_NAME
 
 WEAVE = Path(__file__).resolve().parents[1]
 
@@ -45,6 +45,7 @@ BADGES = r"""() => [...document.querySelectorAll('li.panel')].filter((li) => li.
 })"""
 LIVE_ROWS = "() => document.querySelectorAll('[data-list=\"live\"] li.panel').length"
 TAGGED_ANYWHERE = "() => [document.querySelectorAll('.panel-new').length, document.querySelectorAll('li.is-new').length]"
+SLOTS = "el => el.__weave.slots"
 
 
 def badges(page):
@@ -195,3 +196,54 @@ def test_tagged_row_height_matches(make_page, base_url):
     assert heights["tagged"] is True
     assert abs(heights["travel"] - heights["training"]) <= 1, heights
 
+
+# --- The tiles: what the scene asked the painter for. ---
+
+LIVE_CASES = {
+    "in-window": ("2026-10-10", None, TAGGED_IDS),
+    "before": ("2026-10-08", None, []),
+    "after": ("2026-10-20", None, []),
+    "whatsnew-after": ("2026-10-20&whatsnew", None, []),
+    "first-release": ("2026-10-10", FIRST_RELEASE, []),
+    "thirteenth": ("2026-10-10", THIRTEENTH, TAGGED_IDS),
+}
+
+
+def tagged_slots(page):
+    slots = page.eval_on_selector("[data-hero]", SLOTS)
+    assert len(slots) == 12 and all(s["tagged"] is True or s["tagged"] is False for s in slots), slots
+    return slots
+
+
+@pytest.mark.parametrize("case", [*LIVE_CASES, "reload"])
+def test_slots_report_the_tagged_tiles(make_page, base_url, case):
+    now, body, want = LIVE_CASES.get(case, ("2026-10-10", None, TAGGED_IDS))
+    page, errors = helpers.open_live(make_page, base_url, query=f"?nowatchdog&pose=rest&now={now}", panels_body=body)
+    if case == "reload":
+        assert helpers.record_seen(page) is True
+        page.reload()
+        assert helpers.hero_result(page) == ["live", "ok"]
+        assert helpers.release_state(page)["lastSeen"] == "1.1"
+    slots = tagged_slots(page)
+    assert [s["id"] for s in slots if s["tagged"]] == want
+    if case == "thirteenth":
+        assert "payroll" not in [s["id"] for s in slots]
+    assert errors == []
+
+
+def test_tags_hold_through_tiles_and_back(make_page, base_url):
+    page, errors = helpers.open_live(make_page, base_url, query="?nowatchdog&pose=rest&now=2026-10-10")
+
+    def read():
+        return ([s["tagged"] for s in tagged_slots(page)], badges(page), helpers.release_state(page)["taggedIds"])
+
+    before = read()
+    assert [s for s, t in zip(helpers.DEFAULT_IDS, before[0]) if t] == TAGGED_IDS
+    page.get_by_role("button", name=UNSTITCH_NAME, exact=True).click()
+    helpers.wait_for_mode(page, "tiles")
+    tiles = read()
+    page.get_by_role("button", name=SEW_NAME, exact=True).click()
+    helpers.wait_for_mode(page, "quilt")
+    assert before == tiles == read()
+    assert before[1] == expected_rows(TAGGED_NAMES) and before[2] == TAGGED_IDS
+    assert errors == []

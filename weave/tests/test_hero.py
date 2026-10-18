@@ -95,7 +95,8 @@ def test_hooks_describe_the_drawn_quilt(make_page, base_url):
     assert weave(page, ".mode") == "quilt"
     assert weave(page, ".order") == DEFAULT_IDS
     slots = weave(page, ".slots")
-    assert slots[0] == {"id": "manpower", "name": "Manpower", "status": "live", "face": "sewn"}
+    assert slots[0] == {"id": "manpower", "name": "Manpower", "status": "live", "face": "sewn",
+                        "tagged": False}
     assert slots[4]["face"] == "planned" and slots[11]["face"] == "suggest"
     # Copies: a caller's edit never reaches the page's state.
     assert page.eval_on_selector("[data-hero]", "el => { el.__weave.order[0] = 'x'; el.__weave.slots[0].id = 'x';"

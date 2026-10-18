@@ -72,7 +72,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   }
   let quilt;
   try {
-    quilt = S.buildQuilt(renderer, { slots });
+    quilt = S.buildQuilt(renderer, { slots, tagged });
     // #10: compile every program now, the hidden decor's included (compile walks hidden objects), so the first frame
     // that shows a stitch or a pin does not stall on a shader compile.
     renderer.compile(quilt.scene, quilt.camera);
@@ -498,9 +498,9 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     get slots() {
       return slots.map((_, k) => {
         const entry = slots[director.blockAt(k)];
-        // The drawn face, which #16's setFace can change.
+        // The drawn face, which #16's setFace can change; tagged (#14) is what the scene asked the tile painter for.
         return { id: entry ? entry.id : null, name: entry ? entry.name : null, status: entry ? entry.status : null,
-          face: quilt.blocks[director.blockAt(k)].userData.face };
+          face: quilt.blocks[director.blockAt(k)].userData.face, tagged: quilt.isTagged(director.blockAt(k)) };
       });
     },
     get clock() { return clock; },
