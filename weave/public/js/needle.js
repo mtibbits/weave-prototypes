@@ -24,7 +24,7 @@ import * as THREE from 'three';
 // The body's run from the tip to the end of the eye, and the eye end the tail leaves from.
 const BODY_LENGTH = 0.18;
 const TAIL_SWEEP = THREE.MathUtils.degToRad(50);
-const VERTICAL_EPS_SQ = 1e-12; // |world Z off the axis| below 1e-6: the tangent is vertical, so any roll will do
+const VERTICAL_EPS_SQ = 1e-12; // |up off the axis| below 1e-6: the tangent is vertical, so any roll will do
 
 const _x = new THREE.Vector3();
 const _y = new THREE.Vector3();
@@ -79,22 +79,19 @@ export function createNeedle({ threadColor = '#C9A227', tailLength = 0.12 } = {}
 }
 
 export function poseOnCurve(needle, curve, u) {
-  // Clamped here, never by Three (see the header): NaN and non-numbers pose at the start.
-  let t = typeof u === 'number' ? Math.min(1, Math.max(0, u)) : 0;
-  if (Number.isNaN(t)) t = 0;
+  // NaN, -Infinity and non-numbers all fail `u > 0`, so they pose at the start.
+  const t = typeof u === 'number' && u > 0 ? Math.min(1, u) : 0;
   // Read the returned vectors: a curve may ignore the target, as Three's own callers allow.
   needle.position.copy(curve.getPointAt(t, needle.position));
   _x.copy(curve.getTangentAt(t, _x)).negate();               // +X trails the tip
   if (_x.lengthSq() === 0) return;                           // zero tangent: keep the last roll (D-g)
   _x.normalize();
-  _up.set(0, 0, 1);                                          // world +Z, taken into the parent's space
+  _up.set(0, 0, 1);
   if (needle.parent) _up.applyQuaternion(needle.parent.getWorldQuaternion(_q).invert());
-  _z.copy(_up).addScaledVector(_x, -_up.dot(_x));
-  if (_z.lengthSq() < VERTICAL_EPS_SQ) {
-    if (Math.abs(_x.x) < 0.9) _z.set(1, 0, 0); else _z.set(0, 1, 0);
-    _z.addScaledVector(_x, -_z.dot(_x));
+  if (_up.lengthSq() - _up.dot(_x) ** 2 < VERTICAL_EPS_SQ) {
+    if (Math.abs(_x.x) < 0.9) _up.set(1, 0, 0); else _up.set(0, 1, 0);
   }
-  _z.normalize();
+  _z.copy(_up).addScaledVector(_x, -_up.dot(_x)).normalize();
   _y.crossVectors(_z, _x);                                   // right-handed: x × y = z
   needle.quaternion.setFromRotationMatrix(_m.makeBasis(_x, _y, _z));
 }

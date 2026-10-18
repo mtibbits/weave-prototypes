@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import HOME, hero_result
+from helpers import hero_result, open_release
 
 EPS = 1e-6                        # positions and unit lengths; float32 geometry readback (pothole Issue-10)
 ANTI = -0.999                     # +X . tangent must be at most this
@@ -36,6 +36,23 @@ const curves = () => ({
 });
 const axis = (obj, i) => new THREE.Vector3().setFromMatrixColumn(obj.matrixWorld, i).normalize();
 const poseOf = (n) => [...n.position.toArray(), ...n.quaternion.toArray()];
+const placed = (c, u) => {
+  const scene = new THREE.Scene();
+  const n = N.createNeedle();
+  scene.add(n);
+  N.poseOnCurve(n, c, u);
+  scene.updateMatrixWorld(true);
+  return n;
+};
+const onCurve = (n, c, u) => ({
+  tip: n.getWorldPosition(new THREE.Vector3()).toArray(), point: c.getPointAt(u).toArray(),
+  tangent: c.getTangentAt(u).toArray(), x: axis(n, 0).toArray(),
+});
+// Poses n on c and returns the pose, recording any throw in `errors` instead of stopping the test.
+const poser = (n, c, errors) => (...args) => {
+  try { N.poseOnCurve(n, c, ...args); } catch (e) { errors.push(String(e)); }
+  return poseOf(n);
+};
 const centreLine = (n) => {
   const tails = n.children.filter((c) => c.name === 'tail');
   const tail = tails[0];
@@ -73,16 +90,21 @@ def run(js, body):
     return js(NEEDLE_JS + body)
 
 
-def dot(a, b):
-    return sum(x * y for x, y in zip(a, b))
+dot = math.sumprod
 
 
 def norm(a):
-    return math.sqrt(dot(a, a))
+    return math.hypot(*a)
 
 
 def close(a, b, eps=EPS):
     return len(a) == len(b) and all(abs(x - y) <= eps for x, y in zip(a, b))
+
+
+def assert_on_curve(r):
+    """The tip sits on the curve's point and +X runs against its tangent."""
+    assert close(r["tip"], r["point"]), r
+    assert dot(r["x"], r["tangent"]) <= ANTI, r
 
 
 def test_create_needle_has_body_and_tail_with_its_origin_at_the_tip(js):
@@ -156,7 +178,7 @@ def test_tail_arc_length_is_tail_length(js, tail_length, expected):
     options = "" if tail_length is None else f"{{ tailLength: {tail_length} }}"
     r = run(js, f"return centreLine(N.createNeedle({options})).map((p) => p.toArray());")
     assert len(r) >= 2
-    length = sum(norm([b - a for a, b in zip(p, q)]) for p, q in zip(r, r[1:]))
+    length = sum(math.dist(p, q) for p, q in zip(r, r[1:]))
     assert abs(length - expected) / expected <= TAIL_REL, length
 
 
@@ -165,16 +187,10 @@ def test_tail_arc_length_is_tail_length(js, tail_length, expected):
 def test_pose_on_line_and_circle(js, curve, u):
     r = run(js, f"""
         const c = curves().{curve};
-        const scene = new THREE.Scene();
-        const n = N.createNeedle();
-        scene.add(n);
-        N.poseOnCurve(n, c, {u});
-        scene.updateMatrixWorld(true);
-        return {{ tip: n.getWorldPosition(new THREE.Vector3()).toArray(), point: c.getPointAt({u}).toArray(),
-                 tangent: c.getTangentAt({u}).toArray(), x: axis(n, 0).toArray(), z: axis(n, 2).toArray() }};
+        const n = placed(c, {u});
+        return {{ ...onCurve(n, c, {u}), z: axis(n, 2).toArray() }};
     """)
-    assert close(r["tip"], r["point"]), r
-    assert dot(r["x"], r["tangent"]) <= ANTI, r
+    assert_on_curve(r)
     assert dot(r["z"], [0, 0, 1]) >= COS_1_DEG, r
 
 
@@ -186,71 +202,54 @@ def test_pose_reads_the_returned_point_and_tangent(js):
           getTangent() { return V(0.7, 0.35, 0).normalize(); }
         }
         const c = new Fresh();
-        const scene = new THREE.Scene();
-        const n = N.createNeedle();
-        scene.add(n);
-        N.poseOnCurve(n, curves().circle, 0.3);         // leave the scratch tangent holding another curve's value
+        const n = placed(curves().circle, 0.3);        // leave the scratch tangent holding another curve's value
         N.poseOnCurve(n, c, 0.8);
-        scene.updateMatrixWorld(true);
-        return { tip: n.getWorldPosition(new THREE.Vector3()).toArray(), point: c.getPointAt(0.8).toArray(),
-                 tangent: c.getTangentAt(0.8).toArray(), x: axis(n, 0).toArray() };
+        n.parent.updateMatrixWorld(true);
+        return onCurve(n, c, 0.8);
     """)
-    assert close(r["tip"], r["point"]), r
-    assert dot(r["x"], r["tangent"]) <= ANTI, r
+    assert_on_curve(r)
 
 
-@pytest.mark.parametrize("curve", ["line", "circle", "catmull"])
-def test_clamp_holds_the_ends(js, curve):
+@pytest.mark.parametrize("curve, unclamped", [("line", "extrapolates"), ("circle", "NaN"), ("catmull", "TypeError")])
+def test_clamp_holds_the_ends(js, curve, unclamped):
     r = run(js, f"""
-        const c = curves().{curve};
-        const n = N.createNeedle();
         const errors = [];
-        const pose = (u) => {{
-          try {{ N.poseOnCurve(n, c, u); }} catch (e) {{ errors.push(String(e)); }}
-          return poseOf(n);
-        }};
+        const pose = poser(N.createNeedle(), curves().{curve}, errors);
         pose(0.7);
         const poses = {{ below: pose(-0.1), start: pose(0), justOver: pose(1 + 1e-9), over: pose(1.5), end: pose(1) }};
-        // The r170 control (U1): why the clamp is load-bearing. Read off fresh curves, never the posed one.
-        let raw = null;
-        try {{ raw = {{ value: curves().{curve}.getPointAt(1 + 1e-9).toArray() }}; }}
-        catch (e) {{ raw = {{ threw: e.name }}; }}
-        const line = curves().line;
-        return {{ errors, poses, raw, lineMoves: line.getPointAt(1.5).x !== line.getPointAt(1).x }};
+        // The r170 control (U1): why the clamp is load-bearing. Read off a fresh curve, never the posed one.
+        let raw;
+        try {{
+          const f = curves().{curve};
+          const v = f.getPointAt(1 + 1e-9).toArray();
+          if (v.some(Number.isNaN)) raw = 'NaN';
+          else if (!v.every(Number.isFinite)) raw = 'infinite';
+          else raw = f.getPointAt(1.5).x !== f.getPointAt(1).x ? 'extrapolates' : 'holds';
+        }} catch (e) {{ raw = e.name; }}
+        return {{ errors, poses, raw }};
     """)
     assert r["errors"] == []
     p = r["poses"]
     assert p["below"] == p["start"]
     assert p["justOver"] == p["end"] and p["over"] == p["end"]
-    control = "r170's out-of-range getPointAt changed (U1, #13): re-check whether poseOnCurve's clamp is needed"
-    if curve == "line":
-        assert all(math.isfinite(v) for v in r["raw"]["value"]), control
-    elif curve == "circle":
-        assert math.isnan(r["raw"]["value"][0]), control
-    else:
-        assert r["raw"] == {"threw": "TypeError"}, control
-    assert r["lineMoves"] is True, control
+    assert r["raw"] == unclamped, (
+        "r170's out-of-range getPointAt changed (U1, #13): re-check whether poseOnCurve's clamp is needed")
 
 
 def test_clamp_maps_non_finite_u_to_an_end(js):
     """D-a, beyond the AC: a caller slip never throws in the render loop."""
     r = run(js, r"""
-        const c = curves().catmull;
-        const n = N.createNeedle();
         const errors = [];
-        const pose = (...args) => {
-          try { N.poseOnCurve(n, c, ...args); } catch (e) { errors.push(String(e)); }
-          return poseOf(n);
-        };
+        const pose = poser(N.createNeedle(), curves().catmull, errors);
         const start = pose(0); const end = pose(1);
-        return { errors, start, end, nan: pose(NaN), undef: pose(), text: pose('x'), minusInf: pose(-Infinity),
-                 plusInf: pose(Infinity), numeric: pose('0.5'), bool: pose(true), list: pose([0.7]), nil: pose(null),
-                 big: pose(1n), symbol: pose(Symbol('u')) };
+        // Non-numbers JavaScript would coerce to a number (or throw on) still pose at the start, as the header says.
+        const legs = ['NaN', 'no u', "'x'", '-Infinity', "'0.5'", 'true', '[0.7]', 'null', '1n', 'Symbol'];
+        const atStart = [pose(NaN), pose(), pose('x'), pose(-Infinity), pose('0.5'), pose(true), pose([0.7]),
+                         pose(null), pose(1n), pose(Symbol('u'))];
+        return { errors, start, end, legs, atStart, plusInf: pose(Infinity) };
     """)
     assert r["errors"] == []
-    # Non-numbers that JavaScript would coerce to a number (or throw on) still pose at the start, as the header says.
-    for leg in ("nan", "undef", "text", "minusInf", "numeric", "bool", "list", "nil", "big", "symbol"):
-        assert r[leg] == r["start"], leg
+    assert [leg for leg, p in zip(r["legs"], r["atStart"], strict=True) if p != r["start"]] == []
     assert r["plusInf"] == r["end"]
 
 
@@ -263,20 +262,13 @@ def test_vertical_tangent_is_a_true_rotation(js, ends):
     (a, b) = ends
     r = run(js, f"""
         const c = new THREE.LineCurve3(V({a[0]}, {a[1]}, {a[2]}), V({b[0]}, {b[1]}, {b[2]}));
-        const scene = new THREE.Scene();
-        const n = N.createNeedle();
-        scene.add(n);
-        N.poseOnCurve(n, c, 0.5);
-        scene.updateMatrixWorld(true);
+        const n = placed(c, 0.5);
         const cols = [0, 1, 2].map((i) => new THREE.Vector3().setFromMatrixColumn(n.matrixWorld, i).toArray());
-        return {{ pose: poseOf(n), tip: n.getWorldPosition(new THREE.Vector3()).toArray(),
-                 point: c.getPointAt(0.5).toArray(), tangent: c.getTangentAt(0.5).toArray(), x: axis(n, 0).toArray(),
-                 cols, det: n.matrixWorld.determinant() }};
+        return {{ ...onCurve(n, c, 0.5), pose: poseOf(n), cols, det: n.matrixWorld.determinant() }};
     """)
     assert all(math.isfinite(v) for v in r["pose"]), r
     assert abs(norm(r["pose"][3:]) - 1) <= EPS, r
-    assert close(r["tip"], r["point"]), r
-    assert dot(r["x"], r["tangent"]) <= ANTI, r
+    assert_on_curve(r)
     cols = r["cols"]
     assert all(abs(norm(col) - 1) <= EPS for col in cols), cols
     assert all(abs(dot(cols[i], cols[j])) <= EPS for i, j in ((0, 1), (0, 2), (1, 2))), cols
@@ -296,8 +288,7 @@ PARENT_CHECK = r"""
 
 def assert_parent_space(r):
     assert close(r["z"], r["want"]), r
-    assert close(r["tip"], r["point"]), r
-    assert dot(r["x"], r["tangent"]) <= ANTI, r
+    assert_on_curve(r)
 
 
 @pytest.mark.parametrize("u", [0, 0.25, 0.5])
@@ -373,11 +364,7 @@ def test_tail_trails_outside_a_clockwise_loop(js, u):
     """Beyond the AC: #16 runs its perimeters clockwise, so its tails must lie outside the loop."""
     r = run(js, f"""
         const side = (clockwise) => {{
-          const scene = new THREE.Scene();
-          const n = N.createNeedle();
-          scene.add(n);
-          N.poseOnCurve(n, new Circle(0.5, clockwise), {u});
-          scene.updateMatrixWorld(true);
+          const n = placed(new Circle(0.5, clockwise), {u});
           const tip = n.getWorldPosition(new THREE.Vector3());
           const end = n.localToWorld(centreLine(n).at(-1));
           return end.sub(tip).dot(tip.clone().normalize());
@@ -502,10 +489,12 @@ def test_no_page_or_module_imports_needle_yet():
     ({"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}, "no-hover"),
 ], ids=["reduced-motion", "phone"])
 def test_still_path_never_requests_needle(make_page, base_url, context, reason):
-    page = make_page(**context)
     requested = []
-    page.on("request", lambda request: requested.append(request.url))
-    page.goto(base_url + HOME)
+
+    def listen(p):
+        p.on("request", lambda request: requested.append(request.url))
+
+    page, _, _ = open_release(make_page, base_url, before_goto=listen, **{"reduced_motion": "no-preference", **context})
     assert hero_result(page) == ["still", reason]
     page.wait_for_load_state("networkidle")
     # Positive control first: the listener does see module requests.
