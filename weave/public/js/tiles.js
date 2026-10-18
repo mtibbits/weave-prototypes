@@ -1,6 +1,6 @@
 // WEAVE's block faces and dashboard tiles, the name rule they share, and the wait for the web fonts.
 // Painters draw onto the canvas they are handed and nothing else; see fabric.js for the canvas rules.
-import { NO_SAMPLE } from './dom.js';
+import { NEW_TAG, NO_SAMPLE } from './dom.js';
 import { beginDesign, contextOf, DESIGN, drawFabric, makeCanvas, paintFabric } from './fabric.js';
 import { iconFor } from './icons.js';
 import { rngFor } from './random.js';
@@ -298,9 +298,34 @@ function tileName(ctx, text, x = TILE_PAD, top = 176) {
   setLines(ctx, fitName(ctx, text, limit, TILE_NAME_PX), x, top, limit, TILE_NAME_PX);
 }
 
+// #14's "New" label: a teal patch with a running stitch, sewn on the swatch band's top-right corner, clear of every
+// text on the tile. It sets every state it uses, and begins a path for each shape, so nothing liveTile drew is refilled.
+const TAG_AT = { x: 376, y: 28, w: 96, h: 46 };
+function sewTag(ctx) {
+  const { x, y, w, h } = TAG_AT;
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.fillStyle = TEAL;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 8);
+  ctx.fill();
+  ctx.fillStyle = LABEL;
+  ctx.font = sans(24);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(NEW_TAG, x + w / 2, y + h / 2 + 1);
+  ctx.strokeStyle = FLOSS;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.lineDashOffset = 0;
+  ctx.beginPath();
+  ctx.roundRect(x + 5, y + 5, w - 10, h - 10, 5);
+  ctx.stroke();
+}
+
 // The live tile's fabric strip is cut from a whole block painted on one reused scratch canvas.
 let swatch = null;
-function liveTile(ctx, entry) {
+function liveTile(ctx, entry, tagged) {
   const { width } = ctx.canvas;
   if (!swatch || swatch.width !== width) swatch = makeCanvas(width);
   paintFabric(swatch, entry.fabric, entry.id);
@@ -332,6 +357,7 @@ function liveTile(ctx, entry) {
   ctx.font = sans(22);
   ctx.textAlign = 'right';
   ctx.fillText(OPEN_CUE, DESIGN - TILE_PAD, 476);
+  if (tagged) sewTag(ctx);
 }
 
 function plannedTile(ctx, entry) {
@@ -357,8 +383,10 @@ function suggestTile(ctx) {
 const TILES = { live: liveTile, planned: plannedTile, suggest: suggestTile };
 
 // Paints one dashboard tile: a rounded card with transparent corners. No entry (or an unknown status) leaves
-// the canvas clear. Only the bars use fillRect.
-export function paintTile(canvas, entry) {
+// the canvas clear. Only the bars use fillRect. options.tagged === true (and nothing else) sews #14's "New" label on a
+// live tile; planned and suggest tiles ignore it.
+export function paintTile(canvas, entry, options = {}) {
+  const tagged = options?.tagged === true;
   const ctx = beginDesign(canvas);
   const paint = entry && Object.hasOwn(TILES, entry.status) ? TILES[entry.status] : null;
   if (paint) {
@@ -367,7 +395,7 @@ export function paintTile(canvas, entry) {
     ctx.fillStyle = PAPER;
     ctx.fill(card);
     ctx.clip(card);
-    paint(ctx, entry);
+    paint(ctx, entry, tagged);
   }
   ctx.restore();
 }

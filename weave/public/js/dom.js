@@ -4,6 +4,8 @@ import { cleanPanels } from './catalog.js';
 export const LOAD_MESSAGE = "The panel list couldn't be loaded.";
 export const NONE_YET = 'None yet.';
 export const NO_SAMPLE = 'No sample yet';
+// #14's tag on a panel new in the release: the list badge and the tile label.
+export const NEW_TAG = 'New';
 
 // A cleaned sample ({ value, unit } or null) as its list figure.
 export function figureText(sample) {
