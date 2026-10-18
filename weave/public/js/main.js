@@ -1,4 +1,4 @@
-// WEAVE's boot module: the panel lists first, then the hero. The load-time decision picks the still or the live
+// WEAVE's boot module: the release object, the panel lists, then the hero. The load-time decision picks the still or the live
 // quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
 import { cleanPanels } from './catalog.js';
 import {
@@ -22,15 +22,18 @@ const hint = document.querySelector('[data-hint]');
 const controls = document.querySelector('[data-controls]');
 const pause = document.querySelector('[data-pause]');
 const toggle = document.querySelector('[data-toggle]');
-renderPanels(document.getElementById('panels'), result);
-// A broken file keeps the static label from the HTML.
-if (!result.error) setStageLabel(stage, result.panels);
-// #12's release object, on both paths before the hero starts: which panels are new for this visit, computed once
-// over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
-stage.__weaveRelease = createRelease({
+// #12's release object, on both paths before the lists and the hero: which panels are new for this visit, computed
+// once over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
+const release = createRelease({
   now: hooks.now, whatsnew: hooks.whatsnew, rest: hooks.rest, raw: result.error ? null : window.WEAVE_PANELS,
   panels: result.panels, date: new Date(), getStorage: () => window.localStorage, warn: (m) => console.warn(m),
 });
+stage.__weaveRelease = release;
+// #14's tag set, copied once: the lists' badges and the tiles' labels both read it, and it never changes in a visit.
+const tagged = Object.freeze([...release.taggedIds]);
+renderPanels(document.getElementById('panels'), result, tagged);
+// A broken file keeps the static label from the HTML.
+if (!result.error) setStageLabel(stage, result.panels);
 
 async function startHero() {
   const decision = decideMode(readEnvironment(window));
