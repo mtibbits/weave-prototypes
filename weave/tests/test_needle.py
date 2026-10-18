@@ -90,7 +90,8 @@ def run(js, body):
     return js(NEEDLE_JS + body)
 
 
-dot = math.sumprod
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
 
 
 def norm(a):
@@ -253,18 +254,30 @@ def test_clamp_maps_non_finite_u_to_an_end(js):
     assert r["plusInf"] == r["end"]
 
 
-@pytest.mark.parametrize("ends", [
-    [[0.2, 0.1, 0], [0.2, 0.1, 1]],
-    [[0.2, 0.1, 1], [0.2, 0.1, 0]],
-    [[0, 0, 0], [1e-9, 0, 1]],
-], ids=["up", "down", "nearly-up"])
-def test_vertical_tangent_is_a_true_rotation(js, ends):
+# The turned parent maps world Z onto its own X, so the fallback must pick its Y (M15).
+@pytest.mark.parametrize("ends, turn", [
+    ([[0.2, 0.1, 0], [0.2, 0.1, 1]], 0),
+    ([[0.2, 0.1, 1], [0.2, 0.1, 0]], 0),
+    ([[0, 0, 0], [1e-9, 0, 1]], 0),
+    ([[0, 0, 0], [1, 0, 0]], "Math.PI / 2"),
+], ids=["up", "down", "nearly-up", "turned-parent"])
+def test_vertical_tangent_is_a_true_rotation(js, ends, turn):
     (a, b) = ends
     r = run(js, f"""
         const c = new THREE.LineCurve3(V({a[0]}, {a[1]}, {a[2]}), V({b[0]}, {b[1]}, {b[2]}));
-        const n = placed(c, 0.5);
+        const scene = new THREE.Scene();
+        const parent = new THREE.Group();
+        parent.rotation.y = {turn};
+        const n = N.createNeedle();
+        scene.add(parent); parent.add(n);
+        N.poseOnCurve(n, c, 0.5);
+        scene.updateMatrixWorld(true);
+        const q = parent.getWorldQuaternion(new THREE.Quaternion());
         const cols = [0, 1, 2].map((i) => new THREE.Vector3().setFromMatrixColumn(n.matrixWorld, i).toArray());
-        return {{ ...onCurve(n, c, 0.5), pose: poseOf(n), cols, det: n.matrixWorld.determinant() }};
+        return {{ tip: n.getWorldPosition(new THREE.Vector3()).toArray(),
+                 point: parent.localToWorld(c.getPointAt(0.5)).toArray(),
+                 tangent: c.getTangentAt(0.5).applyQuaternion(q).toArray(), x: axis(n, 0).toArray(),
+                 pose: poseOf(n), cols, det: n.matrixWorld.determinant() }};
     """)
     assert all(math.isfinite(v) for v in r["pose"]), r
     assert abs(norm(r["pose"][3:]) - 1) <= EPS, r
