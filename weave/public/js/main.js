@@ -1,5 +1,5 @@
-// WEAVE's boot module: the release object, the panel lists, then the hero. The load-time decision picks the still or the live
-// quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
+// WEAVE's boot module: the release object, the panel lists, then the hero. The load-time decision picks the still or
+// the live quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
 import { cleanPanels } from './catalog.js';
 import {
   createTooltip, fillSlots, hideTooltip, readHooks, renderPanels, setDataMode, setHeroState, setPaused, setStageLabel,
@@ -497,10 +497,11 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     get order() { return slots.map((_, k) => order[director.blockAt(k)]); },
     get slots() {
       return slots.map((_, k) => {
-        const entry = slots[director.blockAt(k)];
+        const b = director.blockAt(k);
+        const entry = slots[b];
         // The drawn face, which #16's setFace can change; tagged (#14) is what the scene asked the tile painter for.
         return { id: entry ? entry.id : null, name: entry ? entry.name : null, status: entry ? entry.status : null,
-          face: quilt.blocks[director.blockAt(k)].userData.face, tagged: quilt.isTagged(director.blockAt(k)) };
+          face: quilt.blocks[b].userData.face, tagged: quilt.isTagged(b) };
       });
     },
     get clock() { return clock; },

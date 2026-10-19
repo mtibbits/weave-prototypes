@@ -1025,10 +1025,9 @@ def test_pick_block_ignores_the_sashing(paint_js):
 
 # --- #14: the scene passes each block's "New" tag to the tile painter. ---
 
-TAGS_JS = r"""
+TAGS_JS = POSE_JS + r"""
     const T = await import('/public/js/tiles.js');
     const { makeCanvas } = await import('/public/js/fabric.js');
-    const tileOf = (q, i) => q.blocks[i].children.find((c) => c.userData.part === 'tile');
     const paintHash = (entry, options) => { const c = makeCanvas(512); T.paintTile(c, entry, options); return sha256Canvas(c); };
     const flags = (q) => q.blocks.map((_, i) => q.isTagged(i));
     const at = (q, id) => q.blocks.findIndex((b) => b.userData.id === id);

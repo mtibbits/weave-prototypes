@@ -53,7 +53,7 @@ export function renderPanels(section, result, tagged = []) {
   }
   for (const group of ['live', 'planned']) {
     const entries = result.panels.filter((p) => p.status === group);
-    const items = entries.length ? entries.map((p) => panelItem(p, p.status === 'live' && wanted.has(p.id)))
+    const items = entries.length ? entries.map((p) => panelItem(p, group === 'live' && wanted.has(p.id)))
       : [element('li', 'panel-none', NONE_YET)];
     section.querySelector(`[data-list="${group}"]`).replaceChildren(...items);
   }

@@ -299,12 +299,12 @@ function tileName(ctx, text, x = TILE_PAD, top = 176) {
 }
 
 // #14's "New" label: a teal patch with a running stitch, sewn on the swatch band's top-right corner, clear of every
-// text on the tile. It sets every state it uses, and begins a path for each shape, so nothing liveTile drew is refilled.
+// text on the tile. It sets every state it uses, and begins a path for each shape, so nothing liveTile drew is
+// refilled.
 const TAG_AT = { x: 376, y: 28, w: 96, h: 46 };
 function sewTag(ctx) {
   const { x, y, w, h } = TAG_AT;
   ctx.globalAlpha = 1;
-  ctx.setLineDash([]);
   ctx.fillStyle = TEAL;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, 8);
