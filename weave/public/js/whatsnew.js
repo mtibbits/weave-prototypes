@@ -4,7 +4,8 @@
 // shows (rule a), and at boot when nothing is new (rule b). On the live path the card waits for the first weave:mode
 // entry into quilt; on the still path, and on any fall-back to the still while it waits, it shows at once. Every
 // string goes in through textContent. On the still path the card's DOM is appended one task after boot, so the empty
-// polite region is already in the accessibility tree when the card lands in it and is announced.
+// polite region is already in the page when the card lands in it (whether a screen reader announces so early a change
+// is untested).
 
 export const GOT_IT = 'Got it';
 // #16 adds 'sewing' between pending and card.
@@ -65,8 +66,11 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
     if (event.key === 'Escape') close();
   };
 
-  function close() {
+  // A pointer close (a click's detail counts its presses; Enter and Escape give 0) returns focus without scrolling,
+  // so a phone visitor who tapped "Got it" far down the page stays where they are.
+  function close(event) {
     if (state !== 'card' || !card) return;
+    const preventScroll = event?.detail > 0;
     const inside = card.contains(document.activeElement);
     clearTimeout(appendTimer);
     region.replaceChildren();
@@ -74,7 +78,7 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
     document.removeEventListener('keydown', onKeyDown);
     card = null;
     setState('done');
-    if (inside) [returnTo, ...focusFallbacks].find(usable)?.focus();
+    if (inside) [returnTo, ...focusFallbacks].find(usable)?.focus({ preventScroll });
   }
 
   // Shows the card once: the state first (so a re-entry is a no-op), the card (appended now, or one task later at

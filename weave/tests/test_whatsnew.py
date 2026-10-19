@@ -198,10 +198,13 @@ class TestModule:
               out[kind] = [boot.state, boot.calls, t.news.state, t.calls.n, view(t).cards,
                            document.querySelectorAll('.whatsnew-card').length];
             }
+            // A throw inside a listener never reaches dispatchEvent's caller; it is reported on window.
+            out.errors = [];
+            window.addEventListener('error', (e) => out.errors.push(String(e.message)));
             document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             return out;""")
         assert got == {"none-live": ["none", 1, "none", 1, 0, 0], "none-still": ["none", 1, "none", 1, 0, 0],
-                       "still": ["card", 1, "card", 1, 0, 0], "live": ["pending", 0, "card", 1, 0, 0]}
+                       "still": ["card", 1, "card", 1, 0, 0], "live": ["pending", 0, "card", 1, 0, 0], "errors": []}
 
 
 # --- The page shell: the empty polite region and the h1 as a focus target. ---
@@ -353,6 +356,9 @@ def stage_data(page, name):
     return page.eval_on_selector("[data-hero]", f"el => el.dataset.{name} ?? null")
 
 
+H1_BOTTOM = "() => document.querySelector('.hero h1').getBoundingClientRect().bottom"
+
+
 def focused_is(page, selector):
     return page.evaluate("(s) => document.activeElement === document.querySelector(s)", selector)
 
@@ -498,6 +504,17 @@ class TestStill:
         assert focused_is(page, ".hero h1" if how == "hidden" else SOURCE_LINK)
         assert stage_data(page, "releaseState") == "done"
         assert page.evaluate("() => document.querySelector('[data-whatsnew]').childNodes.length") == 0
+
+    def test_tapping_got_it_keeps_the_scroll(self, make_page, base_url):
+        """A phone visitor who scrolled down to the card and taps "Got it" stays where they are; focus still goes to
+        the h1."""
+        page, _ = open_still(make_page, base_url, "?now=2026-10-10", viewport={"width": 390, "height": 844})
+        page.eval_on_selector(".whatsnew-close", "el => el.scrollIntoView({ block: 'center' })")
+        before = page.evaluate("scrollY")
+        assert page.evaluate(H1_BOTTOM) < 0
+        page.click(".whatsnew-close")
+        assert focused_is(page, ".hero h1")
+        assert page.evaluate("scrollY") == before
 
     def test_escape_closes_when_focus_never_entered(self, make_page, base_url):
         page, _ = open_still(make_page, base_url, "?now=2026-10-10")
