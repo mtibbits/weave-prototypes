@@ -26,9 +26,11 @@ a { color: var(--teal); }
 .pill { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 4px 12px; border-radius: 999px; background: #F6E3D6; color: #8A3E1E; }
 .site-nav { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-left: auto; font-size: 15px; font-weight: 600; }
 
-.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 40px; align-items: center; padding: 28px 0 56px; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 0 40px; align-items: center; padding: 28px 0 56px; }
 .hero > * { min-width: 0; }
-@media (max-width: 820px) { .hero { grid-template-columns: minmax(0, 1fr); } }
+/* One column: the figure's margin is the gap below the copy (the rows have none, so the empty card region adds no
+   space). */
+@media (max-width: 820px) { .hero { grid-template-columns: minmax(0, 1fr); } .hero-figure { margin-top: 40px; } }
 .eyebrow { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--teal); }
 h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(38px, 5.4vw, 64px); line-height: 1.04; margin: 0 0 18px; }
 h1 em { color: var(--terra); }
@@ -59,10 +61,13 @@ html[data-frame="still"] .hero-stage { position: fixed; inset: 0; width: 100vw; 
    changing on unstitch never moves the page under it. The still hint never changes, so the still path keeps 1.55em. */
 .hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 3.1em; }
 @media (max-width: 440px) { .hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 4.65em; } }
-/* #15's what's-new card, below the hint in the figure column, so it never covers the canvas or the controls. The
-   region has no box of its own (an empty block, never display: contents, which can drop it from the accessibility
-   tree), so it takes no space while empty. Every colour is opaque and nothing fades, on either path. */
-.whatsnew { margin: 0; padding: 0; border: 0; }
+/* #15's what's-new card, below the hint, so it never covers the canvas or the controls. Its region is the hero's own
+   row under the figure, never inside the figure: the hero centres its first row, so a card that grew that row would
+   move the headline as it shows and as it closes. The region has no box of its own (an empty block, never display:
+   contents, which can drop it from the accessibility tree), so it takes no space while empty. Every colour is opaque
+   and nothing fades, on either path. */
+.whatsnew { grid-column: 2; margin: 0; padding: 0; border: 0; }
+@media (max-width: 820px) { .whatsnew { grid-column: auto; } }
 .whatsnew-card { margin-top: 16px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 6px; background: #FFFDF8; color: var(--ink); }
 .whatsnew-heading { margin: 0 0 8px; font: 600 18px/1.3 var(--sans); }
 .whatsnew-version { margin: 8px 0 2px; font: 600 13px/1.4 var(--sans); letter-spacing: .08em; color: var(--teal); }

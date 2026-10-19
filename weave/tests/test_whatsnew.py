@@ -550,9 +550,12 @@ SHIPPING = mutated("""window.WEAVE_PANELS.release = { version: '1.2', date: '202
 Object.assign(window.WEAVE_PANELS.panels.find((p) => p.id === 'promotions'),
   { status: 'live', since: '1.2', sample: { value: 2, unit: 'boards open' }, blurb: 'Promotion boards and eligibility.' });""")
 SHIPPING_Q = "?nowatchdog&pose=rest&now=2026-10-21"
-# The [data-hero] client top, read by the parse-time MODE_LOG listener on the first weave:mode (before the card).
-TOP_AT_FIRST_MODE = ("window.__onMode = (e, el) => { if (window.__topBefore === undefined)"
-                     " window.__topBefore = el.getBoundingClientRect().top; };")
+# The [data-hero] and .hero h1 client tops, read by the parse-time MODE_LOG listener on the first weave:mode (before
+# the card).
+TOP_AT_FIRST_MODE = ("window.__onMode = (e, el) => { if (window.__topBefore === undefined) {"
+                     " window.__topBefore = el.getBoundingClientRect().top;"
+                     " window.__h1Before = document.querySelector('.hero h1').getBoundingClientRect().top; } };")
+H1_TOP = "() => document.querySelector('.hero h1').getBoundingClientRect().top"
 
 
 def logs(page):
@@ -730,6 +733,19 @@ class TestLive:
         assert view[2] == 0
         assert page.evaluate("() => document.querySelector('[data-hero]').getBoundingClientRect().top"
                              " === window.__topBefore")
+
+    @pytest.mark.parametrize("width, height", [(1440, 900), (1024, 768), (900, 900)],
+                             ids=["1440x900", "1024x768", "900x900"])
+    def test_card_never_moves_the_headline(self, make_page, base_url, width, height):
+        """The two-column hero centres its row, so the card must not grow it: the h1 holds still as the card shows
+        and as it closes."""
+        page, _ = open_card_live(make_page, base_url, before_goto=lambda p: p.add_init_script(TOP_AT_FIRST_MODE),
+                                 viewport={"width": width, "height": height})
+        before = page.evaluate("window.__h1Before")
+        assert page.evaluate(H1_TOP) == before
+        page.keyboard.press("Escape")
+        assert stage_data(page, "releaseState") == "done"
+        assert page.evaluate(H1_TOP) == before
 
     @pytest.mark.parametrize("leg", ["returns", "gone", "hidden-after-fallback"])
     def test_close_on_the_live_path(self, make_page, base_url, leg):
