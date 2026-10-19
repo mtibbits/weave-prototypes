@@ -403,11 +403,13 @@ def test_tag_is_ignored_off_live_tiles(paint_js):
     assert result == {"promotions": True, "suggest": True, "painted": True, "cleared": True}
 
 
-# (entry expression, its first value-or-no-sample text, at least this many other texts, name lines or None)
+# (entry expression, its first value-or-no-sample text, at least this many other texts, name lines or None). The
+# samples are pinned here, so an edit to panels.js's sample data can't move the name/value split.
 LABEL_CASES = {
-    "sample": ("byId('travel')", "12", 5, None),
+    "sample": ("({ ...byId('travel'), sample: { value: 12, unit: 'trips pending' } })", "12", 5, None),
     "no-sample": ("({ ...byId('travel'), sample: null })", "No sample yet", 3, None),
-    "wrapped-name": ("({ ...byId('desks'), name: 'Desk Allocation and Seating' })", "18", 5, 2),
+    "wrapped-name": ("({ ...byId('desks'), name: 'Desk Allocation and Seating', sample: { value: 18, unit: 'desks free' } })",
+                     "18", 5, 2),
 }
 
 LABEL_RECORD_JS = r"""

@@ -195,6 +195,8 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   (scene.js holds their contract; `snapshot()` lists the drawn `pins` and `stitches` and the `stitchDash` frame,
   and its blocks include any hover lift, so a reader that needs seated seams keeps the pointer off the blocks),
   and the test-only `decorIdle`, `hover` (`{ id, amount }`), `groupMatrix()` and `pickBlock(clientX, clientY)`.
+- Each `__weave.slots` entry is `{ id, name, status, face, tagged }`. `tagged` (#14) is what the scene asked the tile
+  painter for; the painter draws the "New" label on live tiles only.
 - `__weave.mode` is the director's state: `intro` (#10), `quilt`, `unstitching`, `tiles` or `restitching` (#8), with
   `sewing` (#16) reserved. A plain load starts in `intro`, which flies the blocks in and settles into `quilt`;
   `?pose=rest` starts in `quilt`. After a fallback it keeps the value it had at the teardown, which may be
