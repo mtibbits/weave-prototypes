@@ -255,7 +255,7 @@ def test_spec_lists_the_card_hooks():
         assert phrase in hooks, phrase
     assert any("weave:mode" in s and "quilt" in s and "card" in s for s in sentences(hooks)), sentences(hooks)
     release_hook = next(line for line in hooks.split("\n- ") if "stage.__weaveRelease" in line)
-    assert "calls it when the card shows" in " ".join(release_hook.split())
+    assert "calls it when the card is seen" in " ".join(release_hook.split())
     logic = re.search(r"^## 7\..*?(?=^## 8\.)", spec, re.M | re.S).group(0)
     assert any("lastSeenRelease" in s and "card" in s and ("release.date" in s or "the window opens" in s)
                for s in sentences(logic)), sentences(logic)

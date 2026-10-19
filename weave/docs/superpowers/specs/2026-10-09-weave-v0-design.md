@@ -136,9 +136,11 @@ All motion is springs toward per-block targets plus a few scripted timelines.
   - on the first release ever, nothing is new;
   - otherwise the panels whose `since` equals the current release are new.
 - With a stored last-seen version: the panels with `lastSeen < since ≤ current` are new.
-- The current version is stored under `weave.lastSeenRelease` when the what's-new card shows (#15), on any path, or at
-  boot when nothing is new, and never before `release.date` (until the window opens nothing is written). A simulated
-  visit writes `weave.lastSeenRelease.sim` instead.
+- The current version is stored under `weave.lastSeenRelease` when the what's-new card is seen (#15), on any path, or at
+  boot when nothing is new, and never before `release.date` (until the window opens nothing is written). The card
+  counts as seen once half of it is in the viewport, or when it is closed, so a card below the fold on a phone is not
+  used up unseen; a card that could not be built writes nothing. A simulated visit writes `weave.lastSeenRelease.sim`
+  instead.
 - All storage access sits in `try/catch`.
 
 ## 8. The page
@@ -192,11 +194,13 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   visit's `weave.lastSeenRelease`.
 - `stage.__weaveRelease` on the `[data-hero]` element, on both paths, set before the hero starts (#12): `today`,
   `force`, `key`, `lastSeen`, `newIds`, `taggedIds` and `recordSeen()`, the only writer of lastSeen (never before the
-  release date). #15 calls it when the card shows, on any path, and at boot when nothing is new.
+  release date). #15 calls it when the card is seen (half of it in the viewport, or closed), on any path, and at boot
+  when nothing is new.
 - `data-release-state` on the stage (#15), set at boot on both paths, reads the card's state: `none` (nothing is new
-  this visit), `pending` (the live path, waiting for the quilt), `card` (the card is showing) or `done` (it was
-  closed). The still path goes straight to `card`, and a fallback to the still while `pending` shows the card at
-  once. #16 adds `sewing` between `pending` and `card`.
+  this visit), `pending` (the live path, waiting for the quilt), `card` (the card is showing; if its region is missing
+  or it cannot be built, nothing shows and nothing is recorded) or `done` (it was closed). The still path goes straight
+  to `card`, and a fallback to the still while `pending` shows the card at once. #16 adds `sewing` between `pending`
+  and `card`.
 - `data-new-panels` on the stage (#15) is `newIds` joined with spaces, and empty when there is no card; read the exact
   ids from `__weaveRelease.newIds`.
 - On the live path the card shows on the first `weave:mode` whose `mode` is `quilt` (the intro's end, a skip, or at

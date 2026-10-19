@@ -17,11 +17,14 @@ RELEASE_TEXT = "New this release · v1.1 (sample release)"
 
 # --- The module on a blank page. mk(kind, opts) builds a stage, a region, the toggle, an h1 (tabindex -1) and a
 # button X, then createNews over them with a counting recordSeen; kind is none-live, none-still, still or live.
-# tick() lets the module's one-task append (and anything else queued) run. ---
+# tick() lets the module's one-task append (and anything else queued) run; settle() adds two frames, so the card's
+# IntersectionObserver has reported. opts.spacer puts a 3000 px block above the region, below the fold. ---
 
 NEWS_JS = r"""
     const W = await import('/public/js/whatsnew.js');
     const tick = () => new Promise((r) => setTimeout(r, 0)).then(() => new Promise((r) => setTimeout(r, 0)));
+    const settle = () => tick().then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+      .then(tick);
     const RELEASE = { kind: 'release', text: 'New this release · v1.1 (sample release)',
                       groups: [{ version: '1.1', names: ['Travel', 'Desk Allocation'] }] };
     const mk = (kind, opts = {}) => {
@@ -37,6 +40,11 @@ NEWS_JS = r"""
       const x = document.createElement('button');
       x.textContent = 'X';
       document.body.append(h1, stage, toggle, x, region);
+      if (opts.spacer) {
+        const spacer = document.createElement('div');
+        spacer.style.height = '3000px';
+        region.before(spacer);
+      }
       const calls = { n: 0 };
       const none = kind.startsWith('none');
       const news = W.createNews({
@@ -73,7 +81,7 @@ class TestModule:
         got = js(NEWS_JS + f"""
             const t = mk('{kind}');
             const boot = view(t);
-            await tick();
+            await settle();
             return [boot.state, view(t)];""")
         assert got[0] == state
         assert got[1] == {"state": state, "attr": state, "panels": panels, "calls": calls, "cards": cards}
@@ -89,7 +97,7 @@ class TestModule:
             mode(t, 'quilt'); t.news.fallBack(); out.push(view(t));
             return out;""")
         assert [(v["state"], v["calls"], v["cards"]) for v in got] == [
-            ("pending", 0, 0), ("card", 1, 1), ("card", 1, 1), ("done", 1, 0), ("done", 1, 0)]
+            ("pending", 0, 0), ("card", 0, 1), ("card", 0, 1), ("done", 1, 0), ("done", 1, 0)]
         assert [v["attr"] for v in got] == ["pending", "card", "card", "done", "done"]
 
     def test_news_fallback_while_pending(self, js):
@@ -97,11 +105,14 @@ class TestModule:
             const a = mk('live');
             a.news.fallBack();
             const first = view(a);
+            await settle();
+            const seen = view(a).calls;
             const b = mk('none-live');
             b.news.fallBack(); mode(b, 'quilt');
-            return [first, view(b)];""")
-        assert got[0] == {"state": "card", "attr": "card", "panels": "travel desks", "calls": 1, "cards": 1}
-        assert got[1] == {"state": "none", "attr": "none", "panels": "", "calls": 1, "cards": 0}
+            return [first, seen, view(b)];""")
+        assert got[0] == {"state": "card", "attr": "card", "panels": "travel desks", "calls": 0, "cards": 1}
+        assert got[1] == 1
+        assert got[2] == {"state": "none", "attr": "none", "panels": "", "calls": 1, "cards": 0}
 
     def test_card_text_is_text(self, js):
         got = js(NEWS_JS + f"""
@@ -151,10 +162,12 @@ class TestModule:
         assert got == [[True, True, 1], [True, True, 1]]
 
     @pytest.mark.parametrize("leg, expected", [
-        ("returns", "x"), ("gone", "toggle"), ("hidden", "h1"), ("undisplayed", "h1"), ("body", "toggle"),
-    ], ids=["returns", "gone", "hidden", "undisplayed", "body"])
+        ("returns", "x"), ("gone", "toggle"), ("hidden", "h1"), ("undisplayed", "h1"), ("invisible", "h1"),
+        ("body", "toggle"),
+    ], ids=["returns", "gone", "hidden", "undisplayed", "invisible", "body"])
     def test_close_restores_focus(self, js, leg, expected):
-        # hidden: the [hidden] clause alone (an inline display keeps a box); undisplayed: the box clause alone.
+        # hidden: the [hidden] clause alone (an inline display keeps a box); undisplayed: the box clause alone;
+    # invisible: the visibility clause alone.
         got = js(NEWS_JS + f"""
             const t = mk('still');
             await tick();
@@ -164,6 +177,7 @@ class TestModule:
             if (leg === 'gone') t.x.remove();
             if (leg === 'hidden') for (const el of [t.x, t.toggle]) {{ el.hidden = true; el.style.display = 'inline-block'; }}
             if (leg === 'undisplayed') for (const el of [t.x, t.toggle]) el.style.display = 'none';
+            if (leg === 'invisible') for (const el of [t.x, t.toggle]) el.style.visibility = 'hidden';
             const inside = document.activeElement === gotIt(t);
             gotIt(t).click();
             const names = new Map([[t.x, 'x'], [t.toggle, 'toggle'], [t.h1, 'h1'], [document.body, 'body']]);
@@ -187,6 +201,24 @@ class TestModule:
         assert got[1]["state"] == "done" and got[1]["cards"] == 0
         assert got[2] is True
 
+    def test_card_is_recorded_when_seen(self, js):
+        """Rule (a) waits for the visitor: a card below the fold is recorded once it is scrolled into view (and only
+        once), or when it is closed unseen."""
+        got = js(NEWS_JS + """
+            const t = mk('still', { spacer: true });
+            await settle();
+            const below = view(t).calls;
+            t.region.scrollIntoView();
+            await settle();
+            const inView = view(t).calls;
+            gotIt(t).click();
+            const closed = view(t).calls;
+            const u = mk('still', { spacer: true });
+            await settle();
+            document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            return [below, inView, closed, [view(u).state, view(u).calls]];""")
+        assert got == [0, 1, 1, ["done", 1]]
+
     def test_news_with_no_region_never_throws(self, js):
         got = js(NEWS_JS + """
             const out = {};
@@ -204,7 +236,7 @@ class TestModule:
             document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             return out;""")
         assert got == {"none-live": ["none", 1, "none", 1, 0, 0], "none-still": ["none", 1, "none", 1, 0, 0],
-                       "still": ["card", 1, "card", 1, 0, 0], "live": ["pending", 0, "card", 1, 0, 0], "errors": []}
+                       "still": ["card", 0, "card", 0, 0, 0], "live": ["pending", 0, "card", 0, 0, 0], "errors": []}
 
 
 # --- The page shell: the empty polite region and the h1 as a focus target. ---
@@ -352,6 +384,15 @@ def stored(page):
                          [helpers.SIM_KEY, helpers.LAST_SEEN_KEY])
 
 
+def seen(page):
+    """stored(page) once rule (a) has written .sim: the card is recorded when it is seen, a frame or so after it lands."""
+    page.wait_for_function("(k) => localStorage.getItem(k) !== null", arg=helpers.SIM_KEY)
+    return stored(page)
+
+
+FRAMES = "() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0))))"
+
+
 def stage_data(page, name):
     return page.eval_on_selector("[data-hero]", f"el => el.dataset.{name} ?? null")
 
@@ -384,7 +425,7 @@ def assert_sample_card(page):
     assert read == {"heading": RELEASE_TEXT, "versions": [], "names": TRAVEL_DESKS}
     assert stage_data(page, "newPanels") == "travel desks"
     assert stage_data(page, "releaseState") == "card"
-    assert stored(page) == ["1.1", None]
+    assert seen(page) == ["1.1", None]
 
 
 def assert_card_contrast_and_focus(page):
@@ -410,12 +451,13 @@ class TestStill:
         page, errors = open_still(make_page, base_url, "?now=2026-10-10", **options)
         assert states(page) == ["card"]
         assert helpers.hero_result(page) == ["still", path]
-        assert stored(page)[0] == "1.1"
+        assert seen(page)[0] == "1.1"
         assert errors == []
 
     def test_reload_shows_no_card_and_keeps_tags(self, make_page, base_url):
         page, _ = open_still(make_page, base_url, "?now=2026-10-10")
         assert stage_data(page, "releaseState") == "card"
+        seen(page)
         page.reload()
         page.wait_for_function(helpers.RELEASE_READY)
         assert stage_data(page, "releaseState") == "none"
@@ -426,7 +468,7 @@ class TestStill:
     def test_after_the_window_rule_b_writes_sim(self, make_page, base_url):
         page, errors = open_still(make_page, base_url, "?now=2026-10-20", wait_card=False)
         assert stage_data(page, "releaseState") == "none" and card(page) == [0, None]
-        assert stored(page) == ["1.1", None]
+        assert seen(page) == ["1.1", None]
         assert errors == []
 
     def test_whatsnew_before_the_window_shows_card_writes_nothing(self, make_page, base_url):
@@ -457,7 +499,7 @@ class TestStill:
     def test_whatsnew_on_a_release_with_no_panels(self, make_page, base_url):
         body = mutated("window.WEAVE_PANELS.release = { version: '1.2', date: '2026-10-09' };")
         page, _ = open_still(make_page, base_url, "?now=2026-10-10&whatsnew", panels_body=body, wait_card=False)
-        page.wait_for_timeout(100)
+        page.evaluate(FRAMES)
         assert states(page) == ["none"]
         assert card(page) == [0, None]
 
@@ -508,13 +550,25 @@ class TestStill:
     def test_tapping_got_it_keeps_the_scroll(self, make_page, base_url):
         """A phone visitor who scrolled down to the card and taps "Got it" stays where they are; focus still goes to
         the h1."""
-        page, _ = open_still(make_page, base_url, "?now=2026-10-10", viewport={"width": 390, "height": 844})
+        page, _ = open_still(make_page, base_url, "?now=2026-10-10", viewport={"width": 390, "height": 844},
+                             is_mobile=True, has_touch=True)
         page.eval_on_selector(".whatsnew-close", "el => el.scrollIntoView({ block: 'center' })")
         before = page.evaluate("scrollY")
         assert page.evaluate(H1_BOTTOM) < 0
-        page.click(".whatsnew-close")
+        page.tap(".whatsnew-close")
         assert focused_is(page, ".hero h1")
         assert page.evaluate("scrollY") == before
+
+    def test_card_below_the_fold_is_recorded_when_scrolled_to(self, make_page, base_url):
+        """On a small phone the card lands below the fold: nothing is written until it is half in view."""
+        page, errors = open_still(make_page, base_url, "?now=2026-10-10", viewport={"width": 375, "height": 667})
+        assert page.eval_on_selector(CARD, "el => el.getBoundingClientRect().top") > 667
+        page.evaluate(FRAMES)
+        assert stage_data(page, "releaseState") == "card"
+        assert stored(page) == [None, None]
+        page.eval_on_selector(CARD, "el => el.scrollIntoView({ block: 'center' })")
+        assert seen(page) == ["1.1", None]
+        assert errors == []
 
     def test_escape_closes_when_focus_never_entered(self, make_page, base_url):
         page, _ = open_still(make_page, base_url, "?now=2026-10-10")
@@ -545,7 +599,8 @@ class TestStill:
         assert page.locator("[data-whatsnew]").count() == 0
         assert helpers.hero_result(page) == ["still", "reduced-motion"]
         assert stage_data(page, "releaseState") == "card"
-        assert stored(page)[0] == "1.1"
+        page.evaluate(FRAMES)
+        assert stored(page) == [None, None]
         assert errors == []
 
     def test_no_horizontal_scroll_with_the_card(self, make_page, base_url):
@@ -644,7 +699,7 @@ class TestLive:
         sampled = page.evaluate("window.__frames")
         assert ["intro", "pending"] in sampled
         assert ["intro", "card"] not in sampled
-        assert stored(page) == ["1.1", None]
+        assert seen(page) == ["1.1", None]
         assert errors == []
 
     def test_pose_rest_without_now_query_shows_the_card_when_live(self, make_page, base_url):
@@ -653,7 +708,7 @@ class TestLive:
         assert stage_data(page, "releaseState") == "card"
         assert states(page) == ["pending", "card"]
         assert card_record(page)["events"] == 1
-        assert stored(page) == ["1.1", None]
+        assert seen(page) == ["1.1", None]
 
     @pytest.mark.parametrize("path", ["live", "still"])
     def test_shipping_a_panel(self, make_page, base_url, path):
@@ -685,7 +740,7 @@ class TestLive:
         helpers.wait_for_reason(page, "too-slow")
         page.wait_for_selector(CARD)
         assert page.locator(CARD).is_visible()
-        assert stored(page)[0] == "1.1" and stage_data(page, "releaseState") == "card"
+        assert seen(page)[0] == "1.1" and stage_data(page, "releaseState") == "card"
         assert card_record(page)["hero"] == ["still", "too-slow"]
         assert states(page) == ["pending", "card"]
 
@@ -707,7 +762,7 @@ class TestLive:
         page.wait_for_selector(CARD)
         assert states(page) == ["pending", "card"]
         assert card_record(page)["hero"][0] == "still"
-        assert stored(page)[0] == "1.1"
+        assert seen(page)[0] == "1.1"
 
     @pytest.mark.parametrize("control", ["pause", "toggle"])
     def test_skips_during_the_intro_show_the_card(self, make_page, base_url, control):
@@ -724,13 +779,13 @@ class TestLive:
             entries = page.evaluate("window.__entries")
             i = next(k for k, e in enumerate(entries) if e[1] == "card")
             assert entries[i:i + 2] == [["quilt", "card", 2], ["unstitching", "card", 3]]
-        assert stored(page)[0] == "1.1"
+        assert seen(page)[0] == "1.1"
 
     @pytest.mark.parametrize("path", ["live"])
     def test_after_the_window_rule_b_writes_sim(self, make_page, base_url, path):
         page, _ = open_card_live(make_page, base_url, "?nowatchdog&pose=rest&now=2026-10-20", wait_card=False)
         assert states(page) == ["none"] and card(page) == [0, None]
-        assert stored(page) == ["1.1", None]
+        assert seen(page) == ["1.1", None]
 
     @pytest.mark.parametrize("path", ["live"])
     def test_card_has_no_animation(self, make_page, base_url, path):

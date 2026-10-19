@@ -1,11 +1,12 @@
 // #15's what's-new card: a non-modal card listing the panels new for this visit, under #12's heading. No imports, so the
 // still path never pulls in Three.js through it, and it never throws (a missing region skips the card's DOM only).
 // It owns the stage's data-release-state and data-new-panels and both of #12's recordSeen() call sites: when the card
-// shows (rule a), and at boot when nothing is new (rule b). On the live path the card waits for the first weave:mode
-// entry into quilt; on the still path, and on any fall-back to the still while it waits, it shows at once. Every
-// string goes in through textContent. On the still path the card's DOM is appended one task after boot, so the empty
-// polite region is already in the page when the card lands in it (whether a screen reader announces so early a change
-// is untested).
+// is seen (rule a: half of it first in the viewport, or closed; a card that was never built records nothing, so the
+// next visit shows it), and at boot when nothing is new (rule b). On the live path the card waits for the first
+// weave:mode entry into quilt; on the still path, and on any fall-back to the still while it waits, it shows at once.
+// Every string goes in through textContent. On the still path the card's DOM is appended one task after boot, so the
+// empty polite region is already in the page when the card lands in it (whether a screen reader announces so early a
+// change is untested).
 
 export const GOT_IT = 'Got it';
 // #16 adds 'sewing' between pending and card.
@@ -44,6 +45,8 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
   let card = null;
   let returnTo = null;
   let appendTimer = 0;
+  let recorded = false;
+  let watcher = null;
 
   // The one writer of data-release-state.
   const setState = (next) => {
@@ -52,6 +55,9 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
   };
 
   const record = () => {
+    if (recorded) return;
+    recorded = true;
+    watcher?.disconnect();
     try {
       recordSeen();
     } catch (err) {
@@ -70,6 +76,7 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
   // so a phone visitor who tapped "Got it" far down the page stays where they are.
   function close(event) {
     if (state !== 'card' || !card) return;
+    record();
     const preventScroll = event?.detail > 0;
     const inside = card.contains(document.activeElement);
     clearTimeout(appendTimer);
@@ -81,8 +88,21 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
     if (inside) [returnTo, ...focusFallbacks].find(usable)?.focus({ preventScroll });
   }
 
-  // Shows the card once: the state first (so a re-entry is a no-op), the card (appended now, or one task later at
-  // boot), then rule (a). It never moves focus.
+  // Rule (a) waits for the visitor: a card below the fold (one column, phones) is recorded once half of it is in the
+  // viewport, or when it is closed, never on insertion.
+  const watch = () => {
+    if (typeof IntersectionObserver !== 'function') {
+      record();
+      return;
+    }
+    watcher = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.intersectionRatio >= 0.5)) record();
+    }, { threshold: 0.5 });
+    watcher.observe(card);
+  };
+
+  // Shows the card once: the state first (so a re-entry is a no-op), then the card, appended now or one task later at
+  // boot and watched for rule (a). It never moves focus.
   function show({ defer = false } = {}) {
     setState('card');
     stage.removeEventListener('weave:mode', onMode);
@@ -93,13 +113,16 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
         returnTo = document.activeElement;
         document.addEventListener('focusin', onFocusIn, true);
         document.addEventListener('keydown', onKeyDown);
-        if (defer) appendTimer = setTimeout(() => region.append(card), 0);
-        else region.append(card);
+        const append = () => {
+          region.append(card);
+          watch();
+        };
+        if (defer) appendTimer = setTimeout(append, 0);
+        else append();
       } catch (err) {
         console.error(err);
       }
     }
-    record();
   }
 
   const onMode = (event) => {
