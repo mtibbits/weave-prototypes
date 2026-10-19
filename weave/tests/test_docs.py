@@ -226,3 +226,42 @@ def test_spec_lists_the_release_hooks():
     hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
     for phrase in ("?now=", "?whatsnew", "__weaveRelease", "recordSeen", "weave.lastSeenRelease.sim"):
         assert phrase in hooks, phrase
+
+
+# --- #15: shipping a panel, and the card's hooks. ---
+
+SHIPPING = "Shipping a panel"
+SPEC = WEAVE / "docs" / "superpowers" / "specs" / "2026-10-09-weave-v0-design.md"
+
+
+def test_weave_readme_has_the_shipping_section():
+    readme = WEAVE / "README.md"
+    headings = re.findall(r"^## (.+?)\s*$", readme.read_text(encoding="utf-8"), re.M)
+    assert SHIPPING in headings
+    assert headings.index(EDITING) < headings.index(SHIPPING) < headings.index("Stills"), headings
+    shipping = section(readme, SHIPPING)
+    for phrase in ("status: 'live'", "since", "'1.2'", "sample", "blurb", "YYYY-MM-DD", "?now=", "?whatsnew",
+                   "weave.lastSeenRelease", "capture_still.py", "FIXED_INSTANT", "build_assets.py --poster"):
+        assert phrase in shipping, phrase
+    said = sentences(shipping)
+    assert any("version" in s and "date" in s and "window" in s for s in said), said
+    assert any("stale" in s and ("recapture" in s or "capture_still.py" in s) for s in said), said
+
+
+def test_spec_lists_the_card_hooks():
+    spec = SPEC.read_text(encoding="utf-8")
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
+    for phrase in ("data-release-state", "data-new-panels", "`none`", "`pending`", "`card`", "`done`"):
+        assert phrase in hooks, phrase
+    assert any("weave:mode" in s and "quilt" in s and "card" in s for s in sentences(hooks)), sentences(hooks)
+    release_hook = next(line for line in hooks.split("\n- ") if "stage.__weaveRelease" in line)
+    assert "calls it when the card shows" in " ".join(release_hook.split())
+    logic = re.search(r"^## 7\..*?(?=^## 8\.)", spec, re.M | re.S).group(0)
+    assert any("lastSeenRelease" in s and "card" in s and ("release.date" in s or "the window opens" in s)
+               for s in sentences(logic)), sentences(logic)
+    page = re.search(r"^## 8\..*?(?=^## 9\.)", spec, re.M | re.S).group(0)
+    hero = re.search(r"\*\*Hero:\*\*(.*?)(?=^- \*\*)", page, re.M | re.S).group(1)
+    assert "card" in hero, hero
+    access = re.search(r"^## 9\..*?(?=^### URL)", spec, re.M | re.S).group(0)
+    assert "aria-live" in access
+    assert any("h1" in s and "tabindex" in s for s in sentences(access)), sentences(access)
