@@ -834,7 +834,7 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     render, snapshot, project, dispose, placeBlock, reseam, blockBase, planePoint,
     revealStitches, popStitches, restorePins, popPins, setFace, stow, unstow, stowAll, unstowAll, unstowBlock, tick,
     setPaused, finishDecor, setHover, pickBlock,
-    // #14: whether block i's tile was painted with the "New" label.
+    // #14: whether block i's tile was asked for the "New" label (the painter draws it on live tiles only).
     isTagged: (i) => tags[i] === true,
     get decorIdle() { return decor.every(({ kinds }) => Object.values(kinds).every((k) => !k.anim)); },
   };
