@@ -6,7 +6,8 @@ import {
   setToggle, showLiveControls, showTooltip,
 } from './dom.js';
 import { decideMode, FrameWatchdog, readEnvironment } from './eligibility.js';
-import { createRelease } from './release.js';
+import { cardHeading, createRelease } from './release.js';
+import { createNews } from './whatsnew.js';
 
 const LOAD_FAILED = 'WEAVE: the 3D quilt could not load, so the still image stays.';
 const WEBGL_FAILED = 'WEAVE: WebGL setup failed, so the still image stays.';
@@ -24,8 +25,9 @@ const pause = document.querySelector('[data-pause]');
 const toggle = document.querySelector('[data-toggle]');
 // #12's release object, on both paths before the lists and the hero: which panels are new for this visit, computed
 // once over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
+const raw = result.error ? null : window.WEAVE_PANELS;
 const release = createRelease({
-  now: hooks.now, whatsnew: hooks.whatsnew, rest: hooks.rest, raw: result.error ? null : window.WEAVE_PANELS,
+  now: hooks.now, whatsnew: hooks.whatsnew, rest: hooks.rest, raw,
   panels: result.panels, date: new Date(), getStorage: () => window.localStorage, warn: (m) => console.warn(m),
 });
 stage.__weaveRelease = release;
@@ -34,9 +36,23 @@ const tagged = Object.freeze([...release.taggedIds]);
 renderPanels(document.getElementById('panels'), result, tagged);
 // A broken file keeps the static label from the HTML.
 if (!result.error) setStageLabel(stage, result.panels);
+// E1's load-time decision, once at boot: the card (#15) needs it before the hero starts.
+const decision = decideMode(readEnvironment(window));
+// #15's what's-new card: none, the card at once on the still path, or pending until the quilt on the live one. A
+// card that cannot be built never keeps the hero from starting.
+let news = { fallBack() {} };
+try {
+  news = createNews({
+    stage, region: document.querySelector('[data-whatsnew]'),
+    heading: cardHeading({ panels: result.panels, newIds: release.newIds, release: raw?.release }),
+    newIds: release.newIds, recordSeen: release.recordSeen, live: decision.live,
+    focusFallbacks: [toggle, document.querySelector('.hero h1')],
+  });
+} catch (err) {
+  console.error(err);
+}
 
 async function startHero() {
-  const decision = decideMode(readEnvironment(window));
   if (!decision.live) {
     setHeroState(stage, hint, 'still', decision.reason);
     return;
