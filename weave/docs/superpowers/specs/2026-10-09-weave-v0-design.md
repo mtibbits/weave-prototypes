@@ -136,7 +136,11 @@ All motion is springs toward per-block targets plus a few scripted timelines.
   - on the first release ever, nothing is new;
   - otherwise the panels whose `since` equals the current release are new.
 - With a stored last-seen version: the panels with `lastSeen < since ≤ current` are new.
-- After the sequence runs (or nothing was new), the current version is stored under `weave.lastSeenRelease`.
+- The current version is stored under `weave.lastSeenRelease` when the what's-new card is seen (#15), on any path, or at
+  boot when nothing is new, and never before `release.date` (until the window opens nothing is written). The card
+  counts as seen once half of it is in the viewport, or when it is closed, so a card below the fold on a phone is not
+  used up unseen; a card that could not be built writes nothing. A simulated visit writes `weave.lastSeenRelease.sim`
+  instead.
 - All storage access sits in `try/catch`.
 
 ## 8. The page
@@ -146,7 +150,8 @@ All motion is springs toward per-block targets plus a few scripted timelines.
   - eyebrow: the full acronym;
   - headline: "Every part of your workforce, *woven* together.";
   - lede, then the canvas, with the controls Unstitch / Sew it back and Pause motion;
-  - a hint line.
+  - a hint line;
+  - the what's-new card (#15), below the hint, in an empty polite live region.
 - **"What's sewn in":** "Sewn in" and "Pinned for later" lists, built from `panels.js`, with "New" tags.
 - **"Why a quilt?":** three sentences on the mapping, plus "Coalesce lives on as the Manpower patch".
 - **Footer:** "Sample data only" and the source link.
@@ -171,6 +176,10 @@ All motion is springs toward per-block targets plus a few scripted timelines.
 - The panel lists carry the content in plain HTML, so nothing depends on the canvas.
 - The controls are real buttons. The stage (`role="img"`) carries the descriptive `aria-label`, and the canvas is
   `aria-hidden`.
+- The what's-new card (#15) lands in a polite live region (`aria-live="polite"`) that is in the page, empty, from
+  load, outside the stage. The card never takes focus and is not modal: Tab moves through it and past it, and
+  "Got it" or Escape closes it. The `h1` carries `tabindex="-1"` as a programmatic focus target: when focus was in
+  the card at its close, it returns to where it came from, else the toggle, else the `h1`.
 
 ### URL and page hooks
 
@@ -185,7 +194,17 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   visit's `weave.lastSeenRelease`.
 - `stage.__weaveRelease` on the `[data-hero]` element, on both paths, set before the hero starts (#12): `today`,
   `force`, `key`, `lastSeen`, `newIds`, `taggedIds` and `recordSeen()`, the only writer of lastSeen (never before the
-  release date; #15 decides when to call it).
+  release date). #15 calls it when the card is seen (half of it in the viewport, or closed), on any path, and at boot
+  when nothing is new.
+- `data-release-state` on the stage (#15), set at boot on both paths, reads the card's state: `none` (nothing is new
+  this visit), `pending` (the live path, waiting for the quilt), `card` (the card is showing; if its region is missing
+  or it cannot be built, nothing shows and nothing is recorded) or `done` (it was closed). The still path goes straight
+  to `card`, and a fallback to the still while `pending` shows the card at once. #16 adds `sewing` between `pending`
+  and `card`.
+- `data-new-panels` on the stage (#15) is `newIds` joined with spaces, and empty when there is no card; read the exact
+  ids from `__weaveRelease.newIds`.
+- On the live path the card shows on the first `weave:mode` whose `mode` is `quilt` (the intro's end, a skip, or at
+  once at `?pose=rest`), from the module's own listener, never by polling `__weave.mode`.
 - `stage.__weave` on the `[data-hero]` element: `mode`, `order`, `slots`, `clock`, `stop(reason)` and `snapshot()`
   (the scene's world-space geometry as JSON-safe arrays). `order` and `slots` list the slots, so they follow a
   drag (#9). `lastDt`, `project([x, y, z])`, `fades()` (each faded part's `{ opacity, visible }`: the sashing, rod,

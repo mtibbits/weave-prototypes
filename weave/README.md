@@ -102,6 +102,15 @@ An entry the page can't use is skipped, and the console warns, naming the entry'
 
 Editing `panels.js` alone changes everything on the page except the still, which keeps showing the old quilt until someone recaptures it (see Stills).
 
+## Shipping a panel
+
+Shipping a panel is an edit to `panels.js`, a preview and a fresh still. A visitor whose browser has not yet seen the release gets a "what's new" card listing it, and the panel's "New" tag stays in the list for the release's news window.
+
+1. Make the panel live: give its entry `status: 'live'`, a `since` naming the release it arrives in, quoted as a string such as `'1.2'` (never the number `1.2`), a `sample` (`{ value, unit }`, or `null` for "No sample yet") and a `blurb`.
+2. Bump the release: set `release.version` to that same version and `release.date` to the day it ships, written `YYYY-MM-DD`. The news window opens on that date and lasts `newsWindowDays`, so a bumped version left with the old date keeps the old window: only the days that remain of it, then nothing.
+3. Preview it with `?now=YYYY-MM-DD` (a day inside the window) or `?whatsnew` (the current release's panels as new, whatever the day). Neither touches the real `weave.lastSeenRelease`, so your own next real visit still gets the card. A `?now=` preview writes `weave.lastSeenRelease.sim` instead, so a second one shows no card: use `?whatsnew`, or delete that key, to see it again. `?whatsnew` before `release.date` writes nothing.
+4. Recapture the still with `capture_still.py` (see Stills), since the still stays stale, showing the panel pinned, until someone recaptures it. The capture opens the page with `now=` set to `FIXED_INSTANT`'s date and never pins the browser clock (as "The fixed test clock" says); that date is outside every news window, so the panel shows sewn in and nothing is written. E4's #23 later replaces this step with `build_assets.py --poster`.
+
 ## Stills
 
 Phones, reduced motion and any browser where the 3D scene can't run show `public/assets/weave-still.jpg`, a 1600 x 1000 JPEG of the quilt at rest. It is captured from the live render, not drawn. To recapture it, run this from the repo root with the venv active, then commit the new file:
