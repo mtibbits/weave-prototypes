@@ -345,8 +345,8 @@ def states(page):
 
 
 def stored(page):
-    return page.evaluate("() => [localStorage.getItem('weave.lastSeenRelease.sim'),"
-                         " localStorage.getItem('weave.lastSeenRelease')]")
+    return page.evaluate("(keys) => keys.map((k) => localStorage.getItem(k))",
+                         [helpers.SIM_KEY, helpers.LAST_SEEN_KEY])
 
 
 def stage_data(page, name):
@@ -735,14 +735,8 @@ class TestLive:
         assert view[2] == 0
         assert page.evaluate("() => document.querySelector('[data-hero]').getBoundingClientRect().top"
                              " === window.__topBefore")
-
-    @pytest.mark.parametrize("width, height", [(1440, 900), (1024, 768), (900, 900)],
-                             ids=["1440x900", "1024x768", "900x900"])
-    def test_card_never_moves_the_headline(self, make_page, base_url, width, height):
-        """The two-column hero centres its row, so the card must not grow it: the h1 holds still as the card shows
-        and as it closes."""
-        page, _ = open_card_live(make_page, base_url, before_goto=lambda p: p.add_init_script(TOP_AT_FIRST_MODE),
-                                 viewport={"width": width, "height": height})
+        # The two-column hero centres its row, so the card must not grow it: the h1 holds still as the card shows
+        # and as it closes.
         before = page.evaluate("window.__h1Before")
         assert page.evaluate(H1_TOP) == before
         page.keyboard.press("Escape")

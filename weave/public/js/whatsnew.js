@@ -81,6 +81,7 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
   // boot), then rule (a). It never moves focus.
   function show({ defer = false } = {}) {
     setState('card');
+    stage.removeEventListener('weave:mode', onMode);
     if (region) {
       try {
         card = buildCard(heading);
@@ -88,8 +89,7 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
         returnTo = document.activeElement;
         document.addEventListener('focusin', onFocusIn, true);
         document.addEventListener('keydown', onKeyDown);
-        const built = card;
-        if (defer) appendTimer = setTimeout(() => { if (card === built) region.append(built); }, 0);
+        if (defer) appendTimer = setTimeout(() => region.append(card), 0);
         else region.append(card);
       } catch (err) {
         console.error(err);
