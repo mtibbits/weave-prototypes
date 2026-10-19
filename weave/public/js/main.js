@@ -52,6 +52,13 @@ try {
   console.error(err);
 }
 
+// The one door for every fall-back to the still after boot: the still and its hint, then the card if it was still
+// waiting for the quilt.
+function fallBack(reason) {
+  setHeroState(stage, hint, 'still', reason);
+  news.fallBack();
+}
+
 async function startHero() {
   if (!decision.live) {
     setHeroState(stage, hint, 'still', decision.reason);
@@ -68,7 +75,7 @@ async function startHero() {
     modules = { scene, motion, tiles, layout };
   } catch (err) {
     console.warn(LOAD_FAILED, err);
-    setHeroState(stage, hint, 'still', 'load-failed');
+    fallBack('load-failed');
     return;
   }
   startLive(modules, fillSlots(result.panels));
@@ -83,7 +90,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     renderer = S.createRenderer(canvas);
   } catch (err) {
     console.warn(WEBGL_FAILED, err);
-    setHeroState(stage, hint, 'still', 'webgl-failed');
+    fallBack('webgl-failed');
     return;
   }
   let quilt;
@@ -96,7 +103,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     renderer.dispose();
     renderer.forceContextLoss();
     console.warn(LOAD_FAILED, err);
-    setHeroState(stage, hint, 'still', 'load-failed');
+    fallBack('load-failed');
     return;
   }
 
@@ -462,10 +469,10 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   // (with last reset), both observers, the document's visibilitychange listener, the Pause and toggle listeners
   // (both buttons and the controls row hidden again), the canvas with its click, tilt and drag (#9) pointer
   // listeners, the hover listeners and tooltip (#10), and the webglcontextlost listener (removed before
-  // quilt.dispose() forces the context loss); then
-  // is-live and data-mode, and setHeroState writes the still and #5's still hint, even if dispose throws. The
-  // director's in-flight transition (or drag) is abandoned: nothing advances it again, onEnter writes and fires
-  // nothing, and __weave.mode keeps the mode it had here.
+  // quilt.dispose() forces the context loss); then is-live and data-mode, and fallBack writes the still and #5's still
+  // hint (and shows a card still waiting for the quilt), even if dispose throws. The director's in-flight transition
+  // (or drag) is abandoned: nothing advances it again, onEnter writes and fires nothing, and __weave.mode keeps the
+  // mode it had here.
   function stop(reason) {
     if (stopped) return;
     stopped = true;
@@ -495,7 +502,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     try {
       quilt.dispose();
     } finally {
-      setHeroState(stage, hint, 'still', reason);
+      fallBack(reason);
     }
   }
 

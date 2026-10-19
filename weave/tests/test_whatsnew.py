@@ -272,20 +272,38 @@ RELEASE_LOG = r"""
     }).observe(document, { childList: true, subtree: true });
 """
 
-# Installed after boot, so it runs after the module's own weave:mode listener: every entry's dispatch-time mode with
-# the release state and the event count then; and a rAF sampler of [__weave.mode, data-release-state].
-ENTRY_LOG = r"""() => {
-    const el = document.querySelector('[data-hero]');
+# An init script for MODE_LOG's __onMode hook. On the first weave:mode it adds a stage listener, which (added during
+# that dispatch, after the module's own) runs after the module's listener from the next entry on: every entry's
+# dispatch-time mode with the release state and the event count then. It also starts a rAF sampler of
+# [__weave.mode, data-release-state], and on the frame after an intro entry calls window.__onIntro(el) if a test
+# defined it, so a test acts during the intro however fast the frames run.
+ENTRY_LOG = r"""
     window.__entries = [];
     window.__frames = [];
-    el.addEventListener('weave:mode', (e) => window.__entries.push(
-      [e.detail.mode, el.dataset.releaseState ?? null, (window.__modes || []).length]));
-    const sample = () => {
-      window.__frames.push([el.__weave?.mode ?? null, el.dataset.releaseState ?? null]);
+    window.__onMode = (e, el) => {
+      if (el.__entryLog) return;
+      el.__entryLog = true;
+      el.addEventListener('weave:mode', (ev) => window.__entries.push(
+        [ev.detail.mode, el.dataset.releaseState ?? null, (window.__modes || []).length]));
+      const sample = () => {
+        window.__frames.push([el.__weave?.mode ?? null, el.dataset.releaseState ?? null]);
+        requestAnimationFrame(sample);
+      };
       requestAnimationFrame(sample);
+      if (e.detail.mode === 'intro' && window.__onIntro) requestAnimationFrame(() => window.__onIntro(el));
     };
-    requestAnimationFrame(sample);
-}"""
+"""
+
+
+def entry_log(on_intro=None):
+    """open_card_live's before_goto for ENTRY_LOG; `on_intro` is a JS body run with `el` on the intro's next frame,
+    after it records window.__at = [__weave.mode, data-release-state]."""
+    def setup(page):
+        page.add_init_script(ENTRY_LOG)
+        if on_intro is not None:
+            page.add_init_script("window.__onIntro = (el) => { window.__at = [el.__weave.mode,"
+                                 f" el.dataset.releaseState ?? null]; {on_intro} }};")
+    return setup
 
 CARD_READ = r"""() => {
     const cards = document.querySelectorAll('[data-whatsnew] .whatsnew-card');
@@ -522,3 +540,220 @@ class TestStill:
                    before_goto=lambda p: p.on("request", lambda r: requested.append(r.url)))
         assert any(u.endswith("/js/whatsnew.js") for u in requested)
         assert not any("three.module" in u for u in requested)
+
+
+# --- The live path. ---
+
+REST_Q = "?nowatchdog&pose=rest&now=2026-10-10"
+# AC1's shipping fixture: Promotions ships in 1.2, released the day before the visit.
+SHIPPING = mutated("""window.WEAVE_PANELS.release = { version: '1.2', date: '2026-10-20' };
+Object.assign(window.WEAVE_PANELS.panels.find((p) => p.id === 'promotions'),
+  { status: 'live', since: '1.2', sample: { value: 2, unit: 'boards open' }, blurb: 'Promotion boards and eligibility.' });""")
+SHIPPING_Q = "?nowatchdog&pose=rest&now=2026-10-21"
+# The [data-hero] client top, read by the parse-time MODE_LOG listener on the first weave:mode (before the card).
+TOP_AT_FIRST_MODE = ("window.__onMode = (e, el) => { if (window.__topBefore === undefined)"
+                     " window.__topBefore = el.getBoundingClientRect().top; };")
+
+
+def logs(page):
+    helpers.log_modes(page)
+    page.add_init_script(RELEASE_LOG)
+
+
+def open_card_live(make_page, base_url, query=REST_Q, wait_card=True, before_goto=None, **kwargs):
+    """open_live with MODE_LOG and RELEASE_LOG before goto; waits for the card when asked."""
+    def setup(page):
+        logs(page)
+        if before_goto is not None:
+            before_goto(page)
+
+    page, errors = helpers.open_live(make_page, base_url, query=query, before_goto=setup, **kwargs)
+    if wait_card:
+        page.wait_for_selector(CARD)
+    return page, errors
+
+
+def card_record(page):
+    return next(r for r in page.evaluate("window.__release") if r["state"] == "card")
+
+
+def open_failing(make_page, base_url, query="?nowatchdog&now=2026-10-10", init_script=None, route=None,
+                 before_goto=None):
+    """A desktop load with the logs, a planted init script, an aborted route or a before_goto, not waiting for
+    live."""
+    page = make_page()
+    errors = helpers.collect_errors(page)
+    logs(page)
+    if before_goto is not None:
+        before_goto(page)
+    if init_script:
+        page.add_init_script(init_script)
+    if route:
+        page.route(route, lambda r: r.abort())
+    page.goto(base_url + HOME + query)
+    return page, errors
+
+
+def boxes(page):
+    return page.evaluate("""() => Object.fromEntries(Object.entries({ card: '.whatsnew-card',
+        canvas: '[data-hero] canvas', toggle: '[data-toggle]', pause: '[data-pause]' }).map(([k, s]) => {
+        const all = document.querySelectorAll(s);
+        const r = all[0]?.getBoundingClientRect();
+        return [k, { count: all.length, box: r ? [r.left, r.top, r.right, r.bottom] : null }];
+    }))""")
+
+
+def overlaps(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+class TestLive:
+    def test_card_waits_for_the_first_quilt_entry(self, make_page, base_url):
+        page, errors = open_card_live(make_page, base_url, "?nowatchdog&now=2026-10-10", wait_card=False,
+                                      before_goto=entry_log())
+        helpers.wait_for_quilt(page)
+        page.wait_for_selector(CARD)
+        assert states(page) == ["pending", "card"]
+        index = helpers.modes(page).index(("quilt", "intro"))
+        first = next(e for e in page.evaluate("window.__entries") if e[1] == "card")
+        assert first == ["quilt", "card", index + 1]
+        record = card_record(page)
+        assert (record["mode"], record["events"]) == ("quilt", index + 1)
+        sampled = page.evaluate("window.__frames")
+        assert ["intro", "pending"] in sampled
+        assert ["intro", "card"] not in sampled
+        assert stored(page) == ["1.1", None]
+        assert errors == []
+
+    def test_pose_rest_without_now_query_shows_the_card_when_live(self, make_page, base_url):
+        page, _ = open_card_live(make_page, base_url, "?nowatchdog&pose=rest", wait_card=False,
+                                 clock="2026-10-10T09:00:00")
+        assert stage_data(page, "releaseState") == "card"
+        assert states(page) == ["pending", "card"]
+        assert card_record(page)["events"] == 1
+        assert stored(page) == ["1.1", None]
+
+    @pytest.mark.parametrize("path", ["live", "still"])
+    def test_shipping_a_panel(self, make_page, base_url, path):
+        if path == "live":
+            page, errors = open_card_live(make_page, base_url, SHIPPING_Q, panels_body=SHIPPING)
+        else:
+            page, errors = open_still(make_page, base_url, SHIPPING_Q, panels_body=SHIPPING)
+        assert card(page) == [1, {"heading": "New this release · v1.2", "versions": [], "names": ["Promotions"]}]
+        assert page.eval_on_selector("[data-hero]", "el => el.__weaveRelease.newIds") == ["promotions"]
+        assert stage_data(page, "newPanels") == "promotions"
+        assert page.evaluate("""() => [...document.querySelectorAll('[data-list="live"] li.panel.is-new')].map((li) =>
+            [li.querySelector('.panel-name').textContent, li.querySelector('.panel-new').textContent])""") == [
+            ["Promotions", "New"]]
+        assert page.evaluate("""() => [...document.querySelectorAll('[data-list="planned"] .panel-name')]
+            .some((e) => e.textContent === 'Promotions')""") is False
+        if path == "live":
+            assert helpers.weave(page, ".slots[4]") == {"id": "promotions", "name": "Promotions", "status": "live",
+                                                        "face": "sewn", "tagged": True}
+        assert errors == []
+
+    @pytest.mark.parametrize("path", ["live"])
+    def test_sample_card_on_a_fresh_profile(self, make_page, base_url, path):
+        page, errors = open_card_live(make_page, base_url)
+        assert_sample_card(page)
+        assert errors == []
+
+    def test_watchdog_fallback_shows_the_card_on_the_still(self, make_page, base_url):
+        page, _ = open_failing(make_page, base_url, "?now=2026-10-10&watchdogLimitMs=0")
+        helpers.wait_for_reason(page, "too-slow")
+        page.wait_for_selector(CARD)
+        assert page.locator(CARD).is_visible()
+        assert stored(page)[0] == "1.1" and stage_data(page, "releaseState") == "card"
+        assert card_record(page)["hero"] == ["still", "too-slow"]
+        assert states(page) == ["pending", "card"]
+
+    @pytest.mark.parametrize("door", ["scene-route", "build-throws", "webgl-failed", "context-lost", "stop-hook"])
+    def test_fallback_while_pending_shows_the_card(self, make_page, base_url, door):
+        import test_hero
+        if door in ("context-lost", "stop-hook"):
+            act = ("el.querySelector('canvas').getContext('webgl2').getExtension('WEBGL_lose_context').loseContext();"
+                   if door == "context-lost" else "el.__weave.stop('too-slow');")
+            page, _ = open_failing(make_page, base_url, before_goto=entry_log(act))
+            helpers.wait_for_reason(page, "context-lost" if door == "context-lost" else "too-slow")
+            assert page.evaluate("window.__at") == ["intro", "pending"]
+        else:
+            options = {"scene-route": {"route": "**/js/scene.js"},
+                       "build-throws": {"init_script": test_hero.SASHING_THROWS},
+                       "webgl-failed": {"init_script": test_hero.NO_STAGE_WEBGL}}[door]
+            page, _ = open_failing(make_page, base_url, **options)
+            assert helpers.hero_result(page)[0] == "still"
+        page.wait_for_selector(CARD)
+        assert states(page) == ["pending", "card"]
+        assert card_record(page)["hero"][0] == "still"
+        assert stored(page)[0] == "1.1"
+
+    @pytest.mark.parametrize("control", ["pause", "toggle"])
+    def test_skips_during_the_intro_show_the_card(self, make_page, base_url, control):
+        selector = "[data-pause]" if control == "pause" else "[data-toggle]"
+        page, _ = open_card_live(make_page, base_url, "?nowatchdog&now=2026-10-10", wait_card=False,
+                                 before_goto=entry_log(f"document.querySelector('{selector}').click();"))
+        page.wait_for_selector(CARD)
+        assert page.evaluate("window.__at") == ["intro", "pending"]
+        assert stage_data(page, "releaseState") == "card"
+        if control == "pause":
+            assert helpers.modes(page)[:2] == helpers.PLAIN_START
+        else:
+            assert helpers.modes(page)[:3] == helpers.PLAIN_START + [("unstitching", "quilt")]
+            entries = page.evaluate("window.__entries")
+            i = next(k for k, e in enumerate(entries) if e[1] == "card")
+            assert entries[i:i + 2] == [["quilt", "card", 2], ["unstitching", "card", 3]]
+        assert stored(page)[0] == "1.1"
+
+    @pytest.mark.parametrize("path", ["live"])
+    def test_after_the_window_rule_b_writes_sim(self, make_page, base_url, path):
+        page, _ = open_card_live(make_page, base_url, "?nowatchdog&pose=rest&now=2026-10-20", wait_card=False)
+        assert states(page) == ["none"] and card(page) == [0, None]
+        assert stored(page) == ["1.1", None]
+
+    @pytest.mark.parametrize("path", ["live"])
+    def test_card_has_no_animation(self, make_page, base_url, path):
+        page, _ = open_card_live(make_page, base_url)
+        assert page.evaluate(NO_ANIMATION) == [["1", "0s", "none"], ["1", "0s", "none"]]
+
+    @pytest.mark.parametrize("width, height", [(1440, 900), (1024, 768), (900, 900)],
+                             ids=["1440x900", "1024x768", "900x900"])
+    def test_card_never_overlaps_the_controls(self, make_page, base_url, width, height):
+        page, _ = open_card_live(make_page, base_url, before_goto=lambda p: p.add_init_script(TOP_AT_FIRST_MODE),
+                                 viewport={"width": width, "height": height})
+        got = boxes(page)
+        assert {k: v["count"] for k, v in got.items()} == {"card": 1, "canvas": 1, "toggle": 1, "pause": 1}
+        for other in ("canvas", "toggle", "pause"):
+            assert not overlaps(got["card"]["box"], got[other]["box"]), (other, got)
+        left, top, right, bottom = got["card"]["box"]
+        view = page.evaluate("() => [innerWidth, innerHeight, scrollY]")
+        assert 0 <= left and right <= view[0] and 0 <= top and bottom <= view[1], (got["card"], view)
+        assert view[2] == 0
+        assert page.evaluate("() => document.querySelector('[data-hero]').getBoundingClientRect().top"
+                             " === window.__topBefore")
+
+    @pytest.mark.parametrize("leg", ["returns", "gone", "hidden-after-fallback"])
+    def test_close_on_the_live_path(self, make_page, base_url, leg):
+        page, _ = open_card_live(make_page, base_url)
+        if leg == "returns":
+            page.focus("[data-pause]")
+            page.keyboard.press("Tab")
+            assert page.evaluate("() => document.activeElement.matches('.whatsnew-close')")
+        elif leg == "gone":
+            page.evaluate("""() => { const b = document.createElement('button'); b.id = 'planted'; b.textContent = 'P';
+                document.querySelector('.hero-copy').append(b); }""")
+            page.focus("#planted")
+            page.focus(".whatsnew-close")
+            page.evaluate("() => document.getElementById('planted').remove()")
+        else:
+            page.focus("[data-pause]")
+            page.focus(".whatsnew-close")
+            helpers.weave(page, ".stop('too-slow')")
+            assert helpers.hero_result(page) == ["still", "too-slow"]
+        page.keyboard.press("Enter")
+        target = {"returns": "[data-pause]", "gone": "[data-toggle]", "hidden-after-fallback": ".hero h1"}[leg]
+        assert focused_is(page, target)
+        assert stage_data(page, "releaseState") == "done"
+
+    def test_card_meets_contrast_and_focus_live(self, make_page, base_url):
+        page, _ = open_card_live(make_page, base_url)
+        assert_card_contrast_and_focus(page)
