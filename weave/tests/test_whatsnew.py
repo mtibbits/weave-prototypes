@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import helpers
+from conftest import FIXED_INSTANT
 from helpers import HOME
 
 WEAVE = Path(__file__).resolve().parents[1]
@@ -210,7 +211,8 @@ REGION_RE = re.compile(r"<(\w+)([^>]*\bdata-whatsnew\b[^>]*)>(.*?)</\1>", re.S)
 
 class TestShell:
     def test_live_region_is_in_the_served_page_empty(self, make_page, base_url):
-        page, errors = helpers.open_page(make_page, base_url)
+        # Pinned, not the run's default clock: inside a news window (WEAVE_TEST_CLOCK) the card fills the region.
+        page, errors = helpers.open_page(make_page, base_url, clock=FIXED_INSTANT)
         html = page.request.get(base_url + HOME).text()
         assert html.count("data-whatsnew") == 1
         found = REGION_RE.findall(html)
@@ -428,7 +430,7 @@ class TestStill:
         assert page.evaluate("() => localStorage.length") == 0
 
     def test_no_card_and_no_write_at_the_fixed_instant(self, make_page, base_url):
-        page, errors = open_still(make_page, base_url, wait_card=False)
+        page, errors = open_still(make_page, base_url, wait_card=False, clock=FIXED_INSTANT)
         assert stage_data(page, "releaseState") == "none"
         assert stage_data(page, "newPanels") == ""
         assert page.evaluate("() => localStorage.length") == 0
