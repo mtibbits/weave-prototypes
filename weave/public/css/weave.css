@@ -59,6 +59,18 @@ html[data-frame="still"] .hero-stage { position: fixed; inset: 0; width: 100vw; 
    changing on unstitch never moves the page under it. The still hint never changes, so the still path keeps 1.55em. */
 .hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 3.1em; }
 @media (max-width: 440px) { .hero-stage[data-hero-state="live"] ~ .hero-hint { min-height: 4.65em; } }
+/* #15's what's-new card, below the hint in the figure column, so it never covers the canvas or the controls. The
+   region has no box of its own (an empty block, never display: contents, which can drop it from the accessibility
+   tree), so it takes no space while empty. Every colour is opaque and nothing fades, on either path. */
+.whatsnew { margin: 0; padding: 0; border: 0; }
+.whatsnew-card { margin-top: 16px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 6px; background: #FFFDF8; color: var(--ink); }
+.whatsnew-heading { margin: 0 0 8px; font: 600 18px/1.3 var(--sans); }
+.whatsnew-version { margin: 8px 0 2px; font: 600 13px/1.4 var(--sans); letter-spacing: .08em; color: var(--teal); }
+.whatsnew-list { margin: 0 0 12px; padding-left: 20px; }
+.whatsnew-name { font-size: 16px; font-weight: 400; overflow-wrap: anywhere; }
+/* Its own rule: the border is ink, well over 3:1 against the card, where the controls' --line border is not. */
+.whatsnew-close { min-height: 44px; padding: 0 20px; border: 1px solid var(--ink); border-radius: 999px; background: #FFFDF8; color: var(--ink); font: 600 15px/1 var(--sans); cursor: pointer; }
+.whatsnew-close:hover { border-color: var(--teal); }
 
 .panels, .why { border-top: 1px solid var(--line); padding: 36px 0 8px; }
 .panels h2, .why h2 { font-family: var(--serif); font-weight: 400; font-size: 32px; margin: 0 0 16px; }

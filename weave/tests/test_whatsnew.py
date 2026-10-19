@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+import helpers
+from helpers import HOME
+
 WEAVE = Path(__file__).resolve().parents[1]
 MARKUP = '<img src=x onerror="window.__pwned=1">'
 RELEASE_TEXT = "New this release · v1.1 (sample release)"
@@ -198,3 +201,39 @@ class TestModule:
             return out;""")
         assert got == {"none-live": ["none", 1, "none", 1, 0, 0], "none-still": ["none", 1, "none", 1, 0, 0],
                        "still": ["card", 1, "card", 1, 0, 0], "live": ["pending", 0, "card", 1, 0, 0]}
+
+
+# --- The page shell: the empty polite region and the h1 as a focus target. ---
+
+REGION_RE = re.compile(r"<(\w+)([^>]*\bdata-whatsnew\b[^>]*)>(.*?)</\1>", re.S)
+
+
+class TestShell:
+    def test_live_region_is_in_the_served_page_empty(self, make_page, base_url):
+        page, errors = helpers.open_page(make_page, base_url)
+        html = page.request.get(base_url + HOME).text()
+        assert html.count("data-whatsnew") == 1
+        found = REGION_RE.findall(html)
+        assert len(found) == 1
+        tag, attrs, content = found[0]
+        assert 'aria-live="polite"' in attrs and content == ""
+        got = page.evaluate("""() => { const r = document.querySelectorAll('[data-whatsnew]');
+            return [r.length, r[0]?.childNodes.length, r[0]?.closest('[data-hero]') === null,
+                    r[0] && getComputedStyle(r[0]).display, r[0]?.getAttribute('aria-live')]; }""")
+        assert got == [1, 0, True, "block", "polite"]
+        assert errors == []
+
+    def test_h1_is_a_programmatic_focus_target(self, make_page, base_url):
+        page, _ = helpers.open_page(make_page, base_url)
+        assert page.get_attribute(".hero h1", "tabindex") == "-1"
+        count = page.evaluate("""() => [...document.querySelectorAll('a[href], button:not([disabled]), [tabindex]')]
+            .filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0).length""")
+        assert count >= 5
+        page.evaluate("() => document.activeElement?.blur()")
+        seen = []
+        for _ in range(count + 2):
+            page.keyboard.press("Tab")
+            seen.append(page.evaluate("() => document.activeElement.tagName.toLowerCase()"))
+        assert "h1" not in seen and "a" in seen, seen
+        page.evaluate("() => document.querySelector('.hero h1').focus()")
+        assert page.evaluate("() => document.activeElement === document.querySelector('.hero h1')")
