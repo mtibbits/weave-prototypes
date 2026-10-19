@@ -17,14 +17,19 @@ RELEASE_TEXT = "New this release · v1.1 (sample release)"
 
 # --- The module on a blank page. mk(kind, opts) builds a stage, a region, the toggle, an h1 (tabindex -1) and a
 # button X, then createNews over them with a counting recordSeen; kind is none-live, none-still, still or live.
-# tick() lets the module's one-task append (and anything else queued) run; settle() adds two frames, so the card's
-# IntersectionObserver has reported. opts.spacer puts a 3000 px block above the region, below the fold. ---
+# tick() lets the module's one-task append (and anything else queued) run; settle() adds two frames, before a check
+# that nothing was recorded; until(f) waits frame by frame (up to 2 s) for the card's IntersectionObserver to report.
+# opts.spacer puts a 3000 px block above the region, below the fold. ---
 
 NEWS_JS = r"""
     const W = await import('/public/js/whatsnew.js');
     const tick = () => new Promise((r) => setTimeout(r, 0)).then(() => new Promise((r) => setTimeout(r, 0)));
     const settle = () => tick().then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
       .then(tick);
+    const until = async (f, ms = 2000) => {
+      const end = performance.now() + ms;
+      while (!f() && performance.now() < end) await new Promise((r) => requestAnimationFrame(r));
+    };
     const RELEASE = { kind: 'release', text: 'New this release · v1.1 (sample release)',
                       groups: [{ version: '1.1', names: ['Travel', 'Desk Allocation'] }] };
     const mk = (kind, opts = {}) => {
@@ -82,6 +87,7 @@ class TestModule:
             const t = mk('{kind}');
             const boot = view(t);
             await settle();
+            if ('{kind}' === 'still') await until(() => t.calls.n > 0);
             return [boot.state, view(t)];""")
         assert got[0] == state
         assert got[1] == {"state": state, "attr": state, "panels": panels, "calls": calls, "cards": cards}
@@ -105,7 +111,7 @@ class TestModule:
             const a = mk('live');
             a.news.fallBack();
             const first = view(a);
-            await settle();
+            await until(() => a.calls.n > 0);
             const seen = view(a).calls;
             const b = mk('none-live');
             b.news.fallBack(); mode(b, 'quilt');
@@ -209,7 +215,7 @@ class TestModule:
             await settle();
             const below = view(t).calls;
             t.region.scrollIntoView();
-            await settle();
+            await until(() => t.calls.n > 0);
             const inView = view(t).calls;
             gotIt(t).click();
             const closed = view(t).calls;
