@@ -10,19 +10,51 @@ SETUP = DEFAULTS_JS + r"""
     const F = await import('/public/js/fabric.js');
     const byId = (id) => DEFAULTS.find((p) => p.id === id);
     const fresh = () => F.makeCanvas(512);
-    // Every fillText on `canvas` during fn(): { text, font, maxWidth } in call order.
+    // A design-space box [x0, y0, x1, y1] as the axis-aligned box of its corners in device px.
+    const deviceBox = (ctx, [x0, y0, x1, y1]) => {
+      const t = ctx.getTransform();
+      const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([x, y]) => t.transformPoint({ x, y }));
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    };
+    // Every fillText on `canvas` during fn(): { text, font, maxWidth, box } in call order. box is the text's ink
+    // box in device px, from measureText's actual bounds (compressed to maxWidth as fillText draws it).
     const texts = (canvas, fn) => {
       const proto = CanvasRenderingContext2D.prototype;
       const original = proto.fillText;
       const calls = [];
       proto.fillText = function (text, x, y, maxWidth) {
-        if (this.canvas === canvas) calls.push({ text: String(text), font: this.font, maxWidth: maxWidth ?? null });
+        if (this.canvas === canvas) {
+          const m = this.measureText(text);
+          const k = maxWidth != null && m.width > maxWidth ? maxWidth / m.width : 1;
+          const box = deviceBox(this, [x - m.actualBoundingBoxLeft * k, y - m.actualBoundingBoxAscent,
+            x + m.actualBoundingBoxRight * k, y + m.actualBoundingBoxDescent]);
+          calls.push({ text: String(text), font: this.font, maxWidth: maxWidth ?? null, box });
+        }
         return original.apply(this, arguments);
       };
       try { fn(); } finally { proto.fillText = original; }
       return calls;
     };
-    const tileTexts = (entry) => { const c = fresh(); return texts(c, () => T.paintTile(c, entry)).map((t) => t.text); };
+    // Every ctx.roundRect on `canvas` during fn(), as its device-px box, in call order.
+    const roundRects = (canvas, fn) => {
+      const proto = CanvasRenderingContext2D.prototype;
+      const original = proto.roundRect;
+      const calls = [];
+      proto.roundRect = function (x, y, w, h) {
+        if (this.canvas === canvas) {
+          calls.push(deviceBox(this, [Math.min(x, x + w), Math.min(y, y + h), Math.max(x, x + w), Math.max(y, y + h)]));
+        }
+        return original.apply(this, arguments);
+      };
+      try { fn(); } finally { proto.roundRect = original; }
+      return calls;
+    };
+    const tileTexts = (entry, options) => {
+      const c = fresh();
+      return texts(c, () => T.paintTile(c, entry, options)).map((t) => t.text);
+    };
     const face = (entry, kind) => { const c = fresh(); T.paintFace(c, entry, kind); return c; };
     const faceHash = (entry, kind) => sha256Canvas(face(entry, kind));
 """
@@ -258,6 +290,7 @@ def test_paints_ignore_state_a_caller_left_behind(paint_js):
           face: (c) => T.paintFace(c, byId('actions'), 'sewn'),
           planned: (c) => T.paintFace(c, byId('promotions'), 'planned'),
           tile: (c) => T.paintTile(c, byId('manpower')),
+          taggedTile: (c) => T.paintTile(c, byId('travel'), { tagged: true }),
           sashing: (c) => F.paintSashing(c, { cols: 4, rows: 3, block: 1, sashing: 0.14, border: 0.14 }),
           wood: (c) => F.paintWood(c),
         };
@@ -291,3 +324,147 @@ def test_a_caller_clip_is_the_one_state_painters_keep(paint_js):
         return [await clipped(false) !== clean, await clipped(true) === clean];
     """)
     assert result == [True, True]
+
+
+# --- The "New" label (#14): a painter option, off by default, drawn on live tiles only. ---
+
+def overlaps(a, b):
+    """True when boxes [x0, y0, x1, y1] share an area (touching edges do not count)."""
+    return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
+
+
+def union(boxes):
+    return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+
+
+def inside(inner, outer, slack=0.0):
+    return (inner[0] >= outer[0] - slack and inner[1] >= outer[1] - slack
+            and inner[2] <= outer[2] + slack and inner[3] <= outer[3] + slack)
+
+
+def test_box_overlap_catches_a_planted_overlap():
+    box = [10, 10, 30, 20]
+    assert overlaps(box, [20, 10, 40, 20])  # shifted by half its width
+    assert not overlaps(box, [30, 10, 50, 20])  # shares an edge
+    assert not overlaps(box, [10, 20, 30, 40])
+    assert not overlaps(box, [100, 100, 120, 120])
+
+
+def test_tagged_live_tile_draws_new(paint_js):
+    tagged, untagged, off = run(paint_js, r"""
+        const t = byId('travel');
+        return [tileTexts(t, { tagged: true }), tileTexts(t), tileTexts(t, { tagged: false })];
+    """)
+    assert tagged.count("New") == 1, tagged
+    assert "New" not in untagged and "New" not in off, (untagged, off)
+    assert len(untagged) >= 5, untagged
+
+
+def test_tag_option_is_off_by_default(paint_js):
+    rows = run(paint_js, r"""
+        const hash = (entry, ...args) => { const c = fresh(); T.paintTile(c, entry, ...args); return sha256Canvas(c); };
+        const out = [];
+        for (const e of [byId('manpower'), byId('travel'), { ...byId('manpower'), sample: null }]) {
+          out.push([await hash(e), await hash(e, {}), await hash(e, { tagged: false }), await hash(e, { tagged: 'yes' }),
+                    await hash(e, null)]);
+        }
+        return out;
+    """)
+    assert len(rows) == 3 and all(len(set(row)) == 1 for row in rows), rows
+
+
+def test_tagged_tile_hash_differs_and_repeats(paint_js):
+    a, b, over, plain = run(paint_js, r"""
+        const t = byId('travel');
+        const a = fresh(); T.paintTile(a, t, { tagged: true });
+        const b = fresh(); T.paintTile(b, t, { tagged: true });
+        const over = fresh(); T.paintTile(over, byId('hiring')); T.paintTile(over, t, { tagged: true });
+        const plain = fresh(); T.paintTile(plain, t);
+        return [await sha256Canvas(a), await sha256Canvas(b), await sha256Canvas(over), await sha256Canvas(plain)];
+    """)
+    assert a == b == over
+    assert a != plain
+
+
+def test_tag_is_ignored_off_live_tiles(paint_js):
+    result = run(paint_js, r"""
+        const hash = (entry, options) => { const c = fresh(); T.paintTile(c, entry, options); return sha256Canvas(c); };
+        const cleared = fresh();
+        T.paintTile(cleared, byId('manpower'));
+        const painted = !cleared.getContext('2d').getImageData(0, 0, 512, 512).data.every((v) => v === 0);
+        T.paintTile(cleared, null, { tagged: true });
+        return {
+          promotions: await hash(byId('promotions'), { tagged: true }) === await hash(byId('promotions')),
+          suggest: await hash(byId('suggest'), { tagged: true }) === await hash(byId('suggest')),
+          painted,
+          cleared: cleared.getContext('2d').getImageData(0, 0, 512, 512).data.every((v) => v === 0),
+        };
+    """)
+    assert result == {"promotions": True, "suggest": True, "painted": True, "cleared": True}
+
+
+# (entry expression, its first value-or-no-sample text, at least this many other texts, name lines or None). The
+# samples are pinned here, so an edit to panels.js's sample data can't move the name/value split.
+LABEL_CASES = {
+    "sample": ("({ ...byId('travel'), sample: { value: 12, unit: 'trips pending' } })", "12", 5, None),
+    "no-sample": ("({ ...byId('travel'), sample: null })", "No sample yet", 3, None),
+    "wrapped-name": ("({ ...byId('desks'), name: 'Desk Allocation and Seating', sample: { value: 18, unit: 'desks free' } })",
+                     "18", 5, 2),
+}
+
+LABEL_RECORD_JS = r"""
+    const entry = %s;
+    const record = (options) => {
+      const c = fresh();
+      let boxes = [];
+      const calls = texts(c, () => { boxes = roundRects(c, () => T.paintTile(c, entry, options)); });
+      return { texts: calls.map(({ text, box }) => ({ text, box })), rects: boxes, canvas: c };
+    };
+    const tagged = record({ tagged: true });
+    const plain = record();
+"""
+
+
+@pytest.mark.parametrize("case", list(LABEL_CASES))
+def test_tag_label_clears_every_tile_text(paint_js, case):
+    entry, first_value, min_others, name_lines = LABEL_CASES[case]
+    r = run(paint_js, LABEL_RECORD_JS % entry + r"""
+        return { name: entry.name, tagged: { texts: tagged.texts, rects: tagged.rects },
+                 plain: { texts: plain.texts, rects: plain.rects } };
+    """)
+    assert r["plain"]["rects"] == [] and len(r["tagged"]["rects"]) >= 1, r["tagged"]["rects"]
+    news = [t for t in r["tagged"]["texts"] if t["text"] == "New"]
+    assert len(news) == 1, r["tagged"]["texts"]
+    patch = union(r["tagged"]["rects"])
+    assert inside(news[0]["box"], patch), (news, patch)
+    label = union([patch, news[0]["box"]])
+    others = [t for t in r["tagged"]["texts"] if t["text"] != "New"]
+    assert len(others) >= min_others, others
+    texts = [t["text"] for t in others]
+    names = texts[:texts.index(first_value)]
+    assert " ".join(names) == r["name"], names
+    if name_lines is not None:
+        assert len(names) == name_lines, names
+    hits = [t for t in others if overlaps(label, t["box"])]
+    assert hits == [], (label, hits)
+    assert others == r["plain"]["texts"]
+
+
+@pytest.mark.parametrize("case", list(LABEL_CASES))
+def test_tag_changes_only_the_label_pixels(paint_js, case):
+    r = run(paint_js, LABEL_RECORD_JS % LABEL_CASES[case][0] + r"""
+        const a = plain.canvas.getContext('2d').getImageData(0, 0, 512, 512).data;
+        const b = tagged.canvas.getContext('2d').getImageData(0, 0, 512, 512).data;
+        let box = null;
+        for (let i = 0; i < a.length; i += 4) {
+          if (a[i] === b[i] && a[i + 1] === b[i + 1] && a[i + 2] === b[i + 2] && a[i + 3] === b[i + 3]) continue;
+          const x = (i / 4) % 512;
+          const y = Math.floor(i / 4 / 512);
+          box = box ? [Math.min(box[0], x), Math.min(box[1], y), Math.max(box[2], x + 1), Math.max(box[3], y + 1)]
+            : [x, y, x + 1, y + 1];
+        }
+        return { diff: box, rects: tagged.rects, news: tagged.texts.filter((t) => t.text === 'New').map((t) => t.box) };
+    """)
+    assert r["diff"] is not None and len(r["rects"]) >= 1 and len(r["news"]) == 1, r
+    label = union([*r["rects"], *r["news"]])
+    assert inside(r["diff"], label, slack=2), (r["diff"], label)

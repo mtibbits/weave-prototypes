@@ -4,6 +4,8 @@ import { cleanPanels } from './catalog.js';
 export const LOAD_MESSAGE = "The panel list couldn't be loaded.";
 export const NONE_YET = 'None yet.';
 export const NO_SAMPLE = 'No sample yet';
+// #14's tag on a panel new in the release: the list badge and the tile label.
+export const NEW_TAG = 'New';
 
 // A cleaned sample ({ value, unit } or null) as its list figure.
 export function figureText(sample) {
@@ -26,16 +28,20 @@ function element(tag, className, text) {
   return el;
 }
 
-function panelItem(panel) {
-  const li = element('li', 'panel');
+// A tagged panel (#14) wears the "New" badge as its name's next sibling, never inside it, so the name reads alone.
+function panelItem(panel, tagged) {
+  const li = element('li', tagged ? 'panel is-new' : 'panel');
   li.append(element('span', 'panel-name', panel.name));
+  if (tagged) li.append(element('span', 'panel-new', NEW_TAG));
   if (panel.status === 'live') li.append(element('span', 'panel-figure', figureText(panel.sample)));
   if (typeof panel.blurb === 'string') li.append(element('p', 'panel-blurb', panel.blurb));
   return li;
 }
 
-// Fill #panels from a cleanPanels result: the load message on error, else both groups and the suggest line.
-export function renderPanels(section, result) {
+// Fill #panels from a cleanPanels result: the load message on error, else both groups and the suggest line. `tagged`
+// (#14) is the ids of the live panels that wear the "New" badge; anything but an array tags nothing.
+export function renderPanels(section, result, tagged = []) {
+  const wanted = new Set(Array.isArray(tagged) ? tagged : []);
   const status = section.querySelector('[data-panels-status]');
   const suggest = section.querySelector('[data-suggest]');
   if (result.error) {
@@ -47,7 +53,8 @@ export function renderPanels(section, result) {
   }
   for (const group of ['live', 'planned']) {
     const entries = result.panels.filter((p) => p.status === group);
-    const items = entries.length ? entries.map(panelItem) : [element('li', 'panel-none', NONE_YET)];
+    const items = entries.length ? entries.map((p) => panelItem(p, group === 'live' && wanted.has(p.id)))
+      : [element('li', 'panel-none', NONE_YET)];
     section.querySelector(`[data-list="${group}"]`).replaceChildren(...items);
   }
   // The first suggest entry fills the line; later ones are ignored.

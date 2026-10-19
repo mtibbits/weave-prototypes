@@ -1,5 +1,5 @@
-// WEAVE's boot module: the panel lists first, then the hero. The load-time decision picks the still or the live
-// quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
+// WEAVE's boot module: the release object, the panel lists, then the hero. The load-time decision picks the still or
+// the live quilt; going live is a port of Coalesce's startLive (coalesce/public/js/hero.js).
 import { cleanPanels } from './catalog.js';
 import {
   createTooltip, fillSlots, hideTooltip, readHooks, renderPanels, setDataMode, setHeroState, setPaused, setStageLabel,
@@ -22,15 +22,18 @@ const hint = document.querySelector('[data-hint]');
 const controls = document.querySelector('[data-controls]');
 const pause = document.querySelector('[data-pause]');
 const toggle = document.querySelector('[data-toggle]');
-renderPanels(document.getElementById('panels'), result);
-// A broken file keeps the static label from the HTML.
-if (!result.error) setStageLabel(stage, result.panels);
-// #12's release object, on both paths before the hero starts: which panels are new for this visit, computed once
-// over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
-stage.__weaveRelease = createRelease({
+// #12's release object, on both paths before the lists and the hero: which panels are new for this visit, computed
+// once over E1's validated list. A missing or broken panels.js means nothing is new; recordSeen() is its only writer.
+const release = createRelease({
   now: hooks.now, whatsnew: hooks.whatsnew, rest: hooks.rest, raw: result.error ? null : window.WEAVE_PANELS,
   panels: result.panels, date: new Date(), getStorage: () => window.localStorage, warn: (m) => console.warn(m),
 });
+stage.__weaveRelease = release;
+// #14's tag set, copied once: the lists' badges and the tiles' labels both read it, and it never changes in a visit.
+const tagged = Object.freeze([...release.taggedIds]);
+renderPanels(document.getElementById('panels'), result, tagged);
+// A broken file keeps the static label from the HTML.
+if (!result.error) setStageLabel(stage, result.panels);
 
 async function startHero() {
   const decision = decideMode(readEnvironment(window));
@@ -69,7 +72,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   }
   let quilt;
   try {
-    quilt = S.buildQuilt(renderer, { slots });
+    quilt = S.buildQuilt(renderer, { slots, tagged });
     // #10: compile every program now, the hidden decor's included (compile walks hidden objects), so the first frame
     // that shows a stitch or a pin does not stall on a shader compile.
     renderer.compile(quilt.scene, quilt.camera);
@@ -494,10 +497,11 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     get order() { return slots.map((_, k) => order[director.blockAt(k)]); },
     get slots() {
       return slots.map((_, k) => {
-        const entry = slots[director.blockAt(k)];
-        // The drawn face, which #16's setFace can change.
+        const b = director.blockAt(k);
+        const entry = slots[b];
+        // The drawn face, which #16's setFace can change; tagged (#14) is what the scene asked the tile painter for.
         return { id: entry ? entry.id : null, name: entry ? entry.name : null, status: entry ? entry.status : null,
-          face: quilt.blocks[director.blockAt(k)].userData.face };
+          face: quilt.blocks[b].userData.face, tagged: quilt.isTagged(b) };
       });
     },
     get clock() { return clock; },
