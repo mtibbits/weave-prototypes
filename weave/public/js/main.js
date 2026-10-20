@@ -202,44 +202,37 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   // --- #16's sew-in: each sewn block's steps, driven from director.sewState(i) every frame while sewing. Each
   // once-call checks and sets its flag, so a step never runs twice; completeSew runs every step not yet run when the
   // quilt is entered (the natural end or a skip). `sewCalls` counts the once-calls (test-only). ---
-  const sewing = new Map(sewIds.map((id) => [id,
-    { pins: false, flat: false, puff: false, face: false, reveal: false, needle: 'none', glow: false }]));
+  const sewing = new Map(sewIds.map((id) => [id, { i: order.indexOf(id),
+    pins: false, flat: false, puff: false, face: false, reveal: false, needle: 'none', glow: false }]));
   const sewCalls = {};
   const counted = (name, id) => {
     const key = id === undefined ? name : `${name} ${id}`;
     sewCalls[key] = (sewCalls[key] ?? 0) + 1;
   };
+  // Block id's step `flag`, run once: set, counted as `name`, then `run`.
+  function once(done, flag, name, id, run) {
+    if (done[flag]) return;
+    done[flag] = true;
+    counted(name, id);
+    run();
+  }
 
   function sewFrame() {
     if (director.mode !== 'sewing') return;
     let swapped = false;
     for (const [id, done] of sewing) {
-      const i = order.indexOf(id);
+      const { i } = done;
       const st = director.sewState(i);
       if (!st) continue;
-      if (st.pins > 0 && !done.pins) {
-        done.pins = true;
-        counted('popPins', id);
-        quilt.popPins(id);
-      }
+      if (st.pins > 0) once(done, 'pins', 'popPins', id, () => quilt.popPins(id));
       if (st.square > 0 && st.square < 1) quilt.setTilt(id, director.pose(i).rotZ);
-      else if (st.square >= 1 && !done.flat) {
-        done.flat = true;
-        counted('tilt0', id);
-        quilt.setTilt(id, 0);
-      }
+      else if (st.square >= 1) once(done, 'flat', 'tilt0', id, () => quilt.setTilt(id, 0));
       if (st.puff > 0 && st.puff < 1) quilt.setPuff(id, Math.sin(Math.PI * st.puff));
-      else if (st.puff >= 1 && !done.puff) {
-        done.puff = true;
-        counted('puff0', id);
-        quilt.setPuff(id, 0);
-      }
-      if (st.puff >= 0.5 && !done.face) {
-        done.face = true;
-        counted('face', id);
+      else if (st.puff >= 1) once(done, 'puff', 'puff0', id, () => quilt.setPuff(id, 0));
+      if (st.puff >= 0.5) once(done, 'face', 'face', id, () => {
         quilt.setFace(id, 'sewn');
         swapped = true;
-      }
+      });
       if (st.needle > 0 && done.needle === 'none') {
         done.needle = 'running';
         counted('needleStart', id);
@@ -249,19 +242,13 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
         quilt.poseNeedle(id, st.needle);
         quilt.revealStitchesTo(id, st.needle);
       } else if (done.needle === 'running') {
-        done.reveal = true;
-        counted('reveal', id);
-        quilt.revealStitchesTo(id, 1);
+        once(done, 'reveal', 'reveal', id, () => quilt.revealStitchesTo(id, 1));
         done.needle = 'ended';
         counted('needleEnd', id);
         quilt.endNeedle(id);
       }
       if (st.glow > 0 && st.glow < 1) quilt.setGlow(id, Math.sin(Math.PI * st.glow));
-      else if (st.glow >= 1 && !done.glow) {
-        done.glow = true;
-        counted('glow0', id);
-        quilt.setGlow(id, 0);
-      }
+      else if (st.glow >= 1) once(done, 'glow', 'glow0', id, () => quilt.setGlow(id, 0));
     }
     if (swapped) {
       counted('reseam');
@@ -274,42 +261,20 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   function completeSew() {
     let swapped = false;
     for (const [id, done] of sewing) {
-      if (!done.pins) {
-        done.pins = true;
-        counted('popPins', id);
-        quilt.popPins(id, { animate: false });
-      }
-      if (!done.flat) {
-        done.flat = true;
-        counted('tilt0', id);
-        quilt.setTilt(id, 0);
-      }
-      if (!done.puff) {
-        done.puff = true;
-        counted('puff0', id);
-        quilt.setPuff(id, 0);
-      }
-      if (!done.face) {
-        done.face = true;
-        counted('face', id);
+      once(done, 'pins', 'popPins', id, () => quilt.popPins(id, { animate: false }));
+      once(done, 'flat', 'tilt0', id, () => quilt.setTilt(id, 0));
+      once(done, 'puff', 'puff0', id, () => quilt.setPuff(id, 0));
+      once(done, 'face', 'face', id, () => {
         quilt.setFace(id, 'sewn');
         swapped = true;
-      }
-      if (!done.reveal) {
-        done.reveal = true;
-        counted('reveal', id);
-        quilt.revealStitches(id, { animate: false });
-      }
+      });
+      once(done, 'reveal', 'reveal', id, () => quilt.revealStitches(id, { animate: false }));
       if (done.needle === 'running') {
         done.needle = 'ended';
         counted('needleEnd', id);
         quilt.endNeedle(id);
       }
-      if (!done.glow) {
-        done.glow = true;
-        counted('glow0', id);
-        quilt.setGlow(id, 0);
-      }
+      once(done, 'glow', 'glow0', id, () => quilt.setGlow(id, 0));
     }
     if (swapped) {
       counted('reseam');
@@ -372,11 +337,8 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     if (mode === 'intro') setDataMode(stage, 'quilt');
     else if (M.SETTLED.includes(mode)) setDataMode(stage, mode);
     setToggle(toggle, hint, mode);
-    if (mode === 'sewing') {
-      for (let i = 0; i < slots.length; i += 1) if (!dressed.has(i)) dress(i, { animate: false });
-      quilt.finishDecor();
-    } else if (mode === 'quilt' && (from === null || from === 'intro' || from === 'sewing')) {
-      if (from !== null) completeSew();
+    if (mode === 'sewing' || (mode === 'quilt' && (from === null || from === 'intro' || from === 'sewing'))) {
+      if (mode === 'quilt' && from !== null) completeSew();
       for (let i = 0; i < slots.length; i += 1) if (!dressed.has(i)) dress(i, { animate: false });
       quilt.finishDecor();
     } else if (mode === 'quilt' && from === 'restitching') {

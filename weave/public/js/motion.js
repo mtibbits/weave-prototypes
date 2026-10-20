@@ -247,9 +247,9 @@ export class Director {
     return true;
   }
 
-  // Block i at (x, y, DRAG.lift), at rest, with its target there too.
-  hold(i, x, y) {
-    const at = [x, y, DRAG.lift];
+  // Block i at (x, y, z), at rest, with its target there too.
+  hold(i, x, y, z = DRAG.lift) {
+    const at = [x, y, z];
     this.springs.p[i] = at.slice();
     this.springs.setTarget(i, at);
     this.springs.v[i].fill(0);
@@ -332,8 +332,13 @@ export class Director {
     return k < 0 ? null : this.sewWindows(k);
   }
 
+  // The intro and its sew-in are cut short (to the quilt) by a toggle or a click on the quilt.
+  get cuttable() {
+    return this.current === 'intro' || this.current === 'sewing';
+  }
+
   toggle(now, origin = [0, 0]) {
-    if (this.current === 'intro' || this.current === 'sewing') return this.cutIntro(now, origin);
+    if (this.cuttable) return this.cutIntro(now, origin);
     const next = { quilt: 'unstitching', tiles: 'restitching', unstitching: 'restitching', restitching: 'unstitching' };
     if (!(this.current in next)) return false;
     this.begin(next[this.current], origin);
@@ -344,7 +349,7 @@ export class Director {
   click(hit, now) {
     if (this.paused && now - this.lastSnapAt < DIRECTOR.pausedClickMs) return false;
     const onQuilt = hit.part === 'block' || hit.part === 'sashing';
-    if ((this.current === 'intro' || this.current === 'sewing') && onQuilt) return this.cutIntro(now, hit.point);
+    if (this.cuttable && onQuilt) return this.cutIntro(now, hit.point);
     if (this.current === 'quilt' && onQuilt) this.begin('unstitching', hit.point);
     else if (this.current === 'tiles' && hit.part === 'none') this.begin('restitching', hit.point);
     else return false;
@@ -508,10 +513,7 @@ export class Director {
     this.sew.forEach((i, k) => {
       const { square: squared, puff } = this.sewWindows(k);
       const [cx, cy] = this.quilt[i].position;
-      const at = [cx, cy, from[k].z * (1 - ease.inout(progress(puff - 0.5, 0, 0.5)))];
-      this.springs.p[i] = at.slice();
-      this.springs.setTarget(i, at);
-      this.springs.v[i].fill(0);
+      this.hold(i, cx, cy, from[k].z * (1 - ease.inout(progress(puff - 0.5, 0, 0.5))));
       if (squared >= 1 && puff >= 1 && !this.squared.has(i)) this.squareBlock(i);
     });
   }

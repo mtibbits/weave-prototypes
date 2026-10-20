@@ -430,15 +430,20 @@ function stitchU(curve) {
   return out;
 }
 
-// Every geometry and material under `object`, disposed once each (#13: a needle owns all of its own).
-function disposeTree(object) {
+// Every geometry and material under `object`, once each.
+function meshParts(object) {
   const owned = new Set();
   object.traverse((o) => {
     if (!o.isMesh) return;
     owned.add(o.geometry);
     owned.add(o.material);
   });
-  owned.forEach((x) => x.dispose());
+  return owned;
+}
+
+// #13: a needle owns all of its own.
+function disposeTree(object) {
+  meshParts(object).forEach((x) => x.dispose());
 }
 
 // One decor part as a hidden InstancedMesh child of its block: never culled, never a pick target.
@@ -796,14 +801,19 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
   function placeBlock(i, slot) {
     const mesh = blocks[i];
     if (mesh.morphTargetInfluences[0] !== 1) throw new Error('WEAVE: placeBlock needs a flat block (morph influence 1).');
-    foldBlock(mesh.geometry, slot, tilts[i]);
     mesh.userData.slot = slot;
     if (tiles[i]) tiles[i].userData.slot = slot;
-    // #10: the decor re-lays on the new fold, and keeps its state.
+    for (const kind of refold(i, slot, tilts[i])) if (kind.drawn || kind.anim) writeKind(kind);
+  }
+
+  // Folds block i at `slot` and `tilt`, and re-lays its decor's rests there (#10: the decor keeps its state); the
+  // decor kinds it has, for the caller to rewrite.
+  function refold(i, slot, tilt) {
+    foldBlock(blocks[i].geometry, slot, tilt);
     const { stitches, pins } = decor[i].kinds;
-    if (stitches) stitches.rest = stitchMatrices(slot, tilts[i]);
-    if (pins) pins.rest = pinMatrices(mesh.userData.id, slot, tilts[i]);
-    for (const kind of [stitches, pins]) if (kind && (kind.drawn || kind.anim)) writeKind(kind);
+    if (stitches) stitches.rest = stitchMatrices(slot, tilt);
+    if (pins) pins.rest = pinMatrices(blocks[i].userData.id, slot, tilt);
+    return [stitches, pins].filter(Boolean);
   }
 
   // --- #16's sew-in calls. ---
@@ -814,14 +824,10 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
   function setTilt(id, tilt) {
     const i = indexOf(id);
     if (i < 0) return;
-    const mesh = blocks[i];
-    const { slot } = mesh.userData;
     tilts[i] = tilt;
-    foldBlock(mesh.geometry, slot, tilt);
-    const { stitches, pins } = decor[i].kinds;
-    if (stitches) stitches.rest = stitchMatrices(slot, tilt);
-    if (pins) pins.rest = pinMatrices(mesh.userData.id, slot, tilt);
-    for (const kind of [stitches, pins]) if (kind && (kind.drawn || kind.anim || kind.meshes[0].visible)) writeKind(kind);
+    for (const kind of refold(i, blocks[i].userData.slot, tilt)) {
+      if (kind.drawn || kind.anim || kind.meshes[0].visible) writeKind(kind);
+    }
   }
 
   // Block id's puff amount (0-1), applied at once.
@@ -857,7 +863,7 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
   // Shows block id's dashes up to u along its perimeter: u >= 1 is exactly revealStitches(id, { animate: false }).
   // Below 1 the kind's state stays hidden, so a later revealStitches always completes it; the dashes with
   // stitchU <= u are at their rests (the instance matrices are written on every call) and the rest at scale 0. A block
-  // whose stitches are already shown is left alone.
+  // whose stitches are already shown is left alone. A running needle's run supplies the dashes' u from its curve.
   function revealStitchesTo(id, u) {
     if (u >= 1) {
       revealStitches(id, { animate: false });
@@ -866,7 +872,7 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
     const i = indexOf(id);
     const kind = i < 0 ? null : decor[i].kinds.stitches;
     if (!kind || kind.state === 'shown') return;
-    const at = stitchU(perimeterCurve(i));
+    const at = runs.get(id)?.stitchU ?? stitchU(perimeterCurve(i));
     kind.anim = null;
     kind.f = at.map((v) => (v <= u ? 1 : 0));
     writeKind(kind);
@@ -884,13 +890,14 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
     needle.visible = false;
     needle.userData = { part: 'needle', id: mesh.userData.id };
     group.add(needle);
-    runs.set(mesh.userData.id, { needle, curve: null, u: 0, state: 'built' });
+    runs.set(mesh.userData.id, { needle, curve: null, stitchU: null, u: 0, state: 'built' });
   });
 
   function startNeedle(id) {
     const run = runs.get(id);
     if (!run || run.state !== 'built') return;
     run.curve = perimeterCurve(indexOf(id));
+    run.stitchU = stitchU(run.curve);
     run.u = 0;
     run.state = 'running';
     run.needle.visible = true;
@@ -910,6 +917,7 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
     if (!run || run.state === 'ended') return;
     run.state = 'ended';
     run.curve = null;
+    run.stitchU = null;
     group.remove(run.needle);
     disposeTree(run.needle);
   }
@@ -1041,17 +1049,12 @@ export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) 
   // Releases every geometry, material and texture (the shared weave normal map and the sashing's clone
   // included), then the renderer and its context.
   function dispose() {
-    const geometries = new Set();
-    const materials = new Set();
+    const owned = meshParts(scene);
     const textures = new Set();
-    scene.traverse((object) => {
-      if (!object.isMesh) return;
-      geometries.add(object.geometry);
-      materials.add(object.material);
-      for (const key of ['map', 'normalMap']) if (object.material[key]) textures.add(object.material[key]);
-    });
-    geometries.forEach((g) => g.dispose());
-    materials.forEach((m) => m.dispose());
+    for (const x of owned) {
+      if (x.isMaterial) for (const key of ['map', 'normalMap']) if (x[key]) textures.add(x[key]);
+    }
+    owned.forEach((x) => x.dispose());
     textures.forEach((t) => t.dispose());
     if (textures.has(weaveNormal)) weaveNormal = null;
     renderer.dispose();
