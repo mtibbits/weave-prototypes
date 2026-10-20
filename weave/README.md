@@ -156,7 +156,7 @@ The page has five bars, checked on the owner's dev laptop:
 - frame times over the sew-in, on a load with `?whatsnew` and `now=` at the fixed date, so nothing is written: the same median and p95 (`sew_frame_median_ms`, `sew_frame_p95_ms`);
 - the still: at most 250 KB, at 1600 x 1000.
 
-The sew-in's longest frame, `sew_frame_max_ms`, is recorded but not budgeted. `verify.py` measures the sample's two new blocks; a sew-in of 6 to 12 new blocks, where the schedule compresses to 5 s, is unmeasured.
+The sew-in's longest frame, `sew_frame_max_ms`, is recorded but not budgeted. `verify.py` measures the sample's two new blocks; a sew-in of 6 to 12 new blocks, where the schedule compresses to 5 s, is unmeasured (#38).
 
 The full run is the `verify.py` command under Tests, in a visible browser on the owner's dev laptop; keep its windows in front until the run ends. After the budgets it checks every hero state (the quilt, the full page and its labels, hover, tiles, a reorder, the sew-back, Pause, the three still fallbacks and the phone) and screenshots each into `weave/verify-output/shots/`. The report is `weave/verify-output/report.json`, stamped with the commit of the checkout it ran from. Each run also keeps its own report and shots under `weave/verify-output/runs/`, in a folder named for the kind of run (local or `--base`, with `-headless` for a smoke run) and that commit, so a run at another commit leaves them alone and a headless smoke run never replaces the headed evidence; a second run of the same kind at the same commit replaces its folder. `report.json` records `headless`.
 

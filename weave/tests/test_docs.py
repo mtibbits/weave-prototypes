@@ -323,4 +323,4 @@ def test_weave_readme_budgets_covers_the_sew_in_run():
     for phrase in ("?whatsnew", "sew_frame_median_ms", "sew_frame_p95_ms", "sew_frame_max_ms"):
         assert phrase in budgets, phrase
     said = sentences(budgets)
-    assert any("6" in s and "12" in s and "unmeasured" in s for s in said), said
+    assert any("6" in s and "12" in s and "unmeasured" in s and "#38" in s for s in said), said
