@@ -3,14 +3,15 @@
 // It owns the stage's data-release-state and data-new-panels and both of #12's recordSeen() call sites: when the card
 // is seen (rule a: half of it first in the viewport, or closed; a card that was never built records nothing, so the
 // next visit shows it), and at boot when nothing is new (rule b). On the live path the card waits for the first
-// weave:mode entry into quilt; on the still path, and on any fall-back to the still while it waits, it shows at once.
+// weave:mode entry into quilt; while #16's sew-in plays (the intro settles into `sewing` when a drawn block is new),
+// the state reads `sewing`, and the card shows on the quilt entry after it. On the still path, and on any fall-back
+// to the still while it waits (pending or sewing), it shows at once.
 // Every string goes in through textContent. On the still path the card's DOM is appended one task after boot, so the
 // empty polite region is already in the page when the card lands in it (whether a screen reader announces so early a
 // change is untested).
 
 export const GOT_IT = 'Got it';
-// #16 adds 'sewing' between pending and card.
-export const RELEASE_STATES = Object.freeze(['none', 'pending', 'card', 'done']);
+export const RELEASE_STATES = Object.freeze(['none', 'pending', 'sewing', 'card', 'done']);
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -126,7 +127,9 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
   }
 
   const onMode = (event) => {
-    if (state === 'pending' && event.detail?.mode === 'quilt') show();
+    const mode = event.detail?.mode;
+    if (state === 'pending' && mode === 'sewing') setState('sewing');
+    else if ((state === 'pending' || state === 'sewing') && mode === 'quilt') show();
   };
 
   stage.dataset.newPanels = heading ? newIds.join(' ') : '';
@@ -144,7 +147,7 @@ export function createNews({ stage, region, heading, newIds, recordSeen, live, f
     get state() { return state; },
     // A fall-back to the still: the card shows at once if it was still waiting for the quilt.
     fallBack() {
-      if (state === 'pending') show();
+      if (state === 'pending' || state === 'sewing') show();
     },
   };
 }

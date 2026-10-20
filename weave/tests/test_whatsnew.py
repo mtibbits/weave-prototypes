@@ -106,6 +106,25 @@ class TestModule:
             ("pending", 0, 0), ("card", 0, 1), ("card", 0, 1), ("done", 1, 0), ("done", 1, 0)]
         assert [v["attr"] for v in got] == ["pending", "card", "card", "done", "done"]
 
+    def test_news_sewing_state(self, js):
+        """#16: pending -> sewing on the sew-in's entry (no card, nothing recorded), then the card on the quilt entry
+        after it; a fall-back while sewing shows the card; nothing moves a `none` card."""
+        got = js(NEWS_JS + """
+            const t = mk('live');
+            const out = [];
+            mode(t, 'intro'); out.push(view(t));
+            mode(t, 'sewing'); out.push(view(t));
+            mode(t, 'quilt'); out.push(view(t));
+            mode(t, 'sewing'); out.push(view(t));
+            const f = mk('live');
+            mode(f, 'intro'); mode(f, 'sewing'); f.news.fallBack(); out.push(view(f));
+            const n = mk('none-live');
+            mode(n, 'intro'); mode(n, 'sewing'); out.push(view(n));
+            return out;""")
+        assert [(v["state"], v["attr"], v["calls"], v["cards"]) for v in got] == [
+            ("pending", "pending", 0, 0), ("sewing", "sewing", 0, 0), ("card", "card", 0, 1), ("card", "card", 0, 1),
+            ("card", "card", 0, 1), ("none", "none", 1, 0)]
+
     def test_news_fallback_while_pending(self, js):
         got = js(NEWS_JS + """
             const a = mk('live');
