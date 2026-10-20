@@ -683,10 +683,9 @@ class TestSkips:
         page, _ = open_sew(make_page, base_url, on_sewing=lose)
         helpers.wait_for_reason(page, "context-lost")
         page.wait_for_selector(test_whatsnew.CARD)
-        if helpers.weave(page, ".mode") == "sewing":
-            assert test_whatsnew.states(page) == ["pending", "sewing", "card"]
-        else:
-            assert test_whatsnew.states(page)[-1] == "card"
+        # The loss lands one frame into a ~3 s sew-in, so the teardown mode is `sewing`.
+        assert helpers.weave(page, ".mode") == "sewing"
+        assert test_whatsnew.states(page) == ["pending", "sewing", "card"]
         assert test_whatsnew.seen(page)[0] == "1.1"
 
     def test_pose_rest_on_the_window_clock(self, make_page, base_url):
