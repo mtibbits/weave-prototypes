@@ -715,8 +715,9 @@ class TestLive:
                                       before_goto=entry_log())
         helpers.wait_for_quilt(page)
         page.wait_for_selector(CARD)
-        assert states(page) == ["pending", "card"]
-        index = helpers.modes(page).index(("quilt", "intro"))
+        # #16: in the window, the intro settles into the sew-in, and the card waits for the quilt after it.
+        assert states(page) == ["pending", "sewing", "card"]
+        index = helpers.modes(page).index(("quilt", "sewing"))
         first = next(e for e in page.evaluate("window.__entries") if e[1] == "card")
         assert first == ["quilt", "card", index + 1]
         record = card_record(page)
@@ -724,6 +725,8 @@ class TestLive:
         sampled = page.evaluate("window.__frames")
         assert ["intro", "pending"] in sampled
         assert ["intro", "card"] not in sampled
+        assert ["sewing", "sewing"] in sampled
+        assert ["sewing", "card"] not in sampled
         assert seen(page) == ["1.1", None]
         assert errors == []
 
@@ -767,7 +770,11 @@ class TestLive:
         assert page.locator(CARD).is_visible()
         assert seen(page)[0] == "1.1" and stage_data(page, "releaseState") == "card"
         assert card_record(page)["hero"] == ["still", "too-slow"]
-        assert states(page) == ["pending", "card"]
+        # #16: a teardown during the sew-in passes through `sewing` first (#15's lesson: read the teardown mode).
+        if helpers.weave(page, ".mode") == "sewing":
+            assert states(page) == ["pending", "sewing", "card"]
+        else:
+            assert states(page) == ["pending", "card"]
 
     @pytest.mark.parametrize("door", ["scene-route", "build-throws", "webgl-failed", "context-lost", "stop-hook"])
     def test_fallback_while_pending_shows_the_card(self, make_page, base_url, door):

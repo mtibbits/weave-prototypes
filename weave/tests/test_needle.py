@@ -492,26 +492,34 @@ def test_imports_needle_catches_every_form():
     assert [f for f in comments if imports_needle(f)] == []
 
 
-def test_no_page_or_module_imports_needle_yet():
-    """#16 and #18 replace this with their live-path imports; the still-path test stays."""
+def test_only_scene_imports_needle():
+    """#16: scene.js imports the needle, and main.js reaches scene.js only through import(), so the still path never
+    loads it; #18 adds its own live-path import here."""
     public = WEAVE / "public"
     subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.glob("*.html"))
                 + [public / "panels.js"] + list((WEAVE / "dev").glob("*.html")))
     # 12 modules at #13's base, plus panels.js, index.html and faces.html: a moved glob cannot empty the scan.
     assert len(subjects) >= 15, subjects
-    assert [p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))] == []
+    assert [p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))] == ["scene.js"]
+    main = re.sub(r"(?m)(^|\s)//[^\n]*", " ", (public / "js" / "main.js").read_text(encoding="utf-8"))
+    assert re.findall(r"[\w(]*\s*\(?\s*['\"]\./scene\.js['\"]", main) == ["import('./scene.js'"]
+    assert not re.search(r"from\s+['\"]\./scene\.js['\"]|import\s+['\"]\./scene\.js['\"]", main)
 
 
 @pytest.mark.parametrize("context, reason", [
     ({"reduced_motion": "reduce"}, "reduced-motion"),
     ({"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}, "no-hover"),
-], ids=["reduced-motion", "phone"])
-def test_still_path_never_requests_needle(make_page, base_url, context, reason):
+    ({"no_webgl": True}, "no-webgl"),
+], ids=["reduced-motion", "phone", "no-webgl"])
+def test_still_path_never_requests_needle(make_page, base_url, browser_no_webgl, context, reason):
     requested = []
 
     def listen(p):
         p.on("request", lambda request: requested.append(request.url))
 
+    context = dict(context)
+    if context.pop("no_webgl", False):
+        context["target_browser"] = browser_no_webgl
     page, _, _ = open_release(make_page, base_url, before_goto=listen, **{"reduced_motion": "no-preference", **context})
     assert hero_result(page) == ["still", reason]
     page.wait_for_load_state("networkidle")

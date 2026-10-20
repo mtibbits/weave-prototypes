@@ -1,13 +1,18 @@
 """#16's sew-in: the pure schedule (motion.js), the scene's sew-in calls (scene.js), and the page's sequence and skips
 (main.js, whatsnew.js). Expected values are literals, never imported (PUFF and GLOW's peak legs excepted, as noted)."""
 import pytest
+from playwright.sync_api import Error
 
+import helpers
+import test_hover
+import test_whatsnew
 from helpers import SEAMS_JS
 from test_scene import BUILD_JS
 
 # --- The pure schedule (motion.js). ---
 
 SCHEDULE_JS = "const M = await import('/public/js/motion.js');"
+
 
 class TestSchedule:
     def test_two_blocks_keep_the_nominal_steps(self, js):
@@ -86,6 +91,7 @@ class TestSchedule:
         assert len(r) == 13
         assert r[6] == r[12]
 
+
 # --- The scene's sew-in calls (scene.js), on blank.html. ---
 
 # test_scene's build(slots, options) and slotsOf(), plus: SEW_BUILD() is the start-planned build (Travel and Desk
@@ -102,8 +108,10 @@ SCENE_SEW_JS = BUILD_JS + SEAMS_JS + r"""
     const travelStitches = (q) => q.snapshot().stitches.filter((s) => s.id === 'travel');
 """
 
+
 def scene_sew(paint_js, body):
     return paint_js(SCENE_SEW_JS + body)
+
 
 class TestScene:
     def test_start_planned_builds_a_live_block_planned(self, paint_js):
@@ -321,3 +329,373 @@ class TestScene:
         assert r["owned"] >= 3 and r["disposed"] is True
         assert r["lookAfter"] is False
 
+
+# --- The page: the sequence (AC1-AC4, AC6-AC8) and the skips (AC5), in the release's news window. ---
+
+IN_WINDOW_Q = "?nowatchdog&now=2026-10-10"
+SEW_IDS = ["travel", "desks"]
+SEW_SLOTS = [5, 10]
+PLANNED_IDS = ["promotions", "feedback", "oversight", "access"]
+
+# An init script with its own parse-time weave:mode listener on [data-hero] (attached as MODE_LOG's is; it never uses
+# window.__onMode, which test_whatsnew's ENTRY_LOG assigns). On the `sewing` entry it records window.__atSewing =
+# { faces (by slot), pins ({id: count}), sim, point } synchronously, point being Travel's corner mean from that
+# snapshot, projected; on the next frame it calls window.__onSewing(el) if a test defined it.
+SEW_HOOK = r"""
+    (() => {
+      const attach = (el) => {
+        if (el.__sewHook) return;
+        el.__sewHook = true;
+        el.addEventListener('weave:mode', (event) => {
+          if (event.detail.mode !== 'sewing') return;
+          const snap = el.__weave.snapshot();
+          const pins = {};
+          for (const p of snap.pins) pins[p.id] = (pins[p.id] ?? 0) + 1;
+          const b = snap.blocks.find((x) => x.id === 'travel');
+          const mean = [0, 1, 2].map((k) => [0, 40, 1640, 1680].reduce((s, j) => s + b.positions[3 * j + k], 0) / 4);
+          window.__atSewing = { faces: snap.blocks.map((x) => x.face), pins,
+                                sim: localStorage.getItem('weave.lastSeenRelease.sim'), point: el.__weave.project(mean) };
+          requestAnimationFrame(() => { if (window.__onSewing) window.__onSewing(el); });
+        });
+      };
+      new MutationObserver(() => {
+        const el = document.querySelector('[data-hero]');
+        if (el) attach(el);
+      }).observe(document, { childList: true, subtree: true });
+    })();
+"""
+
+# The sew-in is over: __weave.mode is quilt and the quilt was entered from sewing. Synchronous (Issue-9).
+SEW_DONE = ("() => document.querySelector('[data-hero]')?.__weave?.mode === 'quilt'"
+            " && (window.__modes || []).some((m) => m.mode === 'quilt' && m.from === 'sewing')")
+
+# One evaluate (D40: the world -> quilt map is read in the same call as the snapshot, so the sway cannot move between
+# reads): every block's corner mean in quilt space against its slot, and each new block's 160 edge vertices against
+# its sew curve, with and without the needle's lift subtracted.
+QUILT_FRAME = r"""async (el) => {
+    const THREE = await import('three');
+    const L = await import('/public/js/layout.js');
+    const [snap, matrix, travel, desks] = [el.__weave.snapshot(), el.__weave.groupMatrix(), el.__weave.sewCurve('travel'),
+                                           el.__weave.sewCurve('desks')];
+    const inverse = new THREE.Matrix4().fromArray(matrix).invert();
+    const local = (p, j) => new THREE.Vector3(p[3 * j], p[3 * j + 1], p[3 * j + 2]).applyMatrix4(inverse);
+    let centre = 0;
+    for (const b of snap.blocks) {
+      const mean = [0, 40, 1640, 1680].map((j) => local(b.positions, j)).reduce((s, v) => s.add(v), new THREE.Vector3())
+        .multiplyScalar(0.25);
+      const [cx, cy] = L.slotCentre(b.slot);
+      centre = Math.max(centre, Math.abs(mean.x - cx), Math.abs(mean.y - cy));
+    }
+    const perimeter = [];
+    for (let j = 0; j <= 40; j += 1) perimeter.push(j);
+    for (let r = 1; r <= 40; r += 1) perimeter.push(41 * r + 40);
+    for (let c = 1; c <= 40; c += 1) perimeter.push(1680 - c);
+    for (let r = 39; r >= 1; r -= 1) perimeter.push(41 * r);
+    let compared = 0; let lifted = 0; let unlifted = 0;
+    for (const [id, curve] of [['travel', travel], ['desks', desks]]) {
+      const b = snap.blocks.find((x) => x.id === id);
+      perimeter.forEach((j, k) => {
+        const v = local(b.positions, j);
+        const at = curve.at[k];
+        compared += 1;
+        lifted = Math.max(lifted, Math.hypot(at[0] - v.x, at[1] - v.y, at[2] - 0.01 - v.z));
+        unlifted = Math.max(unlifted, Math.hypot(at[0] - v.x, at[1] - v.y, at[2] - v.z));
+      });
+    }
+    return { centre, compared, lifted, unlifted, blocks: snap.blocks.length,
+             tilts: ['travel', 'desks'].map((id) => el.__weave.blockBase(id).tilt) };
+}"""
+
+
+def open_sew(make_page, base_url, query=IN_WINDOW_Q, on_sewing=None, before_goto=None, **kw):
+    """open_live with MODE_LOG, RELEASE_LOG and SEW_HOOK, then `on_sewing` (a JS body run with `el` on the frame after
+    the sewing entry) and `before_goto`; returns (page, errors)."""
+    def setup(page):
+        helpers.log_modes(page)
+        page.add_init_script(test_whatsnew.RELEASE_LOG)
+        page.add_init_script(SEW_HOOK)
+        if on_sewing is not None:
+            page.add_init_script(f"window.__onSewing = (el) => {{ {on_sewing} }};")
+        if before_goto is not None:
+            before_goto(page)
+
+    return helpers.open_live(make_page, base_url, query=query, before_goto=setup, **kw)
+
+
+def wait_sew_done(page, timeout=15000):
+    page.wait_for_function(SEW_DONE, timeout=timeout)
+
+
+def faces(page):
+    return [s["face"] for s in helpers.weave(page, ".slots")]
+
+
+def decor_of(page, ids=SEW_IDS):
+    """{id: [pins, stitches]} from one snapshot."""
+    return page.eval_on_selector("[data-hero]", """(el, ids) => { const s = el.__weave.snapshot();
+        return Object.fromEntries(ids.map((id) => [id, [s.pins.filter((p) => p.id === id).length,
+                                                        s.stitches.filter((p) => p.id === id).length]])); }""", ids)
+
+
+def looks(page, ids=SEW_IDS):
+    return page.eval_on_selector("[data-hero]", "(el, ids) => ids.map((id) => el.__weave.sewLook(id))", ids)
+
+
+def assert_sewn(page):
+    """Both new blocks sewn: the sewn face, no pins, 48 stitches, no puff, glow or needle, untilted."""
+    got = faces(page)
+    assert [got[s] for s in SEW_SLOTS] == ["sewn", "sewn"], got
+    assert decor_of(page) == {"travel": [0, 48], "desks": [0, 48]}
+    for look in looks(page):
+        assert look == {"puff": 0, "emissive": [0, 0, 0], "needle": False, "tilt": 0}, look
+
+
+class TestSequence:
+    def test_full_sequence(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url)
+        wait_sew_done(page)
+        page.wait_for_selector(test_whatsnew.CARD)
+        assert test_whatsnew.states(page) == ["pending", "sewing", "card"]
+        assert helpers.modes(page)[:3] == [("intro", None), ("sewing", "intro"), ("quilt", "sewing")]
+        at = page.evaluate("window.__atSewing")
+        assert [at["faces"][s] for s in SEW_SLOTS] == ["planned", "planned"]
+        assert all(at["pins"].get(i) in (3, 4) for i in SEW_IDS), at["pins"]
+        assert_sewn(page)
+        seams = page.eval_on_selector("[data-hero]", helpers.SEAMS)
+        assert [seams["checked"], seams["missing"]] == [1280, 0]
+        assert test_whatsnew.card(page)[1]["names"] == ["Travel", "Desk Allocation"]
+        assert test_whatsnew.seen(page) == ["1.1", None]
+        assert errors == []
+
+    @pytest.mark.parametrize("path", ["natural", "pause-intro", "pause-sewing"])
+    def test_each_sew_step_runs_once(self, make_page, base_url, path):
+        pause = "document.querySelector('[data-pause]').click();"
+        kw = {"natural": {}, "pause-intro": {"before_goto": test_whatsnew.entry_log(pause)},
+              "pause-sewing": {"on_sewing": pause}}[path]
+        page, errors = open_sew(make_page, base_url, **kw)
+        page.wait_for_selector(test_whatsnew.CARD)
+        calls = helpers.weave(page, ".sewCalls")
+        names = ["popPins", "tilt0", "puff0", "face", "needleStart", "needleEnd", "reveal", "glow0"]
+        if path != "natural":
+            names = [n for n in names if not n.startswith("needle")]
+        want = {f"{n} {i}": 1 for n in names for i in SEW_IDS}
+        want["reseam"] = 2 if path == "natural" else 1
+        assert calls == want
+        assert errors == []
+
+    def test_no_hover_during_sewing(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url)
+        helpers.wait_for_mode(page, "sewing")
+        page.mouse.move(*page.evaluate("window.__atSewing.point"))
+        r = page.evaluate("""async (ms) => {
+            const el = document.querySelector('[data-hero]');
+            const tip = document.querySelector('[data-tooltip]');
+            const end = performance.now() + ms;
+            let frames = 0; let shown = 0; let lifted = 0;
+            while (performance.now() < end && el.__weave.mode === 'sewing') {
+              frames += 1;
+              if (tip && tip.hidden === false) shown += 1;
+              if (el.__weave.hover.amount !== 0) lifted += 1;
+              await new Promise((r) => requestAnimationFrame(r));
+            }
+            return { frames, shown, lifted };
+        }""", helpers.HOVER_WINDOW_MS)
+        assert r["frames"] > 5 and r["shown"] == 0 and r["lifted"] == 0, r
+        wait_sew_done(page)
+        test_hover.wait_tip_shown(page)
+        test_hover.wait_hover(page, "h.id === 'travel'", timeout=helpers.HOVER_WINDOW_MS)
+        assert errors == []
+
+    def test_sew_in_within_5_s(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url, clock=None)
+        wait_sew_done(page)
+        log = page.evaluate("window.__modes")
+        start = next(e["t"] for e in log if (e["mode"], e["from"]) == ("sewing", "intro"))
+        end = next(e["t"] for e in log if (e["mode"], e["from"]) == ("quilt", "sewing"))
+        print(f"sew-in wall time: {end - start:.0f} ms")
+        assert end - start <= 5000
+        assert errors == []
+
+    def test_curve_follows_the_mesh(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url)
+        wait_sew_done(page)
+        page.mouse.move(2, 2)
+        r = page.eval_on_selector("[data-hero]", QUILT_FRAME)
+        assert r["blocks"] == 12 and r["centre"] <= 1e-6, r
+        assert r["tilts"] == [0, 0]
+        assert r["compared"] == 320
+        assert r["lifted"] <= 1e-4, r
+        assert r["unlifted"] >= 0.009, r  # planted control: without the lift subtracted
+        assert errors == []
+
+    def test_needles_join_the_group_and_leave(self, make_page, base_url):
+        sampler = ("window.__needle = []; const look = () => { window.__needle.push(el.__weave.sewLook('travel').needle);"
+                   " if (el.__weave.mode === 'sewing') requestAnimationFrame(look); }; look();")
+        page, errors = open_sew(make_page, base_url, on_sewing=sampler)
+        wait_sew_done(page)
+        assert True in page.evaluate("window.__needle")
+        assert [look["needle"] for look in looks(page)] == [False, False]
+        assert errors == []
+
+    def test_hidden_tab_waits(self, make_page, base_url):
+        hide = ("Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });"
+                " Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });"
+                " document.dispatchEvent(new Event('visibilitychange')); window.__hidden = true;")
+        page, errors = open_sew(make_page, base_url, on_sewing=hide)
+        page.wait_for_function("() => window.__hidden === true")
+        before = helpers.frames(page)
+        for _ in range(6):
+            page.wait_for_timeout(500)
+            assert helpers.weave(page, ".mode") == "sewing"
+            assert test_whatsnew.stage_data(page, "releaseState") == "sewing"
+        assert helpers.frames(page) == before
+        assert test_whatsnew.stored(page) == [None, None]
+        page.evaluate("() => { delete document.hidden; delete document.visibilityState;"
+                      " document.dispatchEvent(new Event('visibilitychange')); }")
+        page.wait_for_function("() => document.querySelector('[data-hero]').dataset.releaseState === 'card'",
+                               timeout=10000)
+        assert test_whatsnew.seen(page)[0] == "1.1"
+        assert errors == []
+
+    def test_reload_during_sewing_replays(self, make_page, base_url):
+        # open_sew installs on_sewing with add_init_script, so it reruns on every navigation: the reload is one-shot.
+        once = ("const n = Number(sessionStorage.getItem('sew16.sewings') || 0) + 1;"
+                " sessionStorage.setItem('sew16.sewings', String(n));"
+                " if (!sessionStorage.getItem('sew16.reloaded')) { sessionStorage.setItem('sew16.reloaded', '1');"
+                " location.reload(); }")
+        page, errors = open_sew(make_page, base_url, on_sewing=once)
+        # The pinned test clock empties the performance timeline, so the sessionStorage counter tells the loads apart.
+        reloaded = ("() => sessionStorage.getItem('sew16.sewings') === '2'"
+                    " && (window.__modes || []).some((m) => m.mode === 'quilt' && m.from === 'sewing')")
+        for _ in range(200):
+            try:
+                if page.evaluate(reloaded):
+                    break
+            except Error:
+                pass  # the reload replaced the document mid-evaluate
+            page.wait_for_timeout(100)
+        else:
+            raise AssertionError("the reloaded page never finished its sew-in")
+        assert ("sewing", "intro") in helpers.modes(page)
+        assert page.evaluate("window.__atSewing.sim") is None
+        page.wait_for_selector(test_whatsnew.CARD)
+        page.wait_for_timeout(1000)
+        assert page.evaluate("() => sessionStorage.getItem('sew16.sewings')") == "2"  # one reload, never a second
+        assert [e for e in errors if "Execution context" not in e] == []
+
+    def test_only_an_undrawn_panel_is_new(self, make_page, base_url):
+        body = test_whatsnew.mutated("""for (const id of ['travel', 'desks']) {
+  window.WEAVE_PANELS.panels.find((p) => p.id === id).since = '1.0';
+}
+window.WEAVE_PANELS.panels.push({ id: 'payroll', name: 'Payroll', status: 'live', since: '1.1', sample: null,
+  blurb: 'Pay.' });""")
+        page, errors = open_sew(make_page, base_url, panels_body=body)
+        helpers.wait_for_quilt(page)
+        page.wait_for_selector(test_whatsnew.CARD)
+        assert test_whatsnew.states(page) == ["pending", "card"]
+        got = helpers.modes(page)
+        assert got[:2] == helpers.PLAIN_START and "sewing" not in [m for m, _ in got]
+        assert test_whatsnew.card(page)[1]["names"] == ["Payroll"]
+        assert page.evaluate("() => [...document.querySelectorAll('li.panel.is-new .panel-name')]"
+                             ".map((e) => e.textContent)") == ["Payroll"]
+        slots = helpers.weave(page, ".slots")
+        assert sorted(s["id"] for s in slots if s["face"] == "planned") == sorted(PLANNED_IDS)
+        assert errors == []
+
+    def test_live_path_requests_needle(self, make_page, base_url):
+        requested = []
+        page, errors = open_sew(make_page, base_url,
+                                before_goto=lambda p: p.on("request", lambda r: requested.append(r.url)))
+        wait_sew_done(page)
+        assert len([u for u in requested if u.endswith("/js/needle.js")]) == 1, requested
+        assert errors == []
+
+
+class TestSkips:
+    def test_pause_during_intro_sews_at_once(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url, before_goto=test_whatsnew.entry_log(
+            "document.querySelector('[data-pause]').click();"))
+        page.wait_for_selector(test_whatsnew.CARD)
+        assert helpers.modes(page) == helpers.PLAIN_START
+        assert_sewn(page)
+        assert test_whatsnew.states(page) == ["pending", "card"]
+        assert test_whatsnew.seen(page)[0] == "1.1"
+        assert errors == []
+
+    def test_pause_during_sewing_then_play_no_replay(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url, on_sewing="document.querySelector('[data-pause]').click();")
+        page.wait_for_selector(test_whatsnew.CARD)
+        assert helpers.modes(page)[1:] == [("sewing", "intro"), ("quilt", "sewing")]
+        assert_sewn(page)
+        page.click("[data-pause]")
+        page.wait_for_timeout(1000)
+        assert helpers.modes(page)[1:] == [("sewing", "intro"), ("quilt", "sewing")]
+        assert helpers.rising(page)
+        assert_sewn(page)
+        assert test_whatsnew.seen(page)[0] == "1.1"
+        assert errors == []
+
+    @pytest.mark.parametrize("path", ["reduced-motion", "no-webgl"])
+    def test_still_paths_never_sew(self, make_page, base_url, browser_no_webgl, path):
+        requested = []
+        options = {} if path == "reduced-motion" else {"target_browser": browser_no_webgl,
+                                                       "reduced_motion": "no-preference"}
+        page, errors = test_whatsnew.open_still(make_page, base_url, "?now=2026-10-10",
+                                                before_goto=lambda p: p.on("request", lambda r: requested.append(r.url)),
+                                                **options)
+        assert helpers.hero_result(page) == ["still", path]
+        page.wait_for_load_state("networkidle")
+        assert page.eval_on_selector("[data-hero]", "el => el.dataset.mode ?? null") is None
+        assert test_whatsnew.stage_data(page, "releaseState") == "card"
+        assert any(u.endswith("/public/js/main.js") for u in requested), requested
+        assert not [u for u in requested if u.endswith("/js/needle.js") or "three.module" in u], requested
+        assert test_whatsnew.seen(page)[0] == "1.1"
+        assert errors == []
+
+    @pytest.mark.parametrize("act", ["toggle-intro", "click-sewing"])
+    def test_toggle_during_intro_and_click_during_sewing(self, make_page, base_url, act):
+        toggle = "document.querySelector('[data-toggle]').click();" if act == "toggle-intro" else None
+        page, errors = open_sew(make_page, base_url, before_goto=test_whatsnew.entry_log(toggle))
+        if act == "click-sewing":
+            helpers.wait_for_mode(page, "sewing")
+            page.evaluate("() => document.addEventListener('pointerdown', () => { window.__pressMode ="
+                          " document.querySelector('[data-hero]').__weave.mode; }, { capture: true, once: true })")
+            page.mouse.click(*page.evaluate("window.__atSewing.point"))
+            assert page.evaluate("window.__pressMode") == "sewing"
+        helpers.wait_for_data_mode(page, "tiles")
+        got = faces(page)
+        assert [got[s] for s in SEW_SLOTS] == ["sewn", "sewn"]
+        assert helpers.weave(page, ".blockBase('travel').tilt") == 0
+        page.wait_for_selector(test_whatsnew.CARD)
+        entries = [e[:2] for e in page.evaluate("window.__entries")]
+        i = entries.index(["quilt", "card"])
+        assert entries[i:i + 2] == [["quilt", "card"], ["unstitching", "card"]]
+        modes = helpers.modes(page)
+        if act == "toggle-intro":
+            assert "sewing" not in [m for m, _ in modes]
+        else:
+            assert modes[1:4] == [("sewing", "intro"), ("quilt", "sewing"), ("unstitching", "quilt")]
+        assert test_whatsnew.seen(page)[0] == "1.1"
+        assert errors == []
+
+    def test_context_loss_during_sewing(self, make_page, base_url):
+        lose = "el.querySelector('canvas').getContext('webgl2').getExtension('WEBGL_lose_context').loseContext();"
+        page, _ = open_sew(make_page, base_url, on_sewing=lose)
+        helpers.wait_for_reason(page, "context-lost")
+        page.wait_for_selector(test_whatsnew.CARD)
+        if helpers.weave(page, ".mode") == "sewing":
+            assert test_whatsnew.states(page) == ["pending", "sewing", "card"]
+        else:
+            assert test_whatsnew.states(page)[-1] == "card"
+        assert test_whatsnew.seen(page)[0] == "1.1"
+
+    def test_pose_rest_on_the_window_clock(self, make_page, base_url):
+        page, errors = open_sew(make_page, base_url, query="?nowatchdog&pose=rest", clock="2026-10-10T09:00:00")
+        page.wait_for_selector(test_whatsnew.CARD)
+        assert helpers.modes(page) == [("quilt", None)]
+        got = faces(page)
+        assert [got[s] for s in SEW_SLOTS] == ["sewn", "sewn"]
+        assert {i: v[0] for i, v in decor_of(page).items()} == {"travel": 0, "desks": 0}
+        assert helpers.rising(page)
+        assert test_whatsnew.seen(page) == ["1.1", None]
+        assert errors == []

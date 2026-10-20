@@ -93,11 +93,13 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     fallBack('webgl-failed');
     return;
   }
+  // #16: the drawn blocks new for this visit are built planned and sewn in after the intro (never at ?pose=rest).
+  const sewIds = hooks.rest ? [] : slots.filter((e) => e && release.newIds.includes(e.id)).map((e) => e.id);
   let quilt;
   try {
-    quilt = S.buildQuilt(renderer, { slots, tagged });
+    quilt = S.buildQuilt(renderer, { slots, tagged, startPlanned: sewIds });
     // #10: compile every program now, the hidden decor's included (compile walks hidden objects), so the first frame
-    // that shows a stitch or a pin does not stall on a shader compile.
+    // that shows a stitch, a pin or #16's needle does not stall on a shader compile.
     renderer.compile(quilt.scene, quilt.camera);
   } catch (err) {
     renderer.dispose();
@@ -122,6 +124,8 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     isTile: (i) => quilt.blocks[i].userData.face !== 'filler',
     // #10's intro: each panel block flies in from its seeded scatter point; a filler only fades in.
     introFrom: (i) => (order[i] === null ? null : M.introScatter(order[i])),
+    // #16: the blocks the intro settles into sewing for, in slot order.
+    sew: sewIds.map((id) => order.indexOf(id)),
     onEnter,
   });
   let tilt = { x: 0, y: 0 };
@@ -162,9 +166,11 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     quilt.setAmbient({ sway: (hooks.rest ? 0 : M.swayAngle(clock)) * a, tiltX: tilt.x * a, tiltY: tilt.y * a });
   }
 
+  // The needles are posed after the group's ambient pose (#13's frame ordering).
   function draw() {
     if (stopped) return;
     sync();
+    quilt.poseNeedles();
     quilt.render();
   }
 
@@ -190,6 +196,124 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
         dressed.add(i);
         quilt.unstowBlock(i);
       }
+    }
+  }
+
+  // --- #16's sew-in: each sewn block's steps, driven from director.sewState(i) every frame while sewing. Each
+  // once-call checks and sets its flag, so a step never runs twice; completeSew runs every step not yet run when the
+  // quilt is entered (the natural end or a skip). `sewCalls` counts the once-calls (test-only). ---
+  const sewing = new Map(sewIds.map((id) => [id,
+    { pins: false, flat: false, puff: false, face: false, reveal: false, needle: 'none', glow: false }]));
+  const sewCalls = {};
+  const counted = (name, id) => {
+    const key = id === undefined ? name : `${name} ${id}`;
+    sewCalls[key] = (sewCalls[key] ?? 0) + 1;
+  };
+
+  function sewFrame() {
+    if (director.mode !== 'sewing') return;
+    let swapped = false;
+    for (const [id, done] of sewing) {
+      const i = order.indexOf(id);
+      const st = director.sewState(i);
+      if (!st) continue;
+      if (st.pins > 0 && !done.pins) {
+        done.pins = true;
+        counted('popPins', id);
+        quilt.popPins(id);
+      }
+      if (st.square > 0 && st.square < 1) quilt.setTilt(id, director.pose(i).rotZ);
+      else if (st.square >= 1 && !done.flat) {
+        done.flat = true;
+        counted('tilt0', id);
+        quilt.setTilt(id, 0);
+      }
+      if (st.puff > 0 && st.puff < 1) quilt.setPuff(id, Math.sin(Math.PI * st.puff));
+      else if (st.puff >= 1 && !done.puff) {
+        done.puff = true;
+        counted('puff0', id);
+        quilt.setPuff(id, 0);
+      }
+      if (st.puff >= 0.5 && !done.face) {
+        done.face = true;
+        counted('face', id);
+        quilt.setFace(id, 'sewn');
+        swapped = true;
+      }
+      if (st.needle > 0 && done.needle === 'none') {
+        done.needle = 'running';
+        counted('needleStart', id);
+        quilt.startNeedle(id);
+      }
+      if (done.needle === 'running' && st.needle < 1) {
+        quilt.poseNeedle(id, st.needle);
+        quilt.revealStitchesTo(id, st.needle);
+      } else if (done.needle === 'running') {
+        done.reveal = true;
+        counted('reveal', id);
+        quilt.revealStitchesTo(id, 1);
+        done.needle = 'ended';
+        counted('needleEnd', id);
+        quilt.endNeedle(id);
+      }
+      if (st.glow > 0 && st.glow < 1) quilt.setGlow(id, Math.sin(Math.PI * st.glow));
+      else if (st.glow >= 1 && !done.glow) {
+        done.glow = true;
+        counted('glow0', id);
+        quilt.setGlow(id, 0);
+      }
+    }
+    if (swapped) {
+      counted('reseam');
+      quilt.reseam();
+    }
+  }
+
+  // Every step not yet run, at once: the pins gone, square, unpuffed, the sewn face, every stitch, no needle, no glow;
+  // then one reseam if a face changed.
+  function completeSew() {
+    let swapped = false;
+    for (const [id, done] of sewing) {
+      if (!done.pins) {
+        done.pins = true;
+        counted('popPins', id);
+        quilt.popPins(id, { animate: false });
+      }
+      if (!done.flat) {
+        done.flat = true;
+        counted('tilt0', id);
+        quilt.setTilt(id, 0);
+      }
+      if (!done.puff) {
+        done.puff = true;
+        counted('puff0', id);
+        quilt.setPuff(id, 0);
+      }
+      if (!done.face) {
+        done.face = true;
+        counted('face', id);
+        quilt.setFace(id, 'sewn');
+        swapped = true;
+      }
+      if (!done.reveal) {
+        done.reveal = true;
+        counted('reveal', id);
+        quilt.revealStitches(id, { animate: false });
+      }
+      if (done.needle === 'running') {
+        done.needle = 'ended';
+        counted('needleEnd', id);
+        quilt.endNeedle(id);
+      }
+      if (!done.glow) {
+        done.glow = true;
+        counted('glow0', id);
+        quilt.setGlow(id, 0);
+      }
+    }
+    if (swapped) {
+      counted('reseam');
+      quilt.reseam();
     }
   }
 
@@ -236,10 +360,11 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   }
 
   // Every state the director enters (D39): the scene first, so a handler's snapshot() sees the pose (outside quilt
-  // with no hover lift); data-mode quilt from the intro's entry, and otherwise only when the mode is settled; the
-  // label and hint on every entry, so they change on press; the decor (dressed at once on the first quilt, returned
-  // at a sew-back's settle, stowed on unstitching); then weave:mode. After a teardown (a weave:mode handler may call
-  // stop) nothing is written and nothing fires.
+  // with no hover lift); data-mode quilt from the intro's entry, and otherwise only when the mode is settled (so it
+  // reads quilt through #16's sewing); the label and hint on every entry, so they change on press; the decor (dressed
+  // at once on entering sewing or the first quilt, where #16's sew-in also completes, returned at a sew-back's settle,
+  // stowed on unstitching); then weave:mode. After a teardown (a weave:mode handler may call stop) nothing is written
+  // and nothing fires.
   function onEnter(mode, from) {
     if (stopped) return;
     if (mode !== 'quilt') clearHover();
@@ -247,7 +372,11 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     if (mode === 'intro') setDataMode(stage, 'quilt');
     else if (M.SETTLED.includes(mode)) setDataMode(stage, mode);
     setToggle(toggle, hint, mode);
-    if (mode === 'quilt' && (from === null || from === 'intro')) {
+    if (mode === 'sewing') {
+      for (let i = 0; i < slots.length; i += 1) if (!dressed.has(i)) dress(i, { animate: false });
+      quilt.finishDecor();
+    } else if (mode === 'quilt' && (from === null || from === 'intro' || from === 'sewing')) {
+      if (from !== null) completeSew();
       for (let i = 0; i < slots.length; i += 1) if (!dressed.has(i)) dress(i, { animate: false });
       quilt.finishDecor();
     } else if (mode === 'quilt' && from === 'restitching') {
@@ -277,6 +406,7 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     // A weave:mode handler run from the advance may have torn the scene down: the still counts no frame.
     if (stopped) return;
     dressFlights();
+    sewFrame();
     quilt.tick(h);
     if (director.mode === 'quilt') {
       pickHover();
@@ -551,6 +681,12 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
     popPins: (id, options) => perBlock('popPins', id, options),
     restorePins: (id, options) => perBlock('restorePins', id, options),
     setFace: (id, kind) => perBlock('setFace', id, kind),
+    // Test-only (#16): block id's perimeter curve and sew-in look (scene.js has the shapes), a partial stitch reveal,
+    // and each sew-in once-call's count by '<name> <id>' (and 'reseam').
+    sewCurve: (id) => quilt.sewCurve(id),
+    sewLook: (id) => quilt.sewLook(id),
+    revealStitchesTo: (id, u) => perBlock('revealStitchesTo', id, u),
+    get sewCalls() { return { ...sewCalls }; },
     // Test-only (#10): no stitch or pin animation running; the hovered block's id (null for none) with the largest
     // hover amount; the quilt group's world matrix (16 numbers), read after an update.
     get decorIdle() { return quilt.decorIdle; },
