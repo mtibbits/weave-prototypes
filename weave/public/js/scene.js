@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { makeCanvas, paintSashing, paintShadow, paintWeaveNormal, paintWood, sashingSize } from './fabric.js';
 import { foldZ, LAYOUT, puffZ, slotCentre } from './layout.js';
 import { ease } from './motion.js';
+import { createNeedle, poseOnCurve } from './needle.js';
 import { rngFor } from './random.js';
 import { faceKind, paintFace, paintTile } from './tiles.js';
 
@@ -148,9 +149,9 @@ function foldBlock(geometry, slot, tilt) {
 
 // One block: a 40 x 40 plane at its slot, puffed and folded by foldBlock, with a flat morph target 0 at influence 0 for
 // #8's flatten (#10's hover lift is the block's scale and z, not a morph). A filler is built transparent, since it
-// fades; every other block carries its tile face.
-function buildBlock(slot, entry, renderer, tagged) {
-  const face = faceKind(entry);
+// fades; every other block carries its tile face. `planned` (#16) builds a live block planned, to be sewn in.
+function buildBlock(slot, entry, renderer, tagged, planned = false) {
+  const face = planned ? 'planned' : faceKind(entry);
   const [cx, cy] = slotCentre(slot);
   const tilt = face === 'planned' ? (rngFor(entry.id, 'tilt')() * 2 - 1) * TILT_MAX : 0;
   const geometry = new THREE.PlaneGeometry(1, 1, SEGMENTS, SEGMENTS);
@@ -283,6 +284,13 @@ export const PIN_MAX_TILT_DEG = 15;           // seeded; the AC bound is 20
 export const DECOR_TIMING = Object.freeze({ sew: 0.4, pop: 0.3, drop: 0.3 }); // seconds of director time
 export const HOVER = Object.freeze({ scale: 0.03, lift: 0.04, rate: 12 });
 
+// #16's sew-in: the needle rides NEEDLE_LIFT above the cloth (D33's dashes sit on it); the puff swells a block by
+// PUFF.scale and lifts it PUFF.lift at its peak, as the hover does; the glow adds GLOW.color at GLOW.intensity to a
+// block's emissive. PUFF and GLOW are starting values, tuned at the demo.
+export const NEEDLE_LIFT = 0.01;
+export const PUFF = Object.freeze({ scale: 0.04, lift: 0.03 });
+export const GLOW = Object.freeze({ color: '#FFE7C2', intensity: 0.35 });
+
 // The share of the sew each dash takes to scale in; the dashes start one after another over the rest.
 const SEW_EACH = 0.25;
 // A restored pin drops this far along its +Y; a popped one rises this far as it shrinks.
@@ -346,6 +354,93 @@ function pinMatrices(id, slot, tilt) {
   });
 }
 
+// #16's perimeter: a block's 160 edge vertex indices plus the first again, from the top left, clockwise from +z (top,
+// right, bottom, left), the order stitchMatrices lays its sides in.
+const PERIMETER = (() => {
+  const n = SEGMENTS + 1;
+  const out = [];
+  for (let c = 0; c <= SEGMENTS; c += 1) out.push(c);
+  for (let r = 1; r <= SEGMENTS; r += 1) out.push(n * r + SEGMENTS);
+  for (let c = SEGMENTS - 1; c >= 0; c -= 1) out.push(n * SEGMENTS + c);
+  for (let r = SEGMENTS - 1; r >= 0; r -= 1) out.push(n * r);
+  return out;
+})();
+
+// #16's needle path: a polyline through `points` (Vector3s, in quilt space) parametrised by exact cumulative length,
+// with no CurvePath (r170's getPointAt throws on curve paths; project Issue-13). vertexU[k] is point k's u. A u past
+// either end is clamped; the tangent is the unit direction of u's segment (the outgoing one at a vertex, the last at
+// u = 1). Both write into the target and return it.
+export class PerimeterCurve extends THREE.Curve {
+  constructor(points) {
+    super();
+    this.points = points;
+    const lengths = [0];
+    for (let k = 1; k < points.length; k += 1) lengths.push(lengths[k - 1] + points[k].distanceTo(points[k - 1]));
+    const total = lengths[lengths.length - 1];
+    this.vertexU = lengths.map((length) => length / total);
+  }
+
+  // [k, u]: u clamped to [0, 1] (NaN to 0) and the index of the segment it falls in.
+  segment(t) {
+    const u = t > 0 ? Math.min(1, t) : 0;
+    let lo = 0;
+    let hi = this.points.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.vertexU[mid] <= u) lo = mid;
+      else hi = mid - 1;
+    }
+    return [lo, u];
+  }
+
+  getPoint(t, target = new THREE.Vector3()) {
+    const [k, u] = this.segment(t);
+    const a = this.vertexU[k];
+    const b = this.vertexU[k + 1];
+    return target.lerpVectors(this.points[k], this.points[k + 1], b > a ? (u - a) / (b - a) : 0);
+  }
+
+  getPointAt(u, target) {
+    return this.getPoint(u, target);
+  }
+
+  getTangent(t, target = new THREE.Vector3()) {
+    const [k] = this.segment(t);
+    return target.subVectors(this.points[k + 1], this.points[k]).normalize();
+  }
+
+  getTangentAt(u, target) {
+    return this.getTangent(u, target);
+  }
+}
+
+// The u of each of a block's 48 dashes on its perimeter curve, in stitchMatrices' order: dash k on side floor(k / 12)
+// at (k mod 12 + 0.5) / 12 along it.
+function stitchU(curve) {
+  const v = curve.vertexU;
+  const out = [];
+  for (let side = 0; side < 4; side += 1) {
+    for (let k = 0; k < STITCHES_PER_SIDE; k += 1) {
+      const at = (SEGMENTS * (k + 0.5)) / STITCHES_PER_SIDE;
+      const j = Math.floor(at);
+      const a = side * SEGMENTS + j;
+      out.push(v[a] + (at - j) * (v[a + 1] - v[a]));
+    }
+  }
+  return out;
+}
+
+// Every geometry and material under `object`, disposed once each (#13: a needle owns all of its own).
+function disposeTree(object) {
+  const owned = new Set();
+  object.traverse((o) => {
+    if (!o.isMesh) return;
+    owned.add(o.geometry);
+    owned.add(o.material);
+  });
+  owned.forEach((x) => x.dispose());
+}
+
 // One decor part as a hidden InstancedMesh child of its block: never culled, never a pick target.
 function decorMesh(geometry, material, count, part) {
   const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -387,15 +482,19 @@ function flatWorld(mesh, count, read) {
 // Builds the quilt from `slots` (12 cleaned entries, null for a filler) once the caller has awaited
 // fontsReady(). The blocks, sashing and rod hang in `group`, which setAmbient sways; the shadow stays put.
 // `tagged` (#14) is the ids whose tiles wear the "New" label, read once here; anything but an array tags nothing.
-export function buildQuilt(renderer, { slots, tagged = [] }) {
+// `startPlanned` (#16) is the live ids built planned (tilted, lifted, the planned face) to be sewn in, each with a
+// hidden needle in `group`; anything but an array, or an id that is not live, changes nothing.
+export function buildQuilt(renderer, { slots, tagged = [], startPlanned = [] }) {
   const wanted = new Set(Array.isArray(tagged) ? tagged : []);
   // Each block's tag, by block index (not in userData: the snapshot's block keys are pinned).
   const tags = slots.map((entry) => Boolean(entry) && wanted.has(entry.id));
+  const sewing = new Set(Array.isArray(startPlanned) ? startPlanned : []);
+  const starts = slots.map((entry) => Boolean(entry) && entry.status === 'live' && sewing.has(entry.id));
   const scene = new THREE.Scene();
   addLights(scene);
   const camera = fitCamera(new THREE.PerspectiveCamera(35, 1.6, 0.1, 100), 1.6);
   const group = new THREE.Group();
-  const blocks = slots.map((entry, slot) => buildBlock(slot, entry, renderer, tags[slot]));
+  const blocks = slots.map((entry, slot) => buildBlock(slot, entry, renderer, tags[slot], starts[slot]));
   const sashing = buildSashing(blocks);
   const { rod, caps, material: rodMaterial } = buildRod();
   const shadow = buildShadow();
@@ -403,7 +502,8 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
   scene.add(group, shadow);
   const tiles = blocks.map((b) => b.children.find((c) => c.userData.part === 'tile') ?? null);
   const fillers = blocks.filter((b) => b.userData.face === 'filler');
-  // Each block's seeded tilt, read once (not in userData: the snapshot's block keys are pinned).
+  // Each block's tilt, seeded at build (not in userData: the snapshot's block keys are pinned); #16's setTilt changes
+  // it, so a refold or a re-laid decor uses the current one.
   const tilts = blocks.map((b) => b.rotation.z);
   const entries = slots.slice();
 
@@ -570,8 +670,10 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     blocks[i].userData.face = kind;
   }
 
-  // The hover lift: block i's amount (0-1), which setBlockPose applies on every call; and each block's last pose.
+  // The hover lift and #16's puff: block i's amounts (0-1), which setBlockPose applies on every call; and each
+  // block's last pose.
   const hover = new Array(blocks.length).fill(0);
+  const puff = new Array(blocks.length).fill(0);
   const poses = blocks.map((b) => ({ position: b.position.toArray(), rotY: 0, rotZ: b.rotation.z, morph: 0 }));
 
   const pivot = new THREE.Vector3(0, LAYOUT.rod.y, 0);
@@ -588,18 +690,20 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     group.position.copy(pivot).applyQuaternion(group.quaternion).negate().add(pivot);
   }
 
-  // Block i's pose (#8's director): position, rotY (the flip), rotZ (the seeded tilt) and morph (the flatten).
+  // Block i's pose (#8's director): position, rotY (the flip), rotZ (the tilt) and morph (the flatten).
   // Euler XYZ makes the rotation Ry(rotY) Rz(rotZ). Its tile face draws only once the block starts to flip.
-  // #10: the stored hover amount a scales the block by 1 + HOVER.scale a and lifts it HOVER.lift a; at 0 the pose is
-  // exactly the director's.
+  // #10: the stored hover amount a scales the block by 1 + HOVER.scale a and lifts it HOVER.lift a, and #16's puff p
+  // adds PUFF.scale p and PUFF.lift p; with both at 0 the pose is exactly the director's.
   function setBlockPose(i, pose) {
     const { position, rotY, rotZ, morph } = pose;
     const mesh = blocks[i];
     const a = hover[i];
+    const p = puff[i];
     poses[i] = pose;
     mesh.position.fromArray(position);
-    if (a !== 0) mesh.position.z += HOVER.lift * a;
-    mesh.scale.setScalar(1 + HOVER.scale * a);
+    const lift = HOVER.lift * a + PUFF.lift * p;
+    if (lift !== 0) mesh.position.z += lift;
+    mesh.scale.setScalar(1 + HOVER.scale * a + PUFF.scale * p);
     mesh.rotation.y = rotY;
     mesh.rotation.z = rotZ;
     mesh.morphTargetInfluences[0] = morph;
@@ -702,6 +806,131 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     for (const kind of [stitches, pins]) if (kind && (kind.drawn || kind.anim)) writeKind(kind);
   }
 
+  // --- #16's sew-in calls. ---
+
+  // Refolds block id at `tilt` (#9's fold at its slot) and re-lays its decor there, as placeBlock does, without the
+  // flat rule: the sew-in squares a block on screen. rotation.z and position.z stay setBlockPose's (on the page, the
+  // director's pose), so a caller off the page sets the pose itself.
+  function setTilt(id, tilt) {
+    const i = indexOf(id);
+    if (i < 0) return;
+    const mesh = blocks[i];
+    const { slot } = mesh.userData;
+    tilts[i] = tilt;
+    foldBlock(mesh.geometry, slot, tilt);
+    const { stitches, pins } = decor[i].kinds;
+    if (stitches) stitches.rest = stitchMatrices(slot, tilt);
+    if (pins) pins.rest = pinMatrices(mesh.userData.id, slot, tilt);
+    for (const kind of [stitches, pins]) if (kind && (kind.drawn || kind.anim || kind.meshes[0].visible)) writeKind(kind);
+  }
+
+  // Block id's puff amount (0-1), applied at once.
+  function setPuff(id, amount) {
+    const i = indexOf(id);
+    if (i < 0) return;
+    puff[i] = amount;
+    setBlockPose(i, poses[i]);
+  }
+
+  // Block id's glow (0-1): its emissive, GLOW.color in the linear working space at GLOW.intensity x amount. A uniform,
+  // so nothing recompiles; at 0 it is exactly black again.
+  const glowLinear = new THREE.Color(GLOW.color);
+  function setGlow(id, amount) {
+    const i = indexOf(id);
+    if (i < 0) return;
+    blocks[i].material.emissive.copy(glowLinear).multiplyScalar(GLOW.intensity * amount);
+  }
+
+  // Block i's perimeter curve, built now from its flat morph and foldZ at its slot (D10: never cached, so #21's drape
+  // is read), untilted (the sew-in squares a block before its needle runs), NEEDLE_LIFT above the cloth.
+  function perimeterCurve(i) {
+    const mesh = blocks[i];
+    const flat = mesh.geometry.morphAttributes.position[0];
+    const [cx, cy] = slotCentre(mesh.userData.slot);
+    return new PerimeterCurve(PERIMETER.map((j) => {
+      const x = cx + flat.getX(j);
+      const y = cy + flat.getY(j);
+      return new THREE.Vector3(x, y, foldZ(x, y) + NEEDLE_LIFT);
+    }));
+  }
+
+  // Shows block id's dashes up to u along its perimeter: u >= 1 is exactly revealStitches(id, { animate: false }).
+  // Below 1 the kind's state stays hidden, so a later revealStitches always completes it; the dashes with
+  // stitchU <= u are at their rests (the instance matrices are written on every call) and the rest at scale 0. A block
+  // whose stitches are already shown is left alone.
+  function revealStitchesTo(id, u) {
+    if (u >= 1) {
+      revealStitches(id, { animate: false });
+      return;
+    }
+    const i = indexOf(id);
+    const kind = i < 0 ? null : decor[i].kinds.stitches;
+    if (!kind || kind.state === 'shown') return;
+    const at = stitchU(perimeterCurve(i));
+    kind.anim = null;
+    kind.f = at.map((v) => (v <= u ? 1 : 0));
+    writeKind(kind);
+    for (const mesh of kind.meshes) mesh.visible = true;
+  }
+
+  // The needles, one per start-planned block, built hidden in `group` so renderer.compile warms them. A run: start
+  // builds its curve (kept for the run) and shows the needle; poseNeedle sets its u; poseNeedles poses each running
+  // needle (after the group's ambient pose: #13's frame ordering); end removes the needle and disposes it. An unknown
+  // or ended id does nothing.
+  const runs = new Map();
+  blocks.forEach((mesh, i) => {
+    if (!starts[i]) return;
+    const needle = createNeedle();
+    needle.visible = false;
+    needle.userData = { part: 'needle', id: mesh.userData.id };
+    group.add(needle);
+    runs.set(mesh.userData.id, { needle, curve: null, u: 0, state: 'built' });
+  });
+
+  function startNeedle(id) {
+    const run = runs.get(id);
+    if (!run || run.state !== 'built') return;
+    run.curve = perimeterCurve(indexOf(id));
+    run.u = 0;
+    run.state = 'running';
+    run.needle.visible = true;
+  }
+
+  function poseNeedle(id, u) {
+    const run = runs.get(id);
+    if (run && run.state === 'running') run.u = u;
+  }
+
+  function poseNeedles() {
+    for (const run of runs.values()) if (run.state === 'running') poseOnCurve(run.needle, run.curve, run.u);
+  }
+
+  function endNeedle(id) {
+    const run = runs.get(id);
+    if (!run || run.state === 'ended') return;
+    run.state = 'ended';
+    run.curve = null;
+    group.remove(run.needle);
+    disposeTree(run.needle);
+  }
+
+  // Test-only: block id's perimeter curve, fresh, as { at: [[x, y, z] x 161], vertexU, stitchU }; null for none.
+  function sewCurve(id) {
+    const i = indexOf(id);
+    if (i < 0) return null;
+    const curve = perimeterCurve(i);
+    return { at: curve.points.map((v) => v.toArray()), vertexU: curve.vertexU.slice(), stitchU: stitchU(curve) };
+  }
+
+  // Test-only: block id's sew-in look: { puff, emissive (linear r, g, b), needle (one is shown), tilt }; null for none.
+  function sewLook(id) {
+    const i = indexOf(id);
+    if (i < 0) return null;
+    const run = runs.get(id);
+    return { puff: puff[i], emissive: blocks[i].material.emissive.toArray(),
+      needle: Boolean(run && run.state === 'running' && run.needle.visible), tilt: tilts[i] };
+  }
+
   // #9: re-cuts the sashing's holes for the blocks' current slots; the material and its maps are kept.
   function reseam() {
     const old = sashing.geometry;
@@ -709,7 +938,8 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     old.dispose();
   }
 
-  // Test-only: block i's slot, seeded tilt and local base (before the tilt and the morph) as plain arrays.
+  // Test-only: block i's slot, current tilt (seeded at build, zeroed by #16's setTilt) and local base (before the
+  // tilt and the morph) as plain arrays.
   function blockBase(i) {
     const { geometry, userData } = blocks[i];
     return { slot: userData.slot, tilt: tilts[i], positions: Array.from(geometry.attributes.position.array),
@@ -834,6 +1064,7 @@ export function buildQuilt(renderer, { slots, tagged = [] }) {
     render, snapshot, project, dispose, placeBlock, reseam, blockBase, planePoint,
     revealStitches, popStitches, restorePins, popPins, setFace, stow, unstow, stowAll, unstowAll, unstowBlock, tick,
     setPaused, finishDecor, setHover, pickBlock,
+    setTilt, setPuff, setGlow, revealStitchesTo, startNeedle, poseNeedle, poseNeedles, endNeedle, sewCurve, sewLook,
     // #14: whether block i's tile was asked for the "New" label (the painter draws it on live tiles only).
     isTagged: (i) => tags[i] === true,
     get decorIdle() { return decor.every(({ kinds }) => Object.values(kinds).every((k) => !k.anim)); },
