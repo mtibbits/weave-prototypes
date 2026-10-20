@@ -199,12 +199,12 @@ These ship on the public page; the tests, the capture tools and the sibling epic
 - `data-release-state` on the stage (#15), set at boot on both paths, reads the card's state: `none` (nothing is new
   this visit), `pending` (the live path, waiting for the quilt), `card` (the card is showing; if its region is missing
   or it cannot be built, nothing shows and nothing is recorded) or `done` (it was closed). The still path goes straight
-  to `card`, and a fallback to the still while `pending` shows the card at once. #16 adds `sewing` between `pending`
-  and `card`.
+  to `card`, and a fallback to the still while `pending` shows the card at once. While #16's sew-in plays the state is
+  `sewing` (`pending` -> `sewing` -> `card`); a fallback to the still while `sewing` shows the card at once too.
 - `data-new-panels` on the stage (#15) is `newIds` joined with spaces, and empty when there is no card; read the exact
   ids from `__weaveRelease.newIds`.
-- On the live path the card shows on the first `weave:mode` whose `mode` is `quilt` (the intro's end, a skip, or at
-  once at `?pose=rest`), from the module's own listener, never by polling `__weave.mode`.
+- On the live path the card shows on the first `weave:mode` whose `mode` is `quilt` (the intro's or the sew-in's end,
+  a skip, or at once at `?pose=rest`), from the module's own listener, never by polling `__weave.mode`.
 - `stage.__weave` on the `[data-hero]` element: `mode`, `order`, `slots`, `clock`, `stop(reason)` and `snapshot()`
   (the scene's world-space geometry as JSON-safe arrays). `order` and `slots` list the slots, so they follow a
   drag (#9). `lastDt`, `project([x, y, z])`, `fades()` (each faded part's `{ opacity, visible }`: the sashing, rod,
@@ -212,16 +212,21 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   and tilt) and `pick(clientX, clientY)` (what a press there would hit) are test-only. #10 adds the per-block calls
   E2's #16 drives, `revealStitches(id, { animate })`, `popStitches`, `popPins`, `restorePins` and `setFace(id, kind)`
   (scene.js holds their contract; `snapshot()` lists the drawn `pins` and `stitches` and the `stitchDash` frame,
-  and its blocks include any hover lift, so a reader that needs seated seams keeps the pointer off the blocks),
-  and the test-only `decorIdle`, `hover` (`{ id, amount }`), `groupMatrix()` and `pickBlock(clientX, clientY)`.
+  and its blocks include any hover lift or sew-in puff, so a reader that needs seated seams keeps the pointer off the
+  blocks), and the test-only `decorIdle`, `hover` (`{ id, amount }`), `groupMatrix()` and `pickBlock(clientX,
+  clientY)`. #16 adds the test-only `sewCurve(id)` (a block's perimeter curve, built fresh: `{ at, vertexU, stitchU }`,
+  161 points from the top left, clockwise, `NEEDLE_LIFT` above the cloth), `sewLook(id)` (`{ puff, emissive, needle,
+  tilt }`), `revealStitchesTo(id, u)` (the dashes up to `u` along that curve) and `sewCalls` (each sew-in once-call's
+  count by `'<name> <id>'`, and `reseam`).
 - Each `__weave.slots` entry is `{ id, name, status, face, tagged }`. `tagged` (#14) is what the scene asked the tile
   painter for; the painter draws the "New" label on live tiles only.
-- `__weave.mode` is the director's state: `intro` (#10), `quilt`, `unstitching`, `tiles` or `restitching` (#8), with
-  `sewing` (#16) reserved. A plain load starts in `intro`, which flies the blocks in and settles into `quilt`;
+- `__weave.mode` is the director's state: `intro` (#10), `sewing` (#16), `quilt`, `unstitching`, `tiles` or
+  `restitching` (#8). A plain load starts in `intro`, which flies the blocks in and settles into `sewing` when a drawn
+  block is new in the release's news window, and into `quilt` otherwise; `sewing` settles into `quilt`.
   `?pose=rest` starts in `quilt`. After a fallback it keeps the value it had at the teardown, which may be
   `unstitching` or `restitching`; on the still path the signal is that `data-mode` is absent.
 - `data-mode` on the stage reads `quilt` or `tiles`. It is set on the live path only: it reads `quilt` from the
-  first entry (the intro's, which settles into the quilt), then flips when a transition settles (never on an unpaused
+  first entry (the intro's) and does not change in `sewing`, then flips when a transition settles (never on an unpaused
   press; a paused press settles at once), and is removed when a fallback restores the still.
 - `weave:mode` is an event on the stage with `detail: { mode, from }`, dispatched every time the director enters a
   state, its first state included (`from: null`), from its single state-change path (D39). When it fires,
