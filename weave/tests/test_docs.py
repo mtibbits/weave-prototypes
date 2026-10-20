@@ -93,6 +93,12 @@ def test_spec_lists_the_mode_hooks():
     for mode in ("intro", "sewing", "quilt", "unstitching", "tiles", "restitching"):
         assert f"`{mode}`" in states.group(1), (mode, states.group(1))
     assert "reserved" not in states.group(1), states.group(1)
+    # #16: what starts the sew-in (?whatsnew forces it outside the window), and `sewing` as a teardown value.
+    bullet = " ".join(next(b for b in hooks.split("\n- ") if "director's state" in b).split())
+    said = sentences(bullet)
+    assert any("`sewing`" in s and "?whatsnew" in s and "?pose=rest" in s for s in said), said
+    teardown = next(s for s in said if "teardown" in s)
+    assert all(f"`{m}`" in teardown for m in ("sewing", "unstitching", "restitching")), teardown
 
 
 def test_weave_readme_tests_describes_wait_for_quilt():

@@ -222,9 +222,10 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   painter for; the painter draws the "New" label on live tiles only.
 - `__weave.mode` is the director's state: `intro` (#10), `sewing` (#16), `quilt`, `unstitching`, `tiles` or
   `restitching` (#8). A plain load starts in `intro`, which flies the blocks in and settles into `sewing` when a drawn
-  block is new in the release's news window, and into `quilt` otherwise; `sewing` settles into `quilt`.
-  `?pose=rest` starts in `quilt`. After a fallback it keeps the value it had at the teardown, which may be
-  `unstitching` or `restitching`; on the still path the signal is that `data-mode` is absent.
+  block is new for this visit (in the release's news window, or forced by `?whatsnew`; never at `?pose=rest`), and
+  into `quilt` otherwise; `sewing` settles into `quilt`. `?pose=rest` starts in `quilt`. After a fallback it keeps the
+  value it had at the teardown, which may be `sewing`, `unstitching` or `restitching`; on the still path the signal is
+  that `data-mode` is absent.
 - `data-mode` on the stage reads `quilt` or `tiles`. It is set on the live path only: it reads `quilt` from the
   first entry (the intro's) and does not change in `sewing`, then flips when a transition settles (never on an unpaused
   press; a paused press settles at once), and is removed when a fallback restores the still.
