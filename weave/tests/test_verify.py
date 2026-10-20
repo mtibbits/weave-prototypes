@@ -533,3 +533,26 @@ def test_sew_window_runs_against_the_page(verify, browser, base_url):
         assert stored == [None, None]
     finally:
         context.close()
+
+
+def test_sew_window_survives_a_fallback_in_the_sew_in(verify, browser, base_url, monkeypatch):
+    """A fallback during the sew-in leaves the mode at `sewing`: the window returns its modes and no deltas (so
+    check() fails the sew rows) instead of raising, and the rest of the run goes on."""
+    monkeypatch.setattr(verify, "SETTLED_TIMEOUT_MS", 10000)  # past the intro and a whole sew-in
+    context = verify.new_context(browser, viewport=verify.DESKTOP)
+    context.add_init_script("""const t = setInterval(() => {
+        const el = document.querySelector('[data-hero]');
+        if (!el) return;
+        clearInterval(t);
+        el.addEventListener('weave:mode', (e) => {
+            if (e.detail.mode === 'sewing') requestAnimationFrame(() => el.__weave.stop('too-slow'));
+        });
+    }, 0);""")
+    try:
+        sew = verify.sew_window(context, f"{base_url}/public")
+        assert sew["state"] == ["live", "ok"]
+        assert sew["deltas"] is None
+        assert sew["modes"] != verify.EXPECTED_SEW
+        assert sew["modes"][:2] == ["intro", "sewing"]
+    finally:
+        context.close()

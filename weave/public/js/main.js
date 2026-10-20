@@ -113,8 +113,8 @@ function startLive({ scene: S, motion: M, layout: L }, slots) {
   const order = slots.map((entry) => (entry ? entry.id : null));
   const dog = hooks.watchdog ? new FrameWatchdog({ limitMs: hooks.limitMs }) : null;
   // The director (#8) owns the blocks' springs, the mode and (#9) the slot map. A block's quilt pose is its slot's
-  // centre with its own build lift and tilt, read once here (scene.js keeps the planned lift to itself); the tile
-  // pose is its slot in the tile grid, flat and flipped.
+  // centre with its own build lift and tilt, read once here (scene.js keeps the planned lift to itself), until #16
+  // sews it in and squares it; the tile pose is its slot in the tile grid, flat and flipped.
   const lifts = quilt.blocks.map((block) => block.position.z);
   const tilts = quilt.blocks.map((block) => block.rotation.z);
   const director = new M.Director({

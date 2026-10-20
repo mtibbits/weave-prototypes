@@ -4,12 +4,13 @@ From the repo root, with the venv active:
 
   python weave/tools/verify.py [--headless] [--base URL]
 
-Measures every budget row (the sew-in's frames on a ?whatsnew load included), then checks every hero state (the quilt, hover, tiles, a reorder, the sew-back, Pause, the
-three still fallbacks and the phone) and screenshots each, as shots/01-quilt.png to shots/11-full-page.png. Each run
-keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}-<sha7>[-dirty][-headless]/, and
-weave/verify-output/report.json and shots/ are copies of the latest run. Exits 1 if any row fails. It runs a visible
-browser by default so the frame times use the real GPU; --headless is a smoke run only, never evidence for the frame
-rows. --base URL checks the states alone against a deployed copy (the budgets stay local: Pages compresses).
+Measures every budget row (the sew-in's frames on a ?whatsnew load included), then checks every hero state (the quilt,
+hover, tiles, a reorder, the sew-back, Pause, the three still fallbacks and the phone) and screenshots each, as
+shots/01-quilt.png to shots/11-full-page.png. Each run keeps its own report.json and shots/ under
+weave/verify-output/runs/{local|base}-<sha7>[-dirty][-headless]/, and weave/verify-output/report.json and shots/ are
+copies of the latest run. Exits 1 if any row fails. It runs a visible browser by default so the frame times use the
+real GPU; --headless is a smoke run only, never evidence for the frame rows. --base URL checks the states alone
+against a deployed copy (the budgets stay local: Pages compresses).
 
 The clock (#12): every page opens through page_url, which adds NOW_QUERY, now= at fixed_clock.py's FIXED_DATE, so no
 run lands in a release window. The browser clock is never pinned (a pin empties the performance timeline the budgets
@@ -300,13 +301,19 @@ def window_stats(idle, cycle):
 def sew_window(context, base):
     """#16: a ?whatsnew load in `context`, measured over its sew-in once it has settled into the quilt. The caller
     closes every other page first, so one live quilt renders while it is measured. Returns {state, deltas, modes,
-    pages (the context's open pages while measured), page}; deltas and modes are None unless the hero went live."""
+    pages (the context's open pages while measured), page}; deltas and modes are None unless the hero went live. A
+    fallback during the sew-in never settles: the modes so far are returned with no deltas, so check() fails the sew
+    rows and the rest of the run goes on."""
     page = context.new_page()
     page.add_init_script(SEW_FRAMES)
     page.goto(page_url(base, "whatsnew"))
     out = {"state": settle(page), "deltas": None, "modes": None, "pages": len(context.pages), "page": page}
     if out["state"] == ["live", "ok"]:
-        wait_settled(page)
+        try:
+            wait_settled(page)
+        except PlaywrightError:
+            out["modes"] = page.evaluate("window.__sewModes")
+            return out
         out["deltas"], out["modes"] = page.evaluate("[window.__sewFrames, window.__sewModes]")
     return out
 
