@@ -4,7 +4,7 @@ From the repo root, with the venv active:
 
   python weave/tools/verify.py [--headless] [--base URL]
 
-Measures every budget row, then checks every hero state (the quilt, hover, tiles, a reorder, the sew-back, Pause, the
+Measures every budget row (the sew-in's frames on a ?whatsnew load included), then checks every hero state (the quilt, hover, tiles, a reorder, the sew-back, Pause, the
 three still fallbacks and the phone) and screenshots each, as shots/01-quilt.png to shots/11-full-page.png. Each run
 keeps its own report.json and shots/ under weave/verify-output/runs/{local|base}-<sha7>[-dirty][-headless]/, and
 weave/verify-output/report.json and shots/ are copies of the latest run. Exits 1 if any row fails. It runs a visible
@@ -64,6 +64,11 @@ EXPECTED_CYCLE = ["unstitching", "tiles", "restitching", "quilt"]
 # Recorded beside the pooled frame rows, not budgeted, so a slow transition stays visible; the max catches a single
 # long frame (the first flip's tile shader compile and texture uploads) that no p95 can see.
 CYCLE_MEASURES = ("cycle_frame_median_ms", "cycle_frame_p95_ms", "cycle_frame_max_ms")
+# #16's sew-in rows: the frames over a ?whatsnew load's sew-in (at the fixed date, so nothing is written), held to the
+# idle bars' median and p95; the max is recorded, never budgeted (the first needle's show is one long frame). They count
+# only if that load passed through these modes.
+EXPECTED_SEW = ["intro", "sewing", "quilt"]
+SEW_MEASURES = ("sew_frame_median_ms", "sew_frame_p95_ms", "sew_frame_max_ms")
 
 FRAME_TIMES = """() => new Promise((resolve) => {
   const deltas = []; let last = performance.now(); const end = last + 5000;
@@ -122,6 +127,21 @@ INTRO_FRAMES = """
     let last = performance.now();
     const tick = (now) => { deltas.push(now - last); last = now;
       if (document.querySelector('[data-hero]').__weave?.mode === 'intro') requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  }, true);
+"""
+# An init script (#16), like INTRO_FRAMES: every rAF delta from the sewing entry until the mode leaves sewing, and
+# every mode the load enters, in window.__sewModes.
+SEW_FRAMES = """
+  window.__sewFrames = null;
+  window.__sewModes = [];
+  document.addEventListener('weave:mode', (event) => {
+    window.__sewModes.push(event.detail.mode);
+    if (event.detail.mode !== 'sewing') return;
+    const deltas = []; window.__sewFrames = deltas;
+    let last = performance.now();
+    const tick = (now) => { deltas.push(now - last); last = now;
+      if (document.querySelector('[data-hero]').__weave?.mode === 'sewing') requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   }, true);
 """
@@ -277,6 +297,20 @@ def window_stats(idle, cycle):
     return frame_stats(idle + cycle), (*median_p95(cycle), round(max(cycle), 2))
 
 
+def sew_window(context, base):
+    """#16: a ?whatsnew load in `context`, measured over its sew-in once it has settled into the quilt. The caller
+    closes every other page first, so one live quilt renders while it is measured. Returns {state, deltas, modes,
+    pages (the context's open pages while measured), page}; deltas and modes are None unless the hero went live."""
+    page = context.new_page()
+    page.add_init_script(SEW_FRAMES)
+    page.goto(page_url(base, "whatsnew"))
+    out = {"state": settle(page), "deltas": None, "modes": None, "pages": len(context.pages), "page": page}
+    if out["state"] == ["live", "ok"]:
+        wait_settled(page)
+        out["deltas"], out["modes"] = page.evaluate("[window.__sewFrames, window.__sewModes]")
+    return out
+
+
 def run(report, base, headless):
     measures, states = report["measures"], report["states"]
     with sync_playwright() as pw:
@@ -315,6 +349,15 @@ def run(report, base, headless):
                 measures["pick_block_median_ms"] = round(page.eval_on_selector("[data-hero]", PICK_TIMES), 3)
         measures["home_transfer_bytes"] = page.evaluate(TRANSFER)
         measures["headroom_bytes"] = BUDGETS["home_transfer_bytes"] - measures["home_transfer_bytes"]
+
+        # #16: the sew-in, on its own page once the plain one is closed (its live loop would render beside it).
+        page.close()
+        sew = sew_window(desktop, base)
+        states["sew_modes"] = sew["modes"]
+        if sew["deltas"] and len(sew["deltas"]) > 1:
+            measures["sew_frame_median_ms"], measures["sew_frame_p95_ms"] = frame_stats(sew["deltas"])
+            measures["sew_frame_max_ms"] = round(max(sew["deltas"][1:]), 2)
+        sew["page"].close()
 
         calm = new_context(browser, viewport=DESKTOP, reduced_motion="reduce")
         page = calm.new_page()
@@ -542,7 +585,8 @@ def check(report):
 
 
 def budget_failures(report):
-    """The local run's rows: every budget, the cycle measures, headroom, the still's size and the run's hero states."""
+    """The local run's rows: every budget, the cycle and sew-in measures, headroom, the still's size and the run's hero
+    states."""
     measures, states = report.get("measures") or {}, report.get("states") or {}
     failures = []
     budgets = budgets_for(measures)
@@ -564,6 +608,15 @@ def budget_failures(report):
     for key in CYCLE_MEASURES:
         if measures.get(key) is None:
             failures.append(f"{key} is missing")
+    sew_bars = {"sew_frame_median_ms": budgets["frame_median_ms"], "sew_frame_p95_ms": budgets["frame_p95_ms"]}
+    for key in SEW_MEASURES:
+        value = measures.get(key)
+        if value is None:
+            failures.append(f"{key} is missing")
+        elif key in sew_bars and value > sew_bars[key]:
+            failures.append(f"{key} = {value} (budget {sew_bars[key]})")
+    if states.get("sew_modes") != EXPECTED_SEW:
+        failures.append(f"the sew-in rows were not measured over a sew-in (modes: {states.get('sew_modes')})")
     if measures.get("headroom_bytes") is None:
         failures.append("headroom_bytes: not run")
     if measures.get("still_size") != list(STILL_SIZE):

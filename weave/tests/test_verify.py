@@ -51,9 +51,11 @@ def good_report():
         "measures": {"baseline_frame_median_ms": 16.6, "home_transfer_bytes": 950_000, "first_live_frame_ms": 900.0,
                      "frame_median_ms": 16.7, "frame_p95_ms": 18.0, "still_bytes": 200_000, "still_size": [1600, 1000],
                      "cycle_frame_median_ms": 16.8, "cycle_frame_p95_ms": 20.0, "cycle_frame_max_ms": 40.0,
-                     "headroom_bytes": 550_000},
+                     "headroom_bytes": 550_000,
+                     "sew_frame_median_ms": 16.7, "sew_frame_p95_ms": 20.0, "sew_frame_max_ms": 45.0},
         "states": {"desktop": ["live", "ok"], "desktop_after_idle": {"state": "live", "reason": "ok", "frames_rose": True},
                    "desktop_cycle": ["unstitching", "tiles", "restitching", "quilt"],
+                   "sew_modes": ["intro", "sewing", "quilt"],
                    "reduced_motion": ["still", "reduced-motion"], "phone": ["still", "no-hover"],
                    "phone_no_horizontal_scroll": True},
         "checks": {name: {"ok": True, "detail": ""} for name in CHECKS},
@@ -481,5 +483,53 @@ def test_tool_pages_keep_the_timeline_and_sit_outside_every_window(verify, brows
         assert (state["today"], state["newIds"], state["key"]) == (FIXED_DATE, [], helpers.SIM_KEY)
         advanced = page.evaluate(helpers.CLOCK_ADVANCE)
         assert advanced >= 150, advanced
+    finally:
+        context.close()
+
+
+# --- #16: the ?whatsnew sew-in window. ---
+
+SEW_MEASURES = ("sew_frame_median_ms", "sew_frame_p95_ms", "sew_frame_max_ms")
+
+
+def test_check_flags_each_failing_sew_row(verify):
+    assert verify.check(good_report()) == []
+    assert verify.SEW_MEASURES == SEW_MEASURES
+    assert verify.EXPECTED_SEW == ["intro", "sewing", "quilt"]
+    for key in SEW_MEASURES:
+        report = good_report()
+        del report["measures"][key]
+        assert verify.check(report) == [f"{key} is missing"], key
+    for key, bar in (("sew_frame_median_ms", 16.7), ("sew_frame_p95_ms", 33.0)):
+        report = good_report()
+        report["measures"][key] = bar + 5
+        failures = verify.check(report)
+        assert len(failures) == 1 and failures[0].startswith(f"{key} = {bar + 5}"), (key, failures)
+    report = good_report()
+    report["measures"]["sew_frame_max_ms"] = 900.0  # recorded, never budgeted
+    assert verify.check(report) == []
+    for modes in (["intro", "quilt"], None):
+        report = good_report()
+        report["states"]["sew_modes"] = modes
+        assert verify.check(report) == [f"the sew-in rows were not measured over a sew-in (modes: {modes})"], modes
+
+
+def test_sew_page_url_writes_nothing(verify):
+    """The sew-in run's page: ?whatsnew makes Travel and Desk Allocation new, and at the fixed date (before the
+    release) nothing is written, so the run stays repeatable."""
+    assert verify.page_url("http://h", "whatsnew") == "http://h/?now=2000-01-01&whatsnew"
+
+
+def test_sew_window_runs_against_the_page(verify, browser, base_url):
+    context = verify.new_context(browser, viewport=verify.DESKTOP)
+    try:
+        sew = verify.sew_window(context, f"{base_url}/public")
+        assert sew["state"] == ["live", "ok"]
+        assert sew["modes"] == ["intro", "sewing", "quilt"]
+        assert len(sew["deltas"]) > 10
+        assert sew["pages"] == 1
+        stored = sew["page"].evaluate("(keys) => keys.map((k) => localStorage.getItem(k))",
+                                      [helpers.SIM_KEY, helpers.LAST_SEEN_KEY])
+        assert stored == [None, None]
     finally:
         context.close()
