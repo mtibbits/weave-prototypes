@@ -113,6 +113,36 @@ export function introScatter(id) {
   return { offset: [dx, dy, dz], wait: rng() * spread };
 }
 
+// #16's sew-in: each new drawn block, one after another `stagger` s apart, runs its steps back to back in SEW_STEPS
+// order (the pins pop, the block squares up, the face swaps at a puff, a needle stitches the perimeter, it glows). A
+// schedule longer than `limit` s is scaled as a whole, so every window shrinks together and the needles never crowd.
+export const SEW = Object.freeze({
+  stagger: 0.6, steps: Object.freeze({ pins: 0.3, square: 0.4, puff: 0.25, needle: 1.2, glow: 0.4 }), limit: 5,
+});
+export const SEW_STEPS = Object.freeze(['pins', 'square', 'puff', 'needle', 'glow']);
+
+// n blocks' sew-in in seconds from the sewing entry: { scale, total, blocks: [{ start, pins: [t0, t1], ... }] }. Pure.
+export function sewSchedule(n) {
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+    throw new RangeError('WEAVE: sewSchedule needs a whole number of blocks.');
+  }
+  if (n === 0) return { scale: 1, total: 0, blocks: [] };
+  const each = SEW_STEPS.reduce((sum, name) => sum + SEW.steps[name], 0);
+  const raw = SEW.stagger * (n - 1) + each;
+  const scale = raw > SEW.limit ? SEW.limit / raw : 1;
+  const blocks = Array.from({ length: n }, (_, k) => {
+    const block = { start: k * SEW.stagger * scale };
+    let at = block.start;
+    for (const name of SEW_STEPS) {
+      const end = at + SEW.steps[name] * scale;
+      block[name] = [at, end];
+      at = end;
+    }
+    return block;
+  });
+  return { scale, total: raw * scale, blocks };
+}
+
 // Where each transition goes: the settled mode it ends in, and the flip (s) and fade (g) it ends at.
 const LEGS = Object.freeze({
   unstitching: Object.freeze({ settle: 'tiles', s: 1, g: 0 }),
