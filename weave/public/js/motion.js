@@ -113,6 +113,39 @@ export function introScatter(id) {
   return { offset: [dx, dy, dz], wait: rng() * spread };
 }
 
+// #16's sew-in: each new drawn block, one after another `stagger` s apart, runs its steps back to back in SEW_STEPS
+// order (the pins pop, the block squares up, the face swaps at a puff, a needle stitches the perimeter, it glows). A
+// schedule longer than `limit` s is scaled as a whole, so every window shrinks together and the needles never crowd.
+export const SEW = Object.freeze({
+  stagger: 0.6, steps: Object.freeze({ pins: 0.3, square: 0.4, puff: 0.25, needle: 1.2, glow: 0.4 }), limit: 5,
+});
+export const SEW_STEPS = Object.freeze(['pins', 'square', 'puff', 'needle', 'glow']);
+
+// n blocks' sew-in in seconds from the sewing entry: { scale, total, blocks: [{ start, pins: [t0, t1], ... }] }. Pure.
+export function sewSchedule(n) {
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+    throw new RangeError('WEAVE: sewSchedule needs a whole number of blocks.');
+  }
+  if (n === 0) return { scale: 1, total: 0, blocks: [] };
+  const each = SEW_STEPS.reduce((sum, name) => sum + SEW.steps[name], 0);
+  const raw = SEW.stagger * (n - 1) + each;
+  const scale = raw > SEW.limit ? SEW.limit / raw : 1;
+  const blocks = Array.from({ length: n }, (_, k) => {
+    const block = { start: k * SEW.stagger * scale };
+    let at = block.start;
+    for (const name of SEW_STEPS) {
+      const end = at + SEW.steps[name] * scale;
+      block[name] = [at, end];
+      at = end;
+    }
+    return block;
+  });
+  return { scale, total: raw * scale, blocks };
+}
+
+// A quilt pose squared up (#16): on the sashing (z 0) and untilted, as a sewn block sits.
+const square = (q) => ({ ...q, position: [q.position[0], q.position[1], 0], rotZ: 0 });
+
 // Where each transition goes: the settled mode it ends in, and the flip (s) and fade (g) it ends at.
 const LEGS = Object.freeze({
   unstitching: Object.freeze({ settle: 'tiles', s: 1, g: 0 }),
@@ -125,7 +158,8 @@ const LEGS = Object.freeze({
 export class Director {
   // quiltPose(i, slot) and tilePose(i, slot) are block i's poses in a slot; every block starts in slot i (#9).
   // introFrom(i) (#10, optional) is block i's intro flight, { offset, wait }; null, or a filler, only fades in.
-  constructor({ count, quiltPose, tilePose, isTile, onEnter, introFrom = null }) {
+  // sew (#16, optional) lists the blocks the intro sews in, in slot order; anything but a tile's index is dropped.
+  constructor({ count, quiltPose, tilePose, isTile, onEnter, introFrom = null, sew = [] }) {
     this.count = count;
     this.quiltPose = quiltPose;
     this.tilePose = tilePose;
@@ -133,10 +167,13 @@ export class Director {
     this.blocks = [];
     this.quilt = [];
     this.tile = [];
+    // The sewn blocks squared so far: place() keeps them square through a drag or a sew-back.
+    this.squared = new Set();
     for (let i = 0; i < count; i += 1) this.place(i, i);
     this.drag = null;
     this.isTile = Array.from({ length: count }, (_, i) => isTile(i));
     this.tileCount = this.isTile.filter(Boolean).length;
+    this.sew = (Array.isArray(sew) ? sew : []).filter((i) => Number.isInteger(i) && this.isTile[i] === true);
     this.onEnter = onEnter;
     this.introFrom = introFrom;
     this.springs = new SpringSet(count);
@@ -210,20 +247,27 @@ export class Director {
     return true;
   }
 
-  // Block i at (x, y, DRAG.lift), at rest, with its target there too.
-  hold(i, x, y) {
-    const at = [x, y, DRAG.lift];
+  // Block i at (x, y, z), at rest, with its target there too.
+  hold(i, x, y, z = DRAG.lift) {
+    const at = [x, y, z];
     this.springs.p[i] = at.slice();
     this.springs.setTarget(i, at);
     this.springs.v[i].fill(0);
   }
 
-  // Block b takes slot k: the slot map both ways, and its quilt and tile poses re-derived for k.
+  // Block b takes slot k: the slot map both ways, and its quilt and tile poses re-derived for k (squared, once sewn).
   place(b, k) {
     this.slots[b] = k;
     this.blocks[k] = b;
-    this.quilt[b] = this.quiltPose(b, k);
+    const q = this.quiltPose(b, k);
+    this.quilt[b] = this.squared.has(b) ? square(q) : q;
     this.tile[b] = this.tilePose(b, k);
+  }
+
+  // #16: block b is sewn in, so its cached quilt pose squares up at once and stays square.
+  squareBlock(b) {
+    this.squared.add(b);
+    this.quilt[b] = square(this.quilt[b]);
   }
 
   get fade() { return this.g; }
@@ -236,8 +280,9 @@ export class Director {
     this.onEnter(next, from);
   }
 
-  // The first state: 'quilt' at rest, or (#10) 'intro', a leg like begin()'s that settles into the quilt: each tile
-  // block is seated at its quilt pose plus its introFrom offset, at rest, and flies home; the fade starts at 0.
+  // The first state: 'quilt' at rest, or (#10) 'intro', a leg like begin()'s that settles into `sewing` (#16) when a
+  // block is to be sewn in, and into the quilt otherwise: each tile block is seated at its quilt pose plus its
+  // introFrom offset, at rest, and flies home; the fade starts at 0.
   start(first = 'quilt') {
     if (first === 'intro') {
       const { pathDur, fadeDur } = INTRO;
@@ -254,7 +299,7 @@ export class Director {
       const fade = { t0: this.time, dur: fadeDur, from: 0, to: 1 };
       const ends = Math.max(fade.t0 + fadeDur, ...paths.map((q) => (q ? q.t0 + pathDur : 0)));
       this.g = 0;
-      this.leg = { settle: 'quilt', s: 0, g: 1, pathDur, paths, fade, ends };
+      this.leg = { settle: this.sew.length > 0 ? 'sewing' : 'quilt', s: 0, g: 1, pathDur, paths, fade, ends };
     }
     this.enter(first);
   }
@@ -266,17 +311,34 @@ export class Director {
     return ease.inout(progress(this.time, path.t0, this.leg.pathDur));
   }
 
-  // Block i's pose: position from its spring, the rest blended by its flip s (the ends exactly).
+  // Block i's pose: position from its spring, the rest blended by its flip s (the ends exactly). While sewing (#16),
+  // a sewn block not yet squared eases its tilt to 0 over its square window.
   pose(i) {
     const q = this.quilt[i];
     const t = this.tile[i];
     const s = this.s[i];
     const mix = (key) => (s === 0 ? q[key] : s === 1 ? t[key] : q[key] + (t[key] - q[key]) * s);
-    return { position: this.springs.p[i].slice(), rotY: mix('rotY'), rotZ: mix('rotZ'), morph: mix('morph') };
+    let rotZ = mix('rotZ');
+    const k = this.leg?.sewing && !this.squared.has(i) ? this.sew.indexOf(i) : -1;
+    if (k >= 0) rotZ = this.leg.sewing.from[k].rotZ * (1 - ease.inout(this.sewWindows(k).square));
+    return { position: this.springs.p[i].slice(), rotY: mix('rotY'), rotZ, morph: mix('morph') };
+  }
+
+  // #16: block i's sew-in step progress, each window's linear 0 ... 1 at this.time; null outside sewing or for a
+  // block not sewn in.
+  sewState(i) {
+    if (this.current !== 'sewing' || !this.leg?.sewing) return null;
+    const k = this.sew.indexOf(i);
+    return k < 0 ? null : this.sewWindows(k);
+  }
+
+  // The intro and its sew-in are cut short (to the quilt) by a toggle or a click on the quilt.
+  get cuttable() {
+    return this.current === 'intro' || this.current === 'sewing';
   }
 
   toggle(now, origin = [0, 0]) {
-    if (this.current === 'intro') return this.cutIntro(now, origin);
+    if (this.cuttable) return this.cutIntro(now, origin);
     const next = { quilt: 'unstitching', tiles: 'restitching', unstitching: 'restitching', restitching: 'unstitching' };
     if (!(this.current in next)) return false;
     this.begin(next[this.current], origin);
@@ -287,7 +349,7 @@ export class Director {
   click(hit, now) {
     if (this.paused && now - this.lastSnapAt < DIRECTOR.pausedClickMs) return false;
     const onQuilt = hit.part === 'block' || hit.part === 'sashing';
-    if (this.current === 'intro' && onQuilt) return this.cutIntro(now, hit.point);
+    if (this.cuttable && onQuilt) return this.cutIntro(now, hit.point);
     if (this.current === 'quilt' && onQuilt) this.begin('unstitching', hit.point);
     else if (this.current === 'tiles' && hit.part === 'none') this.begin('restitching', hit.point);
     else return false;
@@ -301,12 +363,17 @@ export class Director {
     this.snapIfPaused(now);
   }
 
-  // A transition jumps to its end: snap, then enter its settled mode. False when none is running.
-  finish() {
+  // A transition jumps to its end: snap, then enter its settled mode. False when none is running. #16: a skip, or the
+  // sewing leg's own end, squares every sewn block first; a skip never enters sewing (the intro lands on the quilt),
+  // and an intro that settles naturally into sewing starts the sew-in leg after the snap.
+  finish({ skip = false } = {}) {
     if (!this.leg) return false;
-    const { settle } = this.leg;
+    const { settle, sewing } = this.leg;
+    if (skip || sewing) this.sew.forEach((i) => this.squareBlock(i));
+    const next = skip && settle === 'sewing' ? 'quilt' : settle;
     this.snap();
-    this.enter(settle);
+    if (next === 'sewing') this.beginSewing();
+    this.enter(next);
     return true;
   }
 
@@ -328,10 +395,11 @@ export class Director {
 
   // --- Internals. ---
 
-  // Unstitch during the intro (#10): the intro finishes first (entering quilt), then unstitches, unless a weave:mode
-  // handler on that quilt entry has already moved on (Issue-8's re-entrancy lesson).
+  // Unstitch during the intro (#10) or the sew-in (#16): it finishes first (entering quilt, every sewn block squared),
+  // then unstitches, unless a weave:mode handler on that quilt entry has already moved on (Issue-8's re-entrancy
+  // lesson).
   cutIntro(now, origin) {
-    this.finish();
+    this.finish({ skip: true });
     if (this.current === 'quilt') this.begin('unstitching', origin);
     return this.snapIfPaused(now);
   }
@@ -361,6 +429,10 @@ export class Director {
   // (coalesce/public/js/motion.js pathPoint). The follower gains hold from the path's start until the settle:
   // switching to the home gains (k 38, zeta 0.5) at the path's end, as Coalesce does, adds about 1.1 s before 1e-3.
   follow() {
+    if (this.leg.sewing) {
+      this.sewFollow();
+      return;
+    }
     const { lift, follow } = DIRECTOR;
     const { pathDur } = this.leg;
     const target = [0, 0, 0];
@@ -383,6 +455,14 @@ export class Director {
   settleError() {
     if (this.time < this.leg.ends) return Infinity;
     let worst = 0;
+    if (this.leg.sewing) {
+      for (const i of this.sew) {
+        const q = this.quilt[i];
+        for (let d = 0; d < 3; d += 1) worst = Math.max(worst, Math.abs(this.springs.p[i][d] - q.position[d]));
+        worst = Math.max(worst, Math.abs(this.pose(i).rotZ - q.rotZ));
+      }
+      return worst;
+    }
     this.leg.paths.forEach((path, i) => {
       if (!path) return;
       const p = this.springs.p[i];
@@ -400,8 +480,42 @@ export class Director {
   }
 
   snapIfPaused(now) {
-    if (this.paused && this.finish()) this.lastSnapAt = now;
+    if (this.paused && this.finish({ skip: true })) this.lastSnapAt = now;
     return true;
+  }
+
+  // #16's sew-in leg, from the snap at the intro's end. It carries every field snap(), follow() and progress() read
+  // (no paths: progress is 1, and s and the fade stay at the quilt's); `from` is each sewn block's planned lift and
+  // tilt, read from its cached quilt pose here.
+  beginSewing() {
+    const schedule = sewSchedule(this.sew.length);
+    const from = this.sew.map((i) => ({ z: this.quilt[i].position[2], rotZ: this.quilt[i].rotZ }));
+    this.leg = { settle: 'quilt', s: 0, g: 1, pathDur: 0, paths: [], fade: null,
+      sewing: { schedule, t0: this.time, from }, ends: this.time + schedule.total };
+  }
+
+  // Sewn block k's step windows at this.time, each 0 ... 1.
+  sewWindows(k) {
+    const { schedule, t0 } = this.leg.sewing;
+    const block = schedule.blocks[k];
+    const out = {};
+    for (const name of SEW_STEPS) {
+      const [a, b] = block[name];
+      out[name] = progress(this.time - t0, a, b - a);
+    }
+    return out;
+  }
+
+  // Each sewn block is held at its slot (at rest, as hold() holds a dragged one), its planned lift easing to 0 over
+  // the puff's second half; once squared and puffed it is squared for good.
+  sewFollow() {
+    const { from } = this.leg.sewing;
+    this.sew.forEach((i, k) => {
+      const { square: squared, puff } = this.sewWindows(k);
+      const [cx, cy] = this.quilt[i].position;
+      this.hold(i, cx, cy, from[k].z * (1 - ease.inout(progress(puff - 0.5, 0, 0.5))));
+      if (squared >= 1 && puff >= 1 && !this.squared.has(i)) this.squareBlock(i);
+    });
   }
 
   // The endpoint itself, never the arc's value at u = 1: positions, flips and the fade land exactly.

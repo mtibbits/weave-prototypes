@@ -87,10 +87,18 @@ def test_spec_lists_the_mode_hooks():
     hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
     for phrase in ("data-mode", "weave:mode", "restitching", "fades()", "revealStitches", "setFace"):
         assert phrase in hooks, phrase
-    # The claim, not one phrasing: the director's states list intro (#10) as live, and sewing (#16) as reserved.
-    states = re.search(r"director's state: (.*?), with (.*?) reserved", " ".join(hooks.split()))
-    assert states, "the hook list no longer names the director's states and the reserved ones"
-    assert "`intro`" in states.group(1) and "`sewing`" in states.group(2), states.groups()
+    # The claim, not one phrasing: the director's states sentence names all six (#16's sewing live), none reserved.
+    states = re.search(r"director's state: ([^.]*)\.", " ".join(hooks.split()))
+    assert states, "the hook list no longer names the director's states"
+    for mode in ("intro", "sewing", "quilt", "unstitching", "tiles", "restitching"):
+        assert f"`{mode}`" in states.group(1), (mode, states.group(1))
+    assert "reserved" not in states.group(1), states.group(1)
+    # #16: what starts the sew-in (?whatsnew forces it outside the window), and `sewing` as a teardown value.
+    bullet = " ".join(next(b for b in hooks.split("\n- ") if "director's state" in b).split())
+    said = sentences(bullet)
+    assert any("`sewing`" in s and "?whatsnew" in s and "?pose=rest" in s for s in said), said
+    teardown = next(s for s in said if "teardown" in s)
+    assert all(f"`{m}`" in teardown for m in ("sewing", "unstitching", "restitching")), teardown
 
 
 def test_weave_readme_tests_describes_wait_for_quilt():
@@ -251,7 +259,7 @@ def test_weave_readme_has_the_shipping_section():
 def test_spec_lists_the_card_hooks():
     spec = SPEC.read_text(encoding="utf-8")
     hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
-    for phrase in ("data-release-state", "data-new-panels", "`none`", "`pending`", "`card`", "`done`"):
+    for phrase in ("data-release-state", "data-new-panels", "`none`", "`pending`", "`sewing`", "`card`", "`done`"):
         assert phrase in hooks, phrase
     assert any("weave:mode" in s and "quilt" in s and "card" in s for s in sentences(hooks)), sentences(hooks)
     release_hook = next(line for line in hooks.split("\n- ") if "stage.__weaveRelease" in line)
@@ -265,3 +273,54 @@ def test_spec_lists_the_card_hooks():
     access = re.search(r"^## 9\..*?(?=^### URL)", spec, re.M | re.S).group(0)
     assert "aria-live" in access
     assert any("h1" in s and "tabindex" in s for s in sentences(access)), sentences(access)
+
+
+# --- #16: the sew-in. ---
+
+RESERVES_SEWING = re.compile(r"sewing.{0,40}reserved|reserves .{0,20}sewing|#16 adds .sewing")
+
+
+def test_no_home_still_reserves_sewing():
+    """#16 makes `sewing` live: no module, the spec or the README still calls it reserved or yet to come."""
+    subjects = sorted((WEAVE / "public" / "js").glob("*.js")) + [SPEC, WEAVE / "README.md"]
+    assert len(subjects) >= 16, subjects
+    found = [f"{p.name}:{n}" for p in subjects
+             for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if RESERVES_SEWING.search(line)]
+    assert found == []
+
+
+def test_no_home_still_reserves_sewing_catches_the_old_lines():
+    """The planted control: the lines #16 replaced match the guard."""
+    old = ["// #16 adds 'sewing' between pending and card.", "to `card`, and ... #16 adds `sewing` between `pending`",
+           "`sewing` (#16) reserved. A plain load starts in `intro`"]
+    assert [line for line in old if not RESERVES_SEWING.search(line)] == []
+
+
+IN_WINDOW_FENCES = [
+    ['$env:WEAVE_TEST_CLOCK = "2026-10-10T09:00:00"', "python -m pytest", "Remove-Item Env:WEAVE_TEST_CLOCK"],
+    ["set WEAVE_TEST_CLOCK=2026-10-10T09:00:00", "python -m pytest", "set WEAVE_TEST_CLOCK="],
+    ["WEAVE_TEST_CLOCK=2026-10-10T09:00:00 python -m pytest"],
+]
+
+
+def test_weave_readme_tests_covers_the_in_window_run():
+    tests = section(WEAVE / "README.md", "Tests")
+    assert "WEAVE_TEST_CLOCK" in tests and "2026-10-10T09:00:00" in tests
+    # Split on the fence marks: odd parts are fences, each preceded by its prose, which names its shell.
+    parts = tests.split("```")
+    lines = [[line.strip() for line in part.splitlines() if line.strip()] for part in parts]
+    clocked = [k for k in range(1, len(parts), 2) if any("WEAVE_TEST_CLOCK" in line for line in lines[k])]
+    assert [lines[k] for k in clocked] == IN_WINDOW_FENCES, [lines[k] for k in clocked]
+    for k, shell in zip(clocked, ("PowerShell", "cmd", "Git Bash")):
+        assert shell in parts[k - 1], (shell, parts[k - 1])
+    verify = next(s for s in sentences(tests) if "budgets" in s and "verify.py" in s)
+    assert "?whatsnew" in verify and "sew-in" in verify, verify
+
+
+def test_weave_readme_budgets_covers_the_sew_in_run():
+    budgets = section(WEAVE / "README.md", "Budgets")
+    assert "five bars" in budgets and "four bars" not in budgets
+    for phrase in ("?whatsnew", "sew_frame_median_ms", "sew_frame_p95_ms", "sew_frame_max_ms"):
+        assert phrase in budgets, phrase
+    said = sentences(budgets)
+    assert any("6" in s and "12" in s and "unmeasured" in s and "#38" in s for s in said), said

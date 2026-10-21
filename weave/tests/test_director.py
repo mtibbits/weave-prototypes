@@ -9,8 +9,8 @@ from helpers import DEFAULT_IDS
 # Builds a director over 12 blocks like scene.js's build: quilt poses at slotCentre with the planned blocks 4-7
 # lifted 0.01 and tilted 0.03, tile poses per the contract. The centre comes from the slot (#9: slot = i until a
 # drag moves block i), the lift and tilt from the block. `enters` records [mode, from, director.mode] per entry.
-# make({ isTile, intro }) builds a fresh one (intro: true gives INTRO_TABLE, a fixed table that never shares
-# introScatter's seed, or a function is passed as introFrom); `d` is the default. allAtSlots(dir, poseOf) checks every
+# make({ isTile, intro, sew }) builds a fresh one (intro: true gives INTRO_TABLE, a fixed table that never shares
+# introScatter's seed, or a function is passed as introFrom; sew is #16's sewn block list); `d` is the default. allAtSlots(dir, poseOf) checks every
 # block against poseOf(i, dir.slotOf(i)). IDS is the shipped panels' ids, for the real seeded scatter.
 DIRECTOR_JS = r"""
     const M = await import('/public/js/motion.js');
@@ -22,10 +22,10 @@ DIRECTOR_JS = r"""
                                          morph: 1 });
     const INTRO_TABLE = (i) => ({ offset: [0.5 * ((i % 3) - 1), 0.4, 0.8], wait: 0.05 * i });
     const IDS = """ + json.dumps(DEFAULT_IDS) + r""";
-    const make = ({ isTile = () => true, intro = null } = {}) => {
+    const make = ({ isTile = () => true, intro = null, sew = undefined } = {}) => {
       const enters = [];
       const introFrom = intro === true ? INTRO_TABLE : intro ?? undefined;
-      const director = new M.Director({ count: 12, quiltPose, tilePose, isTile, introFrom,
+      const director = new M.Director({ count: 12, quiltPose, tilePose, isTile, introFrom, sew,
         onEnter: (mode, from) => enters.push([mode, from, director.mode]) });
       return { director, enters };
     };
@@ -706,3 +706,234 @@ def test_intro_scatter_is_seeded_and_bounded(js):
         assert lim["rise"][0] <= dz <= lim["rise"][1], s
         assert 0 <= s["wait"] <= lim["spread"], s
     assert r["INTRO"] == {"pathDur": 1.2, "spread": 0.6, "fadeDur": 0.8, "scatter": 1.2, "rise": [0.6, 1.2]}
+
+
+# --- #16: the sewing state. ---
+
+# SEWN is the harness's sewn blocks: two of the planned blocks (lifted 0.01, tilted 0.03), as the sample's two new
+# drawn blocks are. squaredAt(dir, i): block i poses exactly at its slot's centre, z 0, rotZ 0, its spring at its target
+# and at rest. cacheSquared(dir, i): its cached quilt pose is squared.
+SEW_JS = r"""
+    const SEWN = [5, 6];
+    const squaredAt = (dir, i) => {
+      const p = dir.pose(i);
+      const [cx, cy] = L.slotCentre(dir.slotOf(i));
+      return p.position[0] === cx && p.position[1] === cy && p.position[2] === 0 && p.rotZ === 0
+        && dir.springs.p[i].every((v, k) => v === dir.springs.target[i][k]) && dir.springs.v[i].every((v) => v === 0);
+    };
+    const cacheSquared = (dir, i) => dir.quilt[i].rotZ === 0 && dir.quilt[i].position[2] === 0;
+"""
+
+
+def sew(js, body):
+    return js(DIRECTOR_JS + STEP_JS + SEW_JS + body)
+
+
+def test_intro_settles_into_sewing_then_quilt(js):
+    r = sew(js, r"""
+        const log = [];
+        let atQuilt = null;
+        const e = new M.Director({ count: 12, quiltPose, tilePose, isTile: () => true, introFrom: INTRO_TABLE, sew: SEWN,
+          onEnter: (mode, from) => {
+            log.push([mode, from, e.time]);
+            if (mode === 'quilt') atQuilt = SEWN.map((i) => squaredAt(e, i));
+          } });
+        e.start('intro');
+        const frames = untilMode(e, 'quilt');
+        return { frames, log, atQuilt };
+    """)
+    assert [[m, f] for m, f, _ in r["log"]] == [["intro", None], ["sewing", "intro"], ["quilt", "sewing"]]
+    span = r["log"][2][2] - r["log"][1][2]
+    assert 3.15 - 1e-9 <= span <= 3.15 + 2 / 60, span
+    assert r["atQuilt"] == [True, True]
+
+
+def test_sewing_leg_keeps_every_pose_finite(js):
+    r = sew(js, r"""
+        const { director: e } = make({ intro: true, sew: SEWN });
+        e.start('intro');
+        untilMode(e, 'sewing');
+        let frames = 0; const bad = [];
+        while (e.mode === 'sewing' && frames < 600) {
+          frames += 1;
+          if (e.fade !== 1) bad.push(['fade', e.fade]);
+          for (let i = 0; i < 12; i += 1) {
+            if (e.s[i] !== 0) bad.push(['s', i, e.s[i]]);
+            if (e.progress(i) !== 1) bad.push(['progress', i, e.progress(i)]);
+            const p = e.pose(i);
+            if (![...p.position, p.rotY, p.rotZ, p.morph].every(Number.isFinite)) bad.push(['pose', i, p]);
+          }
+          e.advance(1 / 60);
+        }
+        return { frames, bad: bad.slice(0, 5), mode: e.mode };
+    """)
+    assert r["frames"] > 100 and r["mode"] == "quilt", r
+    assert r["bad"] == []
+
+
+def test_no_sew_blocks_skip_sewing(js):
+    r = sew(js, r"""
+        const { director: e, enters: log } = make({ intro: true, sew: [] });
+        e.start('intro');
+        untilMode(e, 'quilt');
+        for (let n = 0; n < 60; n += 1) e.advance(1 / 60);
+        return log.map(([m, f]) => [m, f]);
+    """)
+    assert r == [["intro", None], ["quilt", "intro"]]
+
+
+def test_sew_state_follows_the_schedule(js):
+    r = sew(js, r"""
+        const { director: e } = make({ intro: true, sew: SEWN });
+        const fresh = e.sewState(5);
+        e.start('intro');
+        const inIntro = e.sewState(5);
+        untilMode(e, 'sewing');
+        e.advance(0.15);
+        const at015 = [e.sewState(5), e.sewState(6), e.sewState(0), e.sewState(4)];
+        e.advance(1.4);
+        const at155 = e.sewState(5);
+        untilMode(e, 'quilt');
+        return { fresh, inIntro, at015, at155, after: e.sewState(5) };
+    """)
+    assert r["fresh"] is None and r["inIntro"] is None and r["after"] is None
+    five, six, plain, planned = r["at015"]
+    want = {"pins": 0.5, "square": 0, "puff": 0, "needle": 0, "glow": 0}
+    assert five.keys() == want.keys() and all(abs(five[k] - v) <= 1e-9 for k, v in want.items()), five
+    assert six == {"pins": 0, "square": 0, "puff": 0, "needle": 0, "glow": 0}
+    assert plain is None and planned is None
+    assert abs(r["at155"]["needle"] - 0.5) <= 1e-9, r["at155"]
+    assert r["at155"]["pins"] == 1 and r["at155"]["square"] == 1 and r["at155"]["puff"] == 1
+    assert r["at155"]["glow"] == 0
+
+
+def test_square_up_eases_rotZ_and_holds_the_lift(js):
+    r = sew(js, r"""
+        const { director: e } = make({ intro: true, sew: SEWN });
+        e.start('intro');
+        untilMode(e, 'sewing');
+        const rows = [];
+        while (e.mode === 'sewing') {
+          const st = e.sewState(6);
+          rows.push({ square: st.square, puff: st.puff, rotZ: e.pose(6).rotZ, z: e.pose(6).position[2],
+                      cached: cacheSquared(e, 6) });
+          e.advance(1 / 60);
+        }
+        return rows;
+    """)
+
+    def at(pred):
+        return [row for row in r if pred(row)]
+
+    assert at(lambda w: w["square"] == 0) and all(w["rotZ"] == 0.03 for w in at(lambda w: w["square"] == 0))
+    # Strictly between around the window's middle; near its end the eased value may round to exactly 0.
+    mid = at(lambda w: 0.25 <= w["square"] <= 0.75)
+    assert mid and all(0 < w["rotZ"] < 0.03 for w in mid), mid
+    easing = [w["rotZ"] for w in at(lambda w: 0 < w["square"] < 1)]
+    assert all(0 <= z <= 0.03 for z in easing) and easing == sorted(easing, reverse=True), easing
+    assert at(lambda w: w["square"] == 1) and all(w["rotZ"] == 0 for w in at(lambda w: w["square"] == 1))
+    assert all(w["z"] == 0.01 for w in at(lambda w: w["puff"] <= 0.5))
+    assert at(lambda w: w["puff"] == 1) and all(w["z"] == 0 for w in at(lambda w: w["puff"] == 1))
+    first = next(k for k, w in enumerate(r) if w["cached"])
+    assert all(w["cached"] for w in r[first:])
+    assert not any(w["cached"] for w in r[:first])
+    assert r[first]["square"] == 1 and r[first]["puff"] == 1
+    assert r[first - 1]["puff"] < 1
+
+
+@pytest.mark.parametrize("act", ["pause", "toggle", "click"])
+def test_pause_in_intro_skips_sewing(js, act):
+    call = {"pause": "e.setPaused(true, 5)", "toggle": "e.toggle(5)", "click": "e.click(HITS.block, 5)"}[act]
+    r = sew(js, f"""
+        const log = [];
+        let atQuilt = null;
+        const e = new M.Director({{ count: 12, quiltPose, tilePose, isTile: () => true, introFrom: INTRO_TABLE,
+          sew: SEWN, onEnter: (mode, from) => {{
+            log.push([mode, from]);
+            if (mode === 'quilt') atQuilt = SEWN.map((i) => squaredAt(e, i));
+          }} }});
+        e.start('intro');
+        for (let n = 0; n < 10; n += 1) e.advance(1 / 60);
+        {call};
+        return {{ log, atQuilt, cached: SEWN.map((i) => cacheSquared(e, i)) }};
+    """)
+    tail = [["quilt", "intro"]] if act == "pause" else [["quilt", "intro"], ["unstitching", "quilt"]]
+    assert r["log"] == [["intro", None]] + tail
+    assert r["atQuilt"] == [True, True]
+    assert r["cached"] == [True, True]
+
+
+@pytest.mark.parametrize("act", ["pause", "toggle", "click"])
+def test_skips_in_sewing_finish_it(js, act):
+    call = {"pause": "e.setPaused(true, 5)", "toggle": "e.toggle(5)", "click": "e.click(HITS.block, 5)"}[act]
+    r = sew(js, f"""
+        const log = [];
+        let atQuilt = null;
+        const e = new M.Director({{ count: 12, quiltPose, tilePose, isTile: () => true, introFrom: INTRO_TABLE,
+          sew: SEWN, onEnter: (mode, from) => {{
+            log.push([mode, from]);
+            if (mode === 'quilt' && from === 'sewing') atQuilt = SEWN.map((i) => squaredAt(e, i));
+          }} }});
+        e.start('intro');
+        untilMode(e, 'sewing');
+        e.advance(1 / 60);
+        const k = log.length;
+        {call};
+        const tail = log.slice(k);
+        let more = null;
+        if ({json.dumps(act)} === 'pause') {{
+          e.setPaused(false, 900);
+          const n = log.length;
+          for (let f = 0; f < 60; f += 1) e.advance(1 / 60);
+          more = log.length - n;
+        }}
+        return {{ tail, atQuilt, more }};
+    """)
+    want = [["quilt", "sewing"]] if act == "pause" else [["quilt", "sewing"], ["unstitching", "quilt"]]
+    assert r["tail"] == want
+    assert r["atQuilt"] == [True, True]
+    if act == "pause":
+        assert r["more"] == 0
+
+
+def test_squared_blocks_stay_square_after_a_cycle(js):
+    """A tiles drag of block 0 to tile slot 7 shifts blocks 1-7, so place() re-runs for the sewn blocks before the
+    sew-back; they must come home square (planted control: without place()'s squared branch, red). The sew-back is
+    unpaused: a paused one ends through a skip, which squares the sewn blocks again and would hide the branch."""
+    r = sew(js, r"""
+        const { director: e } = make({ intro: true, sew: SEWN });
+        e.start('intro');
+        untilMode(e, 'quilt');
+        e.setPaused(true, 0);
+        e.toggle(1000);
+        const tilesMode = e.mode;
+        e.grab(0, L.slotCentre(0, 'tiles'));
+        const moves = e.dragTo(L.slotCentre(7, 'tiles'));
+        e.drop();
+        e.setPaused(false, 1500);
+        e.toggle(2000);
+        untilMode(e, 'quilt');
+        return { tilesMode, mode: e.mode, moved: moves.map(([b]) => b).sort((a, b) => a - b),
+                 slots: SEWN.map((i) => e.slotOf(i)), square: SEWN.map((i) => squaredAt(e, i)) };
+    """)
+    assert r["tilesMode"] == "tiles" and r["mode"] == "quilt"
+    assert 5 in r["moved"] and 6 in r["moved"], r
+    assert r["slots"] == [4, 5]
+    assert r["square"] == [True, True]
+
+
+def test_sewing_reads_no_clock(js):
+    r = sew(js, r"""
+        const saved = [Date.now, performance.now, Math.random];
+        const boom = () => { throw new Error('the director read a clock'); };
+        const { director: e, enters: log } = make({ intro: (i) => M.introScatter(IDS[i]), sew: SEWN });
+        try {
+          Date.now = boom; performance.now = boom; Math.random = boom;
+          e.start('intro');
+          for (let i = 0; i < 400; i += 1) e.advance(1 / 60);
+        } finally {
+          [Date.now, performance.now, Math.random] = saved;
+        }
+        return log.map(([m]) => m);
+    """)
+    assert r == ["intro", "sewing", "quilt"]

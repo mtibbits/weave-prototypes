@@ -106,6 +106,25 @@ class TestModule:
             ("pending", 0, 0), ("card", 0, 1), ("card", 0, 1), ("done", 1, 0), ("done", 1, 0)]
         assert [v["attr"] for v in got] == ["pending", "card", "card", "done", "done"]
 
+    def test_news_sewing_state(self, js):
+        """#16: pending -> sewing on the sew-in's entry (no card, nothing recorded), then the card on the quilt entry
+        after it; a fall-back while sewing shows the card; nothing moves a `none` card."""
+        got = js(NEWS_JS + """
+            const t = mk('live');
+            const out = [];
+            mode(t, 'intro'); out.push(view(t));
+            mode(t, 'sewing'); out.push(view(t));
+            mode(t, 'quilt'); out.push(view(t));
+            mode(t, 'sewing'); out.push(view(t));
+            const f = mk('live');
+            mode(f, 'intro'); mode(f, 'sewing'); f.news.fallBack(); out.push(view(f));
+            const n = mk('none-live');
+            mode(n, 'intro'); mode(n, 'sewing'); out.push(view(n));
+            return out;""")
+        assert [(v["state"], v["attr"], v["calls"], v["cards"]) for v in got] == [
+            ("pending", "pending", 0, 0), ("sewing", "sewing", 0, 0), ("card", "card", 0, 1), ("card", "card", 0, 1),
+            ("card", "card", 0, 1), ("none", "none", 1, 0)]
+
     def test_news_fallback_while_pending(self, js):
         got = js(NEWS_JS + """
             const a = mk('live');
@@ -696,8 +715,9 @@ class TestLive:
                                       before_goto=entry_log())
         helpers.wait_for_quilt(page)
         page.wait_for_selector(CARD)
-        assert states(page) == ["pending", "card"]
-        index = helpers.modes(page).index(("quilt", "intro"))
+        # #16: in the window, the intro settles into the sew-in, and the card waits for the quilt after it.
+        assert states(page) == ["pending", "sewing", "card"]
+        index = helpers.modes(page).index(("quilt", "sewing"))
         first = next(e for e in page.evaluate("window.__entries") if e[1] == "card")
         assert first == ["quilt", "card", index + 1]
         record = card_record(page)
@@ -705,6 +725,8 @@ class TestLive:
         sampled = page.evaluate("window.__frames")
         assert ["intro", "pending"] in sampled
         assert ["intro", "card"] not in sampled
+        assert ["sewing", "sewing"] in sampled
+        assert ["sewing", "card"] not in sampled
         assert seen(page) == ["1.1", None]
         assert errors == []
 
@@ -748,7 +770,11 @@ class TestLive:
         assert page.locator(CARD).is_visible()
         assert seen(page)[0] == "1.1" and stage_data(page, "releaseState") == "card"
         assert card_record(page)["hero"] == ["still", "too-slow"]
-        assert states(page) == ["pending", "card"]
+        # #16: a teardown during the sew-in passes through `sewing` first (#15's lesson: read the teardown mode).
+        if helpers.weave(page, ".mode") == "sewing":
+            assert states(page) == ["pending", "sewing", "card"]
+        else:
+            assert states(page) == ["pending", "card"]
 
     @pytest.mark.parametrize("door", ["scene-route", "build-throws", "webgl-failed", "context-lost", "stop-hook"])
     def test_fallback_while_pending_shows_the_card(self, make_page, base_url, door):

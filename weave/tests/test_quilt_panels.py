@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import FIXED_INSTANT
 from helpers import DEFAULT_IDS, open_live, weave
 
 SHIPPED = (Path(__file__).resolve().parents[1] / "public" / "panels.js").read_text(encoding="utf-8")
@@ -20,7 +21,8 @@ def slot_of(slots, panel_id):
 
 def test_editing_panels_js_changes_the_quilt_and_the_lists(make_page, base_url):
     """The epic's fixture test (control: the default order starts with manpower, in test_hero.py)."""
-    page, errors = open_live(make_page, base_url, panels_body=SHIPPED + EDITS)
+    # E1's faces at a fixed instant before any release (#16: in the news window new panels start planned).
+    page, errors = open_live(make_page, base_url, panels_body=SHIPPED + EDITS, clock=FIXED_INSTANT)
     assert weave(page, ".order")[0] == "travel"
     slots = weave(page, ".slots")
     assert slot_of(slots, "manpower")["name"] == "Personnel"
@@ -50,7 +52,7 @@ SLOT_BODIES = {
 
 @pytest.mark.parametrize("case", ["ten", "thirteen", "broken"])
 def test_slot_filling(make_page, base_url, case):
-    page, _ = open_live(make_page, base_url, panels_body=SLOT_BODIES[case])
+    page, _ = open_live(make_page, base_url, panels_body=SLOT_BODIES[case], clock=FIXED_INSTANT)  # E1's faces (#16)
     order = weave(page, ".order")
     slots = weave(page, ".slots")
     if case == "ten":

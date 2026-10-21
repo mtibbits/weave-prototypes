@@ -5,6 +5,7 @@ import pytest
 from helpers import (PLAIN_START, QUILT_HINT, SEW_NAME, STILL_HINT, TILES_HINT, TILE_GEOMETRY_JS, UNSTITCH_NAME,
                      assert_tile_geometry, click_world, frames, hero_result, ink_fraction, live_quilt, log_modes, modes,
                      open_live, wait_for_data_mode, wait_for_mode, weave)
+from conftest import FIXED_INSTANT
 from test_hero import assert_still_page
 from test_pose import SAME_AS_STORED, STORE
 from test_quilt_panels import SLOT_BODIES
@@ -77,7 +78,8 @@ def held_for(page, mode, ms=800):
 
 @pytest.mark.parametrize("query", [REST, "?nowatchdog"], ids=["rest", "plain"])
 def test_toggle_unstitches_and_sews_back(make_page, base_url, query):
-    page, errors = live_quilt(make_page, base_url, query=query, before_goto=log_modes)
+    # E1's behaviour at a fixed instant before any release (#16: in the news window a plain load sews in new panels).
+    page, errors = live_quilt(make_page, base_url, query=query, before_goto=log_modes, clock=FIXED_INSTANT)
     press(page, UNSTITCH_NAME)
     assert state(page) == [SEW_NAME, "unstitching", "quilt"]
     wait_for_data_mode(page, "tiles")
@@ -356,7 +358,8 @@ STOP_WINDOW_MS = 5000
 
 
 def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
-    page, errors = live_quilt(make_page, base_url, before_goto=log_modes)
+    # E1's behaviour at a fixed instant before any release (#16: in the news window a plain load sews in new panels).
+    page, errors = live_quilt(make_page, base_url, before_goto=log_modes, clock=FIXED_INSTANT)
     press(page, UNSTITCH_NAME)
     page.eval_on_selector("[data-hero]", "el => { el.__weave.stop('context-lost'); el.__weave.stop('too-slow'); }")
     assert_still_page(page)
@@ -367,7 +370,7 @@ def test_stop_mid_transition_tears_down_the_mode(make_page, base_url):
     assert weave(page, ".mode") == "unstitching"
     assert errors == []
     # Control: without the stop, the same press reaches tiles inside the same window.
-    control, _ = live_quilt(make_page, base_url, before_goto=log_modes)
+    control, _ = live_quilt(make_page, base_url, before_goto=log_modes, clock=FIXED_INSTANT)
     press(control, UNSTITCH_NAME)
     wait_for_data_mode(control, "tiles", timeout=STOP_WINDOW_MS)
     assert ("tiles", "unstitching") in modes(control)
@@ -407,7 +410,7 @@ def test_stop_inside_a_mode_handler_halts_the_cycle(make_page, base_url):
     def before(page):
         log_modes(page)
         page.add_init_script(STOP_IN_HANDLER)
-    page, errors = live_quilt(make_page, base_url, before_goto=before)
+    page, errors = live_quilt(make_page, base_url, before_goto=before, clock=FIXED_INSTANT)  # E1's start (#16)
     page.locator("[data-pause]").click()
     press(page, UNSTITCH_NAME)
     assert page.eval_on_selector("[data-hero]", "el => el.hasAttribute('data-mode')") is False

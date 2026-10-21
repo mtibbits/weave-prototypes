@@ -5,6 +5,8 @@ import inspect
 import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
+from conftest import FIXED_INSTANT
+
 from helpers import (PLAIN_START, SEAMS, SEAMS_OF, UNSTITCH_NAME, frames, live_quilt, log_modes, modes, open_live,
                      project, wait_for_data_mode, wait_for_quilt, weave)
 from test_unstitch import CYCLE, REST, fades, layout, press, state
@@ -34,8 +36,9 @@ def test_wait_for_quilt_defaults_to_15_s():
     assert inspect.signature(wait_for_quilt).parameters["timeout"].default == 15000
 
 
+# E1's behaviour at a fixed instant before any release (#16: in the news window a plain load sews in new panels).
 def test_wait_for_quilt_waits_for_the_settle(make_page, base_url):
-    page, errors = live_quilt(make_page, base_url, before_goto=log_modes)
+    page, errors = live_quilt(make_page, base_url, before_goto=log_modes, clock=FIXED_INSTANT)
     assert modes(page)[:2] == PLAIN_START and weave(page, ".mode") == "quilt"
     # Control: it must time out (Playwright's TimeoutError) when the quilt is not settled.
     press(page, UNSTITCH_NAME)
@@ -46,8 +49,9 @@ def test_wait_for_quilt_waits_for_the_settle(make_page, base_url):
 
 
 def test_intro_leaves_within_4_s(make_page, base_url):
-    """U1, D12: on the wall clock, the intro enters quilt within 4 s; data-mode reads quilt throughout."""
-    page, errors = live_quilt(make_page, base_url, before_goto=log_modes)
+    """U1, D12: on the wall clock, the intro enters quilt within 4 s; data-mode reads quilt throughout. At E1's fixed
+    instant: in #16's news window the intro settles into the sew-in instead."""
+    page, errors = live_quilt(make_page, base_url, before_goto=log_modes, clock=FIXED_INSTANT)
     log = page.evaluate("window.__modes")
     assert [(e["mode"], e["from"]) for e in log[:2]] == PLAIN_START
     assert [e["data"] for e in log[:2]] == ["quilt", "quilt"]
