@@ -496,7 +496,7 @@ def test_only_scene_imports_needle():
     """#16: scene.js imports the needle, and main.js reaches scene.js only through import(), so the still path never
     loads it; #18 adds its own live-path import here."""
     public = WEAVE / "public"
-    subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.glob("*.html"))
+    subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.rglob("*.html"))
                 + [public / "panels.js"] + list((WEAVE / "dev").glob("*.html")))
     # 12 modules at #13's base, plus panels.js, index.html and faces.html: a moved glob cannot empty the scan.
     assert len(subjects) >= 15, subjects

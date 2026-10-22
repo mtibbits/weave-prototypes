@@ -242,13 +242,22 @@ def test_sink_check_catches_every_html_sink():
     assert html_sinks(planted) == [1, 3, 4, 5]
 
 
+INLINE_MODULE = re.compile(r'<script type="module">(.*?)</script>', re.S)
+
+
 def test_no_module_writes_html():
     modules = sorted((PUBLIC / "js").glob("*.js"))
     assert {p.name for p in modules} >= {"main.js", "dom.js", "catalog.js", "random.js", "icons.js", "fabric.js",
-                                         "tiles.js", "layout.js", "scene.js", "motion.js", "whatsnew.js"}
+                                         "tiles.js", "layout.js", "scene.js", "motion.js", "whatsnew.js", "config.js"}
     dev_pages = sorted((PUBLIC.parent / "dev").glob("*.html"))
     assert dev_pages, "no dev page to scan"
     found = {p.name: html_sinks(p.read_text(encoding="utf-8")) for p in modules + dev_pages}
+    # The public pages' inline modules too (the Help page boots config.js from one).
+    pages = sorted(PUBLIC.rglob("*.html"))
+    assert pages, "no public page to scan"
+    for p in pages:
+        inline = "\n".join(INLINE_MODULE.findall(p.read_text(encoding="utf-8")))
+        found[p.relative_to(PUBLIC).as_posix()] = html_sinks(inline)
     assert all(lines == [] for lines in found.values()), found
 
 
