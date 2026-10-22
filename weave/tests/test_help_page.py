@@ -144,6 +144,7 @@ def test_broken_settings_file_degrades(make_page, base_url, site):
     if site is SITE_SYNTAX_ERROR:
         # Only the routed syntax error itself escapes.
         assert len(errors) == 1 and errors[0].startswith("pageerror: "), errors
+        assert "Unexpected end of input" in errors[0], errors
     else:
         console = [e for e in errors if e.startswith("console.error: ")]
         assert not [e for e in errors if e.startswith("pageerror: ")], errors

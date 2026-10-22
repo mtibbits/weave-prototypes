@@ -20,7 +20,6 @@ def test_header_nav_and_pill(make_page, base_url):
     page, _ = open_page(make_page, base_url)
     links = page.eval_on_selector_all(
         ".site-nav a", "els => els.map((a) => [a.textContent.trim(), a.getAttribute('href')])")
-    # Exactly four links.
     assert links == [["What's in it", "#panels"], ["Help", "help/"], ["Coalesce", "../coalesce/"], ["Source", SOURCE]]
     assert page.locator(".site-nav a[aria-current]").count() == 0
     assert page.locator(".pill").text_content().strip() == "Prototype · work in progress"
