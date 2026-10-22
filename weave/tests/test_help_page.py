@@ -282,3 +282,22 @@ def test_linked_card_reacts_to_hover(make_page, base_url):
     card.hover()
     after = card.evaluate("el => getComputedStyle(el).borderTopColor")
     assert after == "rgb(29, 94, 91)" and after != before
+
+
+# --- Both pages share the nav (#17, AC 5). ---
+
+SHARED_LINKS = """() => [
+    [...document.querySelectorAll('.site-nav a')].map((a) => [a.textContent.trim(), a.href]),
+    document.querySelector('a.brand').href,
+    [...document.querySelectorAll('footer a')].map((a) => [a.textContent.trim(), a.href]),
+]"""
+
+
+def test_both_pages_share_the_nav(make_page, base_url):
+    home = make_page(reduced_motion="reduce")
+    home.goto(base_url + "/public/")
+    home.wait_for_load_state("networkidle")
+    help_page, _ = open_help(make_page, base_url)
+    home_links, help_links = home.evaluate(SHARED_LINKS), help_page.evaluate(SHARED_LINKS)
+    assert home_links == help_links
+    assert [text for text, _ in home_links[0]] == ["What's in it", "Help", "Coalesce", "Source"]

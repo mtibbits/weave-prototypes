@@ -20,8 +20,9 @@ def test_header_nav_and_pill(make_page, base_url):
     page, _ = open_page(make_page, base_url)
     links = page.eval_on_selector_all(
         ".site-nav a", "els => els.map((a) => [a.textContent.trim(), a.getAttribute('href')])")
-    # Exactly three links: #17 adds "Help" and updates this list.
-    assert links == [["What's in it", "#panels"], ["Coalesce", "../coalesce/"], ["Source", SOURCE]]
+    # Exactly four links.
+    assert links == [["What's in it", "#panels"], ["Help", "help/"], ["Coalesce", "../coalesce/"], ["Source", SOURCE]]
+    assert page.locator(".site-nav a[aria-current]").count() == 0
     assert page.locator(".pill").text_content().strip() == "Prototype · work in progress"
 
 
@@ -104,13 +105,22 @@ def _resolve(base_dir, ref):
     return path
 
 
+INLINE_MODULE = re.compile(r'<script type="module">(.*?)</script>', re.S)
+IMPORT_REF = r"""(?:from|import\()\s*['"](\.{1,2}/[^'"]+)['"]"""
+
+
 def local_references():
-    """Every local file the page, its stylesheet and its modules point at, as paths relative to public/."""
+    """Every local file the pages, their stylesheet and their modules point at, as paths relative to public/."""
     refs = set()
+    for base_dir, page in [("", "index.html"), ("help", "help/index.html")]:
+        text = (PUBLIC / page).read_text(encoding="utf-8")
+        for ref in re.findall(r'(?:src|href)="([^"]+)"', text):
+            if not re.match(r"[a-z]+:", ref) and not ref.startswith("#"):
+                refs.add(_resolve(base_dir, ref))
+        for module in INLINE_MODULE.findall(text):
+            for ref in re.findall(IMPORT_REF, module):
+                refs.add(_resolve(base_dir, ref))
     html = (PUBLIC / "index.html").read_text(encoding="utf-8")
-    for ref in re.findall(r'(?:src|href)="([^"]+)"', html):
-        if not re.match(r"[a-z]+:", ref) and not ref.startswith("#"):
-            refs.add(_resolve("", ref))
     importmap = re.search(r'<script type="importmap">(.*?)</script>', html, re.S)
     for ref in json.loads(importmap.group(1))["imports"].values():
         refs.add(_resolve("", ref))
@@ -120,7 +130,7 @@ def local_references():
             refs.add(_resolve("css", ref))
     for module in (PUBLIC / "js").glob("*.js"):
         text = module.read_text(encoding="utf-8")
-        for ref in re.findall(r"""(?:from|import\()\s*['"](\.{1,2}/[^'"]+)['"]""", text):
+        for ref in re.findall(IMPORT_REF, text):
             refs.add(_resolve("js", ref))
     refs.discard(None)
     return refs
@@ -147,7 +157,8 @@ def test_case_check_catches_a_mis_cased_reference():
 def test_local_references_match_file_case():
     refs = local_references()
     assert {"panels.js", "js/main.js", "assets/weave-still.jpg", "css/weave.css",
-            "fonts/InstrumentSans.woff2", "index.html"} <= refs, refs
+            "fonts/InstrumentSans.woff2", "index.html", "help/index.html", "site-config.js", "js/config.js",
+            "assets/help-still.jpg"} <= refs, refs
     assert case_mismatches(refs) == []
 
 
@@ -240,9 +251,6 @@ def html_sinks(text):
 def test_sink_check_catches_every_html_sink():
     planted = "innerHTML = x;\nconst a = 1;\nel.outerHTML = y;\nel.insertAdjacentHTML('beforeend', z);\ndocument.write(w);\n"
     assert html_sinks(planted) == [1, 3, 4, 5]
-
-
-INLINE_MODULE = re.compile(r'<script type="module">(.*?)</script>', re.S)
 
 
 def test_no_module_writes_html():
