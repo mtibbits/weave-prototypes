@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from helpers import (CARD_KEYS, CARD_TITLES, FILLED_SITE, NOT_FOUND, SITE_SYNTAX_ERROR, ink_fraction, jpeg_size,
-                     open_help)
+from helpers import (CARD_KEYS, CARD_TITLES, FILLED_SITE, NOT_FOUND, SITE_SYNTAX_ERROR, contrast_failures,
+                     focus_failures, ink_fraction, jpeg_size, open_help)
 from test_config import BAD_LINKS
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
@@ -168,3 +168,117 @@ def test_markup_in_team_name_stays_text(make_page, base_url):
     assert page.evaluate("document.images.length") == 1
     assert page.evaluate("window.__pwned") is None
     assert errors == []
+
+
+# --- Card styles (#17, ACs 4 and 6): focus, contrast and hover. ---
+
+CARD_FOCUS = r"""() => {
+    const el = document.activeElement;
+    const style = getComputedStyle(el);
+    return [el.tagName, el.dataset.link ?? null, !!el.closest('.card'), style.outlineStyle,
+            parseFloat(style.outlineWidth) || 0];
+}"""
+
+
+def tab_cycle(page, limit=40):
+    """From the skip link, press Tab until focus wraps to BODY (headless Chromium wraps through it) or a card key
+    repeats; returns [(link key, outline style, outline width, inside a card)] for each stop that is in a card."""
+    page.focus("a.skip-link")
+    seen, stops = set(), []
+    for _ in range(limit):
+        page.keyboard.press("Tab")
+        tag, key, in_card, style, width = page.evaluate(CARD_FOCUS)
+        if tag == "BODY" or (key is not None and key in seen):
+            return stops
+        if key is not None:
+            seen.add(key)
+        if key is not None or in_card:
+            stops.append((key, style, width, in_card))
+    raise AssertionError(f"Tab never wrapped to BODY in {limit} presses")
+
+
+def test_tab_reaches_the_cards_in_order_with_an_outline(make_page, base_url):
+    page, _ = open_help(make_page, base_url, site=FILLED_SITE)
+    assert focus_failures(page) == []
+    stops = tab_cycle(page)
+    assert [key for key, *_ in stops] == CARD_KEYS
+    for key, style, width, _ in stops:
+        assert style != "none" and width >= 2, (key, style, width)
+
+
+def test_missing_cards_take_no_focus(make_page, base_url):
+    page, _ = open_help(make_page, base_url)
+    assert page.locator(".card.is-missing").count() == 3
+    assert tab_cycle(page) == []
+    assert focus_failures(page) == []
+
+
+# Coalesce's missing-link CONTRAST, with WEAVE's linen as the fallback background: a flat 4.5:1 for every text leaf in
+# the missing-link subtree, which is the AC's question (helpers.contrast_failures asks it of the whole page).
+MISSING_CONTRAST = r"""() => {
+    const lum = (c) => {
+      const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+        v /= 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const background = (el) => {
+      for (let e = el; e; e = e.parentElement) {
+        const c = getComputedStyle(e).backgroundColor;
+        if (c !== 'transparent' && !c.startsWith('rgba(0, 0, 0, 0)')) return c;
+      }
+      return 'rgb(243, 238, 228)';
+    };
+    const opacity = (el) => {
+      let o = 1;
+      for (let e = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+      return o;
+    };
+    return [...document.querySelectorAll('.is-missing, .is-missing *')].filter((el) => el.childElementCount === 0
+      && el.textContent.trim()).map((el) => {
+      const a = lum(getComputedStyle(el).color);
+      const b = lum(background(el));
+      return { text: el.textContent.trim().slice(0, 40), opacity: opacity(el),
+               ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+    });
+}"""
+
+
+def test_missing_links_stay_readable(make_page, base_url):
+    page, _ = open_help(make_page, base_url)
+    texts = page.evaluate(MISSING_CONTRAST)
+    assert len(texts) >= 9, texts  # 3 cards x title, text and CTA
+    for item in texts:
+        assert item["opacity"] == 1 and item["ratio"] >= 4.5, item
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_help_text_meets_contrast(make_page, base_url, width):
+    page, _ = open_help(make_page, base_url, viewport={"width": width, "height": 844})
+    assert contrast_failures(page) == []
+
+
+CARD_COLORS = "el => { const s = getComputedStyle(el); return [s.borderTopColor, s.color]; }"
+
+
+def test_missing_cards_do_not_react_to_hover(make_page, base_url):
+    page, _ = open_help(make_page, base_url)
+    cards = page.locator(".card.is-missing")
+    assert cards.count() == 3
+    for i in range(3):
+        card = cards.nth(i)
+        page.mouse.move(0, 0)
+        before = card.evaluate(CARD_COLORS)
+        card.hover()
+        assert card.evaluate(CARD_COLORS) == before, i
+
+
+def test_linked_card_reacts_to_hover(make_page, base_url):
+    page, _ = open_help(make_page, base_url, site=FILLED_SITE)
+    card = page.locator("a.card").first
+    page.mouse.move(0, 0)
+    before = card.evaluate("el => getComputedStyle(el).borderTopColor")
+    card.hover()
+    after = card.evaluate("el => getComputedStyle(el).borderTopColor")
+    assert after == "rgb(29, 94, 91)" and after != before
