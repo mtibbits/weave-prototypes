@@ -1,8 +1,10 @@
-# WEAVE home page
+# WEAVE prototype
 
-The home page for WEAVE, the Workforce Engagement, Actions & Visibility Environment: the planned web dashboard that grows out of the Coalesce Excel add-in. It is a work in progress, and every number on it is sample data.
+The home page and Help page for WEAVE, the Workforce Engagement, Actions & Visibility Environment: the planned web dashboard that grows out of the Coalesce Excel add-in. It is a work in progress, and every number on it is sample data.
 
 The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. On desktop the hero is the live 3D quilt, hanging from its rod and swaying gently, with Pause and Unstitch buttons beside it: Unstitch (or a click on the quilt) lays its blocks out as a dashboard of tiles, and Sew it back (or a click on the background) sews it together again. Phones, reduced motion and any browser where the 3D scene can't run get a still picture of the quilt instead.
+
+The Help page, `public/help/`, offers three ways to get help: report a problem, take the tutorial or read the docs. Its cards' links come from one file, `public/site-config.js` (see Help links). For now its hero is a placeholder still of a quilt corner coming apart; the live scene comes later (#18, #19).
 
 ## Preview
 
@@ -12,7 +14,7 @@ From the repo root:
 python tools/serve.py weave
 ```
 
-Then open <http://127.0.0.1:8000/public/>. This preview serves WEAVE on its own, so the "Coalesce" link there goes nowhere; the whole-site preview in the root `README.md` has both prototypes.
+Then open <http://127.0.0.1:8000/public/>; the Help page is at <http://127.0.0.1:8000/public/help/>. This preview serves WEAVE on its own, so the "Coalesce" link there goes nowhere; the whole-site preview in the root `README.md` has both prototypes.
 
 The faces review page is at <http://127.0.0.1:8000/dev/faces.html> from the same command; it paints every block, tile and texture, and is never published. If port 8000 is taken, add `--port 8017` and use that port.
 
@@ -142,7 +144,7 @@ Phones, reduced motion and any browser where the 3D scene can't run show `public
 python weave/tools/capture_still.py
 ```
 
-It opens the page at `?pose=rest&frame=still&now=…` in headless Chromium (the `now=` is `FIXED_INSTANT`'s date, as The fixed test clock says) and waits until the quilt is live and settled, the still has faded out and the frame watchdog has had time to rule. Then it saves the JPEG at the first quality, from 90 down to 60, whose file fits 250 KB. If the scene falls back to the still, or no quality fits, it writes nothing and exits 1. `--which home|help|all` picks the target: today only `home` (this page) is registered, and `help` arrives with the Help page, so until then `--which help` exits 2 and names it. The default, `all`, captures every registered target. `--out DIR` and `--query K=V` are for tests: they write somewhere else and add to the page's query.
+It opens the page at `?pose=rest&frame=still&now=…` in headless Chromium (the `now=` is `FIXED_INSTANT`'s date, as The fixed test clock says) and waits until the quilt is live and settled, the still has faded out and the frame watchdog has had time to rule. Then it saves the JPEG at the first quality, from 90 down to 60, whose file fits 250 KB. If the scene falls back to the still, or no quality fits, it writes nothing and exits 1. `--which home|help|all` picks the target: today only `home` (this page) is registered, and `help` arrives with #19, which captures the Help page's still, so until then `--which help` exits 2 and names it. The default, `all`, captures every registered target. `--out DIR` and `--query K=V` are for tests: they write somewhere else and add to the page's query.
 
 The still is a snapshot, so it goes stale whenever `panels.js` or the scene changes, and stays stale until someone recaptures it. Every command in this section and the next runs from the repo root.
 
@@ -170,6 +172,19 @@ python weave/tools/verify.py --base https://mtibbits.github.io/weave-prototypes/
 ```
 
 That run checks and screenshots the states only. Its stamp names your checkout, not what Pages serves, so pull `main` and let the Pages deploy finish first. The budgets stay local, because Pages compresses the files and the first live frame would include the download.
+
+## Help links
+
+The Help page's three cards and the footer's team name come from `public/site-config.js` alone; nothing else needs editing. It sets `window.WEAVE_SITE`:
+
+- `teamName`: the name in the footer's "maintained by ..." line. Empty shows "the WEAVE team".
+- `links.serviceDesk`: the "Report a problem" card, the service desk portal.
+- `links.tutorial`: the "Take the tutorial" card, the guided tutorial.
+- `links.docs`: the "Read the docs" card, the usage docs.
+
+A link must start with `https://`, `http://`, `mailto:`, `/`, `./` or `../` (after trimming spaces, in any letter case). Anything else, or an empty value, is dropped, and its card shows "Link coming soon" and is not a link. A `site-config.js` that is missing or doesn't parse leaves every card on "Link coming soon" and the footer on "the WEAVE team".
+
+This repo and its GitHub Pages site are public, so commit public URLs only and never an internal hostname or intranet link; until a public link exists, leave the value empty. The tests never read the committed values: each one serves its own settings in place of the file.
 
 ## Licenses
 
