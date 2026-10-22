@@ -2,7 +2,9 @@
 // Coalesce's config.js, cut down to the team name and the Help page's three links:
 //   [data-link="key"]      gets the resolved URL, or turns into "Link coming soon" when there isn't one
 //   [data-text="key"]      gets the text value (teamName)
-//   [data-requires="key"]  stays hidden while that value is empty
+//   [data-requires="key"]  stays hidden while that value is empty. It reads top-level keys only: teamName, which
+//                          is never empty, or "urls". A link key such as "docs" lives under urls, so it would hide
+//                          its element forever.
 // Every write is text or an attribute; nothing here parses HTML.
 
 export const MISSING_LABEL = 'Link coming soon';
