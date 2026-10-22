@@ -120,10 +120,10 @@ def local_references():
         for module in INLINE_MODULE.findall(text):
             for ref in re.findall(IMPORT_REF, module):
                 refs.add(_resolve(base_dir, ref))
-    html = (PUBLIC / "index.html").read_text(encoding="utf-8")
-    importmap = re.search(r'<script type="importmap">(.*?)</script>', html, re.S)
-    for ref in json.loads(importmap.group(1))["imports"].values():
-        refs.add(_resolve("", ref))
+        importmap = re.search(r'<script type="importmap">(.*?)</script>', text, re.S)
+        if importmap:
+            for ref in json.loads(importmap.group(1))["imports"].values():
+                refs.add(_resolve(base_dir, ref))
     css = (PUBLIC / "css" / "weave.css").read_text(encoding="utf-8")
     for ref in re.findall(r"""url\(\s*["']?([^"')]+)""", css):
         if not re.match(r"[a-z]+:", ref):

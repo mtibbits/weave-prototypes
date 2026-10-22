@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import FILLED_SITE, open_help
+from helpers import BAD_LINKS, EMPTY_SITE, FILLED_SITE, open_help
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 
@@ -27,10 +27,6 @@ READ_FIXTURE = """
     };
 """
 
-# Links the resolver must drop: unsafe schemes, scheme-less text, and non-strings. "a/b" and "ab/x" are rejected only
-# by a correctly escaped \.\.?\/ in SAFE_URL.
-BAD_LINKS = ["javascript:alert(1)", "data:text/html,x", "ftp://x.example", "www.example.com/docs", "a/b", "ab/x", "",
-             "   ", 42, None]
 ACCEPTED = [(v, v) for v in ["https://a.example.com/x", "http://a.example.com", "mailto:help@example.com", "/abs",
                              "./rel", "../up", "//host/x", "https://", "HTTPS://X.EXAMPLE", "Mailto:a@b"]]
 ACCEPTED.append(("  https://pad.example.com/  ", "https://pad.example.com/"))
@@ -66,19 +62,18 @@ def test_resolve_returns_only_team_and_three_links(js):
     assert resolve(js, coalesce_only) == expected
 
 
-@pytest.mark.parametrize("cfg", [{}, {"teamName": "", "links": {"serviceDesk": "", "tutorial": "", "docs": ""}},
-                                 {"teamName": "   "}, {"teamName": 42}],
+@pytest.mark.parametrize("cfg", [{}, EMPTY_SITE, {"teamName": "   "}, {"teamName": 42}],
                          ids=["empty", "empty-site", "team-blank", "team-number"])
 def test_empty_settings_fall_back_quietly(js, cfg):
     r = resolve(js, cfg)
-    assert r["urls"] == {"serviceDesk": "", "tutorial": "", "docs": ""}
+    assert r["urls"] == EMPTY_SITE["links"]
     assert r["teamName"] == "the WEAVE team"
 
 
 @pytest.mark.parametrize("bad", BAD_LINKS)
 def test_unsafe_or_malformed_links_are_dropped(js, bad):
     r = resolve(js, {"links": {"serviceDesk": bad, "tutorial": bad, "docs": bad}})
-    assert r["urls"] == {"serviceDesk": "", "tutorial": "", "docs": ""}
+    assert r["urls"] == EMPTY_SITE["links"]
     assert js(f"const m = await import('/public/js/config.js'); return m.safeUrl({json.dumps(bad)});") == ""
 
 

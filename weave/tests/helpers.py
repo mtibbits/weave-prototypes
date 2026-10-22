@@ -299,6 +299,11 @@ NOT_FOUND = object()
 CARD_KEYS = ["serviceDesk", "tutorial", "docs"]
 CARD_TITLES = ["Report a problem", "Take the tutorial", "Read the docs"]
 
+# Links the resolver must drop: unsafe schemes, scheme-less text, and non-strings. "a/b" and "ab/x" are rejected only
+# by a correctly escaped \.\.?\/ in SAFE_URL.
+BAD_LINKS = ["javascript:alert(1)", "data:text/html,x", "ftp://x.example", "www.example.com/docs", "a/b", "ab/x", "",
+             "   ", 42, None]
+
 
 def site_body(cfg):
     """A site-config.js body that sets window.WEAVE_SITE to `cfg`."""

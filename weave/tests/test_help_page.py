@@ -1,12 +1,10 @@
 """The Help page (#17): its shell, placeholder still, three help cards and the links site-config.js gives them."""
-import json
 from pathlib import Path
 
 import pytest
 
-from helpers import (CARD_KEYS, CARD_TITLES, FILLED_SITE, NOT_FOUND, SITE_SYNTAX_ERROR, contrast_failures,
+from helpers import (BAD_LINKS, CARD_KEYS, CARD_TITLES, FILLED_SITE, NOT_FOUND, SITE_SYNTAX_ERROR, contrast_failures,
                      focus_failures, ink_fraction, jpeg_size, open_help)
-from test_config import BAD_LINKS
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 SOURCE = "https://github.com/mtibbits/weave-prototypes"
@@ -154,9 +152,7 @@ def test_broken_settings_file_degrades(make_page, base_url, site):
 
 @pytest.mark.parametrize("bad", BAD_LINKS)
 def test_dropped_link_shows_link_coming_soon(make_page, base_url, bad):
-    b = json.dumps(bad)
-    body = f"window.WEAVE_SITE = {{teamName: '', links: {{serviceDesk: {b}, tutorial: {b}, docs: {b}}}}};"
-    page, errors = open_help(make_page, base_url, site=body)
+    page, errors = open_help(make_page, base_url, site={"teamName": "", "links": {k: bad for k in CARD_KEYS}})
     assert_all_missing(page)
     assert errors == []
 
@@ -278,9 +274,9 @@ def test_linked_card_reacts_to_hover(make_page, base_url):
     page, _ = open_help(make_page, base_url, site=FILLED_SITE)
     card = page.locator("a.card").first
     page.mouse.move(0, 0)
-    before = card.evaluate("el => getComputedStyle(el).borderTopColor")
+    before, _ = card.evaluate(CARD_COLORS)
     card.hover()
-    after = card.evaluate("el => getComputedStyle(el).borderTopColor")
+    after, _ = card.evaluate(CARD_COLORS)
     assert after == "rgb(29, 94, 91)" and after != before
 
 
@@ -294,6 +290,7 @@ SHARED_LINKS = """() => [
 
 
 def test_both_pages_share_the_nav(make_page, base_url):
+    # /public/, not open_page's /public/index.html: the Help page's "../#panels" resolves to /public/#panels.
     home = make_page(reduced_motion="reduce")
     home.goto(base_url + "/public/")
     home.wait_for_load_state("networkidle")
