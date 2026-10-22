@@ -372,3 +372,12 @@ def test_spec_and_root_readme_know_the_help_page():
     root = (REPO / "README.md").read_text(encoding="utf-8")
     weave_bullet = next(line for line in root.splitlines() if line.startswith("- **WEAVE**"))
     assert "Help page" in weave_bullet, weave_bullet
+
+
+def test_help_links_says_what_the_tests_read():
+    """Only two tests touch the committed file, and neither reads a value: one checks its comments, one its shape."""
+    said = sentences(section(WEAVE / "README.md", HELP_LINKS))
+    tests = [s for s in said if "tests" in s]
+    assert tests, said
+    assert any("never read" in s and "values" in s and ("shape" in s or "structure" in s) for s in tests), tests
+    assert not any("each one serves its own settings" in s for s in tests), tests

@@ -184,7 +184,7 @@ The Help page's three cards and the footer's team name come from `public/site-co
 
 A link must start with `https://`, `http://`, `mailto:`, `/`, `./` or `../` (after trimming spaces, in any letter case). Anything else, or an empty value, is dropped, and its card shows "Link coming soon" and is not a link. A `site-config.js` that is missing or doesn't parse leaves every card on "Link coming soon" and the footer on "the WEAVE team".
 
-This repo and its GitHub Pages site are public, so commit public URLs only and never an internal hostname or intranet link; until a public link exists, leave the value empty. The tests never read the committed values: each one serves its own settings in place of the file.
+This repo and its GitHub Pages site are public, so commit public URLs only and never an internal hostname or intranet link; until a public link exists, leave the value empty. The tests never read the committed values: the Help page's tests serve their own settings in place of the file, and the two that touch the committed file check only its comments and its shape.
 
 ## Licenses
 
