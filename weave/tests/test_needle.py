@@ -492,18 +492,22 @@ def test_imports_needle_catches_every_form():
     assert [f for f in comments if imports_needle(f)] == []
 
 
-def test_only_scene_imports_needle():
+def test_only_scene_and_help_import_needle():
     """#16: scene.js imports the needle, and main.js reaches scene.js only through import(), so the still path never
-    loads it; #18 adds its own live-path import here."""
+    loads it. #18: help.js imports the needle (and the spool) only through import(), on its live path."""
     public = WEAVE / "public"
     subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.rglob("*.html"))
                 + [public / "panels.js"] + list((WEAVE / "dev").glob("*.html")))
     # 12 modules at #13's base, plus panels.js, index.html and faces.html: a moved glob cannot empty the scan.
     assert len(subjects) >= 15, subjects
-    assert [p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))] == ["scene.js"]
+    assert sorted(p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))) == ["help.js", "scene.js"]
     main = re.sub(r"(?m)(^|\s)//[^\n]*", " ", (public / "js" / "main.js").read_text(encoding="utf-8"))
     assert re.findall(r"[\w(]*\s*\(?\s*['\"]\./scene\.js['\"]", main) == ["import('./scene.js'"]
     assert not re.search(r"from\s+['\"]\./scene\.js['\"]|import\s+['\"]\./scene\.js['\"]", main)
+    help_js = re.sub(r"(?m)(^|\s)//[^\n]*", " ", (public / "js" / "help.js").read_text(encoding="utf-8"))
+    for name in ("needle", "spool", "scene"):
+        assert re.findall(rf"[\w(]*\s*\(?\s*['\"]\./{name}\.js['\"]", help_js) == [f"import('./{name}.js'"], name
+        assert not re.search(rf"from\s+['\"]\./{name}\.js['\"]|import\s+['\"]\./{name}\.js['\"]", help_js), name
 
 
 @pytest.mark.parametrize("context, reason", [
