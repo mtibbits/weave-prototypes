@@ -1,6 +1,6 @@
 """The live loop: Pause and Play, the one clock, and idling when the tab is hidden or the stage is off screen."""
-from helpers import (contrast_failures, corner_z, focus_failures, frames, ink_fraction, live_quilt, open_live, rising,
-                     weave)
+from helpers import (RESIZE_AND_READ, SET_HIDDEN, contrast_failures, corner_z, focus_failures, frames, ink_fraction,
+                     live_quilt, open_live, rising, weave)
 
 FIXED = "2026-10-09T09:00:00"
 
@@ -10,16 +10,6 @@ WATCH_NEXT_FRAME = r"""el => {
     const observer = new MutationObserver(() => { window.__nextDt = el.__weave.lastDt; observer.disconnect(); });
     observer.observe(el, { attributes: true, attributeFilter: ['data-hero-frames'] });
 }"""
-
-# Forces document.hidden / visibilityState and fires visibilitychange; returns the frame count right after, so a
-# frame already requested that still runs once would show up in the hold.
-SET_HIDDEN = r"""(hidden) => {
-    Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
-    Object.defineProperty(document, 'visibilityState', { value: hidden ? 'hidden' : 'visible', configurable: true });
-    document.dispatchEvent(new Event('visibilitychange'));
-    return Number(document.querySelector('[data-hero]').dataset.heroFrames || 0);
-}"""
-
 
 def test_pause_freezes_motion_and_play_resumes_without_a_jump(make_page, base_url):
     """Port of coalesce/tests/test_hero.py::test_pause_stops_and_resumes_rendering, plus the AC's frozen pose."""
@@ -61,30 +51,6 @@ def test_paused_quilt_redraws_after_a_resize(make_page, base_url):
     clip = {"x": box["x"] + box["width"] * 0.3, "y": box["y"] + box["height"] * 0.3,
             "width": box["width"] * 0.4, "height": box["height"] * 0.4}
     assert ink_fraction(page.screenshot(clip=clip)) > 0.05
-
-
-# Resizes the stage from a rAF callback, then reads the stage canvas's drawing buffer from a ResizeObserver created
-# after main.js's, so it runs after main.js's resize in the same rendering update and before that update paints.
-RESIZE_AND_READ = r"""el => new Promise((resolve) => {
-    const canvas = el.querySelector('canvas');
-    const width = canvas.width;
-    let armed = false;
-    const probe = new ResizeObserver(() => {
-      if (!armed) return;
-      probe.disconnect();
-      const copy = document.createElement('canvas');
-      copy.width = canvas.width;
-      copy.height = canvas.height;
-      const ctx = copy.getContext('2d');
-      ctx.drawImage(canvas, 0, 0);
-      const data = ctx.getImageData(0, 0, copy.width, copy.height).data;
-      let ink = 0;
-      for (let i = 3; i < data.length; i += 4) if (data[i]) ink += 1;
-      resolve({ before: width, after: canvas.width, ink: ink / (data.length / 4) });
-    });
-    probe.observe(el);
-    requestAnimationFrame(() => { armed = true; el.style.width = `${Math.round(el.clientWidth * 0.8)}px`; });
-})"""
 
 
 def test_live_resize_redraws_before_the_frame_paints(make_page, base_url):

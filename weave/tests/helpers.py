@@ -310,12 +310,13 @@ def site_body(cfg):
     return f"window.WEAVE_SITE = {json.dumps(cfg)};"
 
 
-def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, **context_args):
+def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, before_goto=None, **context_args):
     """Open the Help page with site-config.js routed to `site`; returns (page, errors).
 
     `site` is a dict (served as settings), a str (the raw body), NOT_FOUND (a 404) or None (no route, so the
     committed file loads). Whenever it routes, it asserts the route ran exactly once: a route that never matched
-    would let the empty-settings tests pass against the committed empty file.
+    would let the empty-settings tests pass against the committed empty file. `before_goto(page)` runs after that
+    route and before navigation (request logs, routes and init scripts), as open_live's does.
     """
     context_args.setdefault("reduced_motion", "reduce")
     page = make_page(**context_args)
@@ -332,11 +333,36 @@ def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, **context_args):
             route.fulfill(**reply)
 
         page.route("**/site-config.js", handle)
+    if before_goto is not None:
+        before_goto(page)
     page.goto(base_url + path)
     page.wait_for_load_state("networkidle")
     if site is not None:
         assert len(fired) == 1, f"the site-config.js route ran {len(fired)} times: {fired}"
     return page, errors
+
+
+# --- The Help page's live corner (#18). ---
+
+HELP_LOAD_FAILED = "WEAVE: the frayed corner could not load, so the still image stays."
+# Every strand's 16 points, as JSON: equal strings mean an identical pose.
+STRANDS_JSON = "el => JSON.stringify(el.__weaveHelp.fray.strands.map((s) => s.points))"
+
+
+def open_help_live(make_page, base_url, query="?nowatchdog", **kwargs):
+    """open_help on desktop at `query`, then wait until the corner is live; returns (page, errors).
+
+    site-config.js stays routed and asserted (#17's rule). The stage is scrolled into view, so the loop is running
+    on return."""
+    page, errors = open_help(make_page, base_url, path=HELP + query, **{"reduced_motion": "no-preference", **kwargs})
+    assert hero_result(page) == ["live", "ok"], errors
+    page.locator("[data-hero]").scroll_into_view_if_needed()
+    return page, errors
+
+
+def help_hook(page, expr):
+    """Evaluate `el.__weaveHelp<expr>` on the stage, e.g. help_hook(page, '.fray.clock')."""
+    return page.eval_on_selector("[data-hero]", f"el => el.__weaveHelp{expr}")
 
 
 # --- The live hero (#7). ---
@@ -605,6 +631,40 @@ def wait_for_reason(page, reason, timeout=20000):
     returns at live/ok, before any runtime fallback has happened."""
     page.wait_for_function("(reason) => document.querySelector('[data-hero]')?.dataset.heroReason === reason",
                            arg=reason, timeout=timeout)
+
+
+# Forces document.hidden / visibilityState and fires visibilitychange; returns the frame count right after, so a
+# frame already requested that still runs once would show up in the hold.
+SET_HIDDEN = r"""(hidden) => {
+    Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { value: hidden ? 'hidden' : 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    return Number(document.querySelector('[data-hero]').dataset.heroFrames || 0);
+}"""
+
+
+# Resizes the stage from a rAF callback, then reads the stage canvas's drawing buffer from a ResizeObserver created
+# after main.js's, so it runs after main.js's resize in the same rendering update and before that update paints.
+RESIZE_AND_READ = r"""el => new Promise((resolve) => {
+    const canvas = el.querySelector('canvas');
+    const width = canvas.width;
+    let armed = false;
+    const probe = new ResizeObserver(() => {
+      if (!armed) return;
+      probe.disconnect();
+      const copy = document.createElement('canvas');
+      copy.width = canvas.width;
+      copy.height = canvas.height;
+      const ctx = copy.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+      let ink = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i]) ink += 1;
+      resolve({ before: width, after: canvas.width, ink: ink / (data.length / 4) });
+    });
+    probe.observe(el);
+    requestAnimationFrame(() => { armed = true; el.style.width = `${Math.round(el.clientWidth * 0.8)}px`; });
+})"""
 
 
 # --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---
