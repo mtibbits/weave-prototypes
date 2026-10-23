@@ -381,3 +381,49 @@ def test_help_links_says_what_the_tests_read():
     assert tests, said
     assert any("never read" in s and "values" in s and ("shape" in s or "structure" in s) for s in tests), tests
     assert not any("each one serves its own settings" in s for s in tests), tests
+
+
+# --- #18: the Help page's live corner. ---
+
+HELP_HOOK_FIELDS = ("`fray`", "`strands[i].points`", "`strands[i].hanging`", "`frayAmount`", "`state`", "`clock`",
+                    "`stir`", "`stop(reason)`", "`edge`", "`needle`", "`spool`", "`project([x, y, z])`", "`fringe`")
+
+
+def help_scene_claims(spec_text):
+    """Whether the spec's hooks section states the Help scene's hooks, each in its own sentence: stage.__weaveHelp with
+    every field, data-fray-state on the live path only, and the Help page's ?pose=rest with the loop and watchdog
+    still running. Anchored to sentences, since the home page's bullets already say ?pose=rest and other words."""
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec_text, re.M | re.S).group(1)
+    said = sentences(hooks)
+    hook = " ".join(s for s in said if "__weaveHelp" in s)
+    fray_state = [s for s in said if "data-fray-state" in s and "live path" in s]
+    rest = [s for s in said if "Help" in s and "?pose=rest" in s and "watchdog" in s and "stir" in s]
+    return all(field in hook for field in HELP_HOOK_FIELDS) and bool(fray_state) and bool(rest)
+
+
+def test_spec_lists_the_help_scene_hooks():
+    text = SPEC.read_text(encoding="utf-8")
+    assert help_scene_claims(text) is True
+    # Planted control: the spec without its __weaveHelp sentence fails, though ?pose=rest stays elsewhere.
+    without = "\n".join(line for line in text.splitlines() if "__weaveHelp" not in line)
+    assert help_scene_claims(without) is False
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", text, re.M | re.S).group(1)
+    assert "holds only the still and is #18's mount point" not in hooks
+
+
+def test_spec_says_18_makes_the_corner_live():
+    spec = SPEC.read_text(encoding="utf-8")
+    goals = re.search(r"^## 2\..*?(?=^## 3\.)", spec, re.M | re.S).group(0)
+    later = re.search(r"^## 11\..*?(?=^## |\Z)", spec, re.M | re.S).group(0)
+    for part in (goals, later):
+        assert any("#18" in s and "live" in s for s in sentences(part)), sentences(part)
+        assert any("#19" in s and "mend" in s for s in sentences(part)), sentences(part)
+
+
+def test_readme_help_hero_is_live():
+    readme = (WEAVE / "README.md").read_text(encoding="utf-8")
+    paragraph = next(p for p in readme.split("\n\n") if p.startswith("The Help page, `public/help/`"))
+    assert "the live scene comes later" not in paragraph
+    said = sentences(paragraph)
+    assert any("stir" in s and "Pause" in s for s in said), said
+    assert any("#19" in s and "mend" in s for s in said), said

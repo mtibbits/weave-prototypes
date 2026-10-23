@@ -4,7 +4,7 @@ The home page and Help page for WEAVE, the Workforce Engagement, Actions & Visib
 
 The page is plain HTML, CSS and JavaScript in `public/`, with no build step. Its panel lists come from one file, `public/panels.js`. On desktop the hero is the live 3D quilt, hanging from its rod and swaying gently, with Pause and Unstitch buttons beside it: Unstitch (or a click on the quilt) lays its blocks out as a dashboard of tiles, and Sew it back (or a click on the background) sews it together again. Phones, reduced motion and any browser where the 3D scene can't run get a still picture of the quilt instead.
 
-The Help page, `public/help/`, offers three ways to get help: report a problem, take the tutorial or read the docs. Its cards' links come from one file, `public/site-config.js` (see Help links). For now its hero is a placeholder still of a quilt corner coming apart; the live scene comes later (#18, #19).
+The Help page, `public/help/`, offers three ways to get help: report a problem, take the tutorial or read the docs. Its cards' links come from one file, `public/site-config.js` (see Help links). On desktop its hero is a live corner of the quilt coming apart: the loose threads sway, the pointer stirs them, and Pause stops the motion. Phones, reduced motion and any browser where the 3D scene can't run get a still picture instead (a placeholder for now). The mend, and a still captured from the scene, come with #19.
 
 ## Preview
 
