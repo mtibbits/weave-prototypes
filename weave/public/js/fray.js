@@ -1,8 +1,9 @@
 // The Help corner's loose threads (#18): a pure simulation, with no Three and no DOM. help.js draws it and #19's mend
 // builds on it. Importing it builds nothing.
 // The model: 10 strands, each a chain of 16 points. Point 0 is pinned to its pin on the fray edge and never moves.
-// The rest are Verlet points joined by distance constraints, moved by gravity (−y), damping, a gentle seeded breeze
-// in x and a soft push away from the stir point within STIR_RADIUS (0.4 scene units; a block is 1.0). Every point
+// The rest are Verlet points joined by distance constraints, moved by gravity (−y), damping, a weak pull back toward
+// the seeded rest pose (a thread's curl), a gentle seeded breeze in x and a soft push away from the stir point within
+// STIR_RADIUS (0.4 scene units; a block is 1.0). Every point
 // keeps its pin's z, so the strands move in their plane and a pointer cast onto that plane is exact. Points are in
 // the Help scene's world space, in scene units, as [x, y, z] arrays that are mutated in place, never reallocated.
 // The clock: advance(dt) takes seconds, clamped to MAX_DT, and steps the physics in fixed steps of 1/120 s; `clock`
@@ -28,7 +29,9 @@ export const STEP = 1 / 120;
 export const MAX_DT = 0.05;
 export const STIR_RADIUS = 0.4;
 
-const GRAVITY = 2.0;
+const GRAVITY = 1.2;
+// The curl's spring toward the rest pose, per second squared.
+const CURL = 6;
 const DAMPING = 0.985;
 const BREEZE = 0.35;
 const STIR_PUSH = 12;
@@ -45,7 +48,7 @@ export function createFray({ pins, length, seed, rest = false }) {
   // Per strand: the rest pose's lean and curl, then the breeze's two phases.
   const strands = anchors.map((pin) => {
     const lean = (rng() - 0.5) * 0.25;
-    const curl = (rng() - 0.5) * 0.3;
+    const curl = (rng() - 0.5) * 0.9;
     const points = [[...pin]];
     for (let j = 1; j < POINTS; j += 1) {
       const a = lean + curl * (j / SEGMENTS);
@@ -56,6 +59,7 @@ export function createFray({ pins, length, seed, rest = false }) {
   });
   const phases = strands.map(() => [rng() * 2 * Math.PI, rng() * 2 * Math.PI]);
   const previous = strands.map((s) => s.points.map((p) => [p[0], p[1]]));
+  const shape = strands.map((s) => s.points.map((p) => [p[0], p[1]]));
   let clock = 0;
   let pending = 0;
   let stir = null;
@@ -69,8 +73,9 @@ export function createFray({ pins, length, seed, rest = false }) {
       for (let j = 1; j < POINTS; j += 1) {
         const p = points[j];
         const q = previous[k][j];
-        let ax = wind * (j / SEGMENTS);
-        let ay = -GRAVITY;
+        const home = shape[k][j];
+        let ax = wind * (j / SEGMENTS) + CURL * (home[0] - p[0]);
+        let ay = -GRAVITY + CURL * (home[1] - p[1]);
         if (stir) {
           const dx = p[0] - stir[0];
           const dy = p[1] - stir[1];

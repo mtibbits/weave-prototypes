@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
-from helpers import hero_result, hidden_by_attribute, open_help
+from helpers import (STRANDS_JSON, frames, help_hook, hero_result, hidden_by_attribute, ink_fraction, open_help,
+                     open_help_live, rising)
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 
@@ -150,3 +151,139 @@ def test_help_page_loads_help_js_with_an_import_map():
     # The Pause row ships hidden, outside the stage, and reserves its space.
     assert re.search(r'<div class="hero-controls" data-controls data-reserve hidden>\s*<button class="hero-pause" '
                      r'type="button" data-pause aria-pressed="false" hidden>Pause motion</button>', html)
+
+
+# --- Going live: the corner, its framing and its hooks. ---
+
+
+def test_help_goes_live_on_desktop(make_page, base_url):
+    """AC 1, a port of test_hero.py's test_goes_live_on_desktop. The pinned clock empties the performance timeline,
+    so this runs on the real clock (Issue-12/16)."""
+    page, errors = open_help_live(make_page, base_url, clock=None)
+    canvas = page.locator("[data-hero] canvas")
+    assert canvas.count() == 1 and canvas.get_attribute("aria-hidden") == "true"
+    pause = page.locator("[data-pause]")
+    assert pause.count() == 1 and pause.is_visible()
+    assert pause.evaluate("el => el.closest('[data-hero]') === null") is True
+    assert rising(page)
+    assert page.evaluate("performance.getEntriesByName('weave:first-live-frame', 'mark').length") == 1
+    assert page.eval_on_selector("[data-hero]", "el => el.classList.contains('is-live')") is True
+    page.wait_for_function("getComputedStyle(document.querySelector('.hero-still')).opacity === '0'", timeout=5000)
+    stage = page.locator("[data-hero]")
+    live = ink_fraction(stage.screenshot())
+    canvas.evaluate("el => { el.style.visibility = 'hidden'; }")
+    control = ink_fraction(stage.screenshot())
+    print(f"ink live={live:.4f} control={control:.4f}")
+    assert live >= 0.05 and live >= 3 * control
+    assert errors == []
+
+
+# Projects every framing point through the hook: the edge at u = 0, 0.1, ..., 1, every strand point and the eight
+# corners of the needle's and the spool's world boxes; returns them with the canvas's client rect.
+FRAMING = r"""async (el) => {
+    const THREE = await import('three');
+    const h = el.__weaveHelp;
+    const corners = (obj) => {
+      const b = new THREE.Box3().setFromObject(obj, true);
+      const out = [];
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) out.push([x, y, z]);
+      return out;
+    };
+    const edge = Array.from({ length: 11 }, (_, i) => h.edge.getPointAt(i / 10).toArray());
+    const points = [...edge, ...h.fray.strands.flatMap((s) => s.points), ...corners(h.needle), ...corners(h.spool)];
+    const r = el.querySelector('canvas').getBoundingClientRect();
+    return { rect: [r.left, r.top, r.right, r.bottom], projected: points.map((p) => h.project(p)),
+             edge: edge.map((p) => h.project(p)) };
+}"""
+
+
+@pytest.mark.parametrize("pose", ["rest", "idle"])
+def test_help_scene_stays_in_the_canvas(make_page, base_url, pose):
+    """AC 2 at 1440 x 900: at ?pose=rest, and after 3 s of idle without it, every framing point projects inside the
+    canvas. Tightness control: the edge spans at least 40% of the canvas width, so a whole-quilt fit fails."""
+    query = "?pose=rest&nowatchdog" if pose == "rest" else "?nowatchdog"
+    page, errors = open_help_live(make_page, base_url, query=query)
+    if pose == "idle":
+        page.wait_for_timeout(3000)
+    r = page.eval_on_selector("[data-hero]", FRAMING)
+    left, top, right, bottom = r["rect"]
+    assert len(r["projected"]) == 11 + 160 + 16
+    outside = [(i, p) for i, p in enumerate(r["projected"]) if not (left <= p[0] <= right and top <= p[1] <= bottom)]
+    assert outside == [], (r["rect"], outside)
+    span = max(p[0] for p in r["edge"]) - min(p[0] for p in r["edge"])
+    assert span >= 0.4 * (right - left), (span, r["rect"])
+    assert errors == []
+
+
+def test_help_hook_shape_and_fray_state(make_page, base_url):
+    """AC 14: stage.__weaveHelp's fields, the props' children and data-fray-state."""
+    page, errors = open_help_live(make_page, base_url)
+    r = page.eval_on_selector("[data-hero]", r"""el => {
+        const h = el.__weaveHelp;
+        const f = h.fray;
+        const names = (o) => o.children.map((c) => c.name);
+        return { keys: Object.keys(h), getPointAt: typeof h.edge.getPointAt, stop: typeof h.stop,
+                 project: typeof h.project, needle: names(h.needle), spool: names(h.spool),
+                 strands: f.strands.map((s) => s.points.length),
+                 sizes: [...new Set(f.strands.flatMap((s) => s.points.map((p) => p.length)))],
+                 hanging: f.strands.map((s) => s.hanging), frayAmount: f.frayAmount, state: f.state,
+                 clock: typeof f.clock, stir: f.stir, frayState: el.dataset.frayState,
+                 tail: h.needle.getObjectByName('tail').material.color.getHexString(),
+                 thread: h.spool.getObjectByName('thread').material.color.getHexString() };
+    }""")
+    assert {"fray", "stop", "project", "edge", "needle", "spool"} <= set(r["keys"]), r["keys"]
+    assert r["getPointAt"] == "function" and r["stop"] == "function" and r["project"] == "function"
+    assert {"body", "tail"} <= set(r["needle"]) and r["spool"] == ["spool", "thread"]
+    assert r["strands"] == [16] * 10 and r["sizes"] == [3]
+    assert r["hanging"] == [1] * 10 and r["frayAmount"] == 1 and r["state"] == "frayed"
+    assert r["clock"] == "number" and r["stir"] is None
+    assert r["frayState"] == "frayed"
+    assert r["tail"] == r["thread"] == "c9a227"
+    assert errors == []
+
+
+# Geometry and material ids are global counters (test_needle.py's probe): a gap of 1 across a second of frames means
+# no frame built anything.
+ID_PROBE = ("async () => { const T = await import('three');"
+            " return [new T.BufferGeometry().id, new T.MeshBasicMaterial().id]; }")
+
+
+def test_help_fringe_is_painted_once_and_frames_allocate_no_geometry(make_page, base_url):
+    """U3 and the incremental-fringe rule: a second of frames paints and uploads nothing new and builds no geometry;
+    a frayAmount change moves only the threshold."""
+    page, errors = open_help_live(make_page, base_url)
+    assert rising(page, 300)
+    before = page.evaluate(ID_PROBE)
+    fringe = help_hook(page, ".fringe")
+    page.wait_for_timeout(1000)
+    after = page.evaluate(ID_PROBE)
+    held = help_hook(page, ".fringe")
+    assert after == [before[0] + 1, before[1] + 1], (before, after)
+    assert fringe["paints"] == 1 and held == fringe, (fringe, held)
+    page.eval_on_selector("[data-hero]", "el => { el.__weaveHelp.fray.frayAmount = 0.5; }")
+    page.wait_for_timeout(200)
+    half = help_hook(page, ".fringe")
+    assert half["threshold"] != fringe["threshold"] and 0 < half["threshold"] <= 1, (fringe, half)
+    assert (half["paints"], half["textureVersion"], half["materialVersion"]) == (
+        fringe["paints"], fringe["textureVersion"], fringe["materialVersion"])
+    assert errors == []
+
+
+def test_help_click_does_nothing_and_has_no_mend_button(make_page, base_url):
+    """Until #19: no Mend it button, and a click on the hero changes nothing."""
+    page, errors = open_help_live(make_page, base_url)
+    assert page.get_by_role("button", name="Mend it").count() == 0
+    box = page.locator("[data-hero]").bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(300)
+    assert help_hook(page, ".fray.state") == "frayed" and help_hook(page, ".fray.frayAmount") == 1
+    assert hero_result(page) == ["live", "ok"]
+    assert errors == []
+
+
+def test_help_never_requests_panels_js_on_the_live_path(make_page, base_url):
+    """AC 12's live leg."""
+    requested = []
+    page, _ = open_help_live(make_page, base_url, before_goto=logged(requested))
+    assert any("three.module" in url for url in requested), requested  # the live path really loaded
+    assert not [url for url in requested if url.endswith("/panels.js")], requested
