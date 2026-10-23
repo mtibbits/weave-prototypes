@@ -272,7 +272,6 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
     renderer.render(scene, camera);
   }
 
-
   function writeFrayState() {
     if (stage.dataset.frayState !== fray.state) stage.dataset.frayState = fray.state;
   }

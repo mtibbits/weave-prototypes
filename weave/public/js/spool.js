@@ -1,8 +1,9 @@
 // The Help corner's spool of thread (#18), coded until E4's #22 swaps in a modelled one with the same frame and size.
 // It is live-path only: it imports Three, so never import it statically from the boot. Importing it builds nothing.
-// Units are E1's scene units, where a block is 1.0 (about 30 cm). The frame: the origin is the spool's centre and +Y its axis.
-// The size: SPOOL_HEIGHT (0.17, about 5 cm) from flange to flange along the axis, and SPOOL_FLANGE_RADIUS (0.05) for both
-// flanges, so the bounding box is 2 × SPOOL_FLANGE_RADIUS across x and z, centred on the origin.
+// Units are E1's scene units, where a block is 1.0 (about 30 cm).
+// The frame: the origin is the spool's centre and +Y its axis.
+// The size: SPOOL_HEIGHT (0.17, about 5 cm) from flange to flange along the axis, and SPOOL_FLANGE_RADIUS (0.05) for
+// both flanges, so the bounding box is 2 × SPOOL_FLANGE_RADIUS across x and z, centred on the origin.
 // The children: `spool`, the lathe body (two flanges on a core), and `thread`, the wound thread between the flanges,
 // tinted by createSpool({ threadColor }), default #C9A227, the needle tail's default (#13), so help.js passes one
 // colour to both. E4's modelled Spool and SpoolThread nodes map onto `spool` and `thread`.
@@ -32,7 +33,8 @@ function makeBody() {
 function makeThread(threadColor) {
   const height = SPOOL_HEIGHT - 2 * FLANGE - 0.004;
   const material = new THREE.MeshStandardMaterial({ color: threadColor, roughness: 0.85 });
-  const thread = new THREE.Mesh(new THREE.CylinderGeometry(WOUND_RADIUS, WOUND_RADIUS, height, SPOOL_SEGMENTS), material);
+  const geometry = new THREE.CylinderGeometry(WOUND_RADIUS, WOUND_RADIUS, height, SPOOL_SEGMENTS);
+  const thread = new THREE.Mesh(geometry, material);
   thread.name = 'thread';
   return thread;
 }

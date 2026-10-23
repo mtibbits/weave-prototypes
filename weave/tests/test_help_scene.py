@@ -6,10 +6,9 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
-from helpers import (CLOCK_ADVANCE, HELP, HELP_LOAD_FAILED, RESIZE_AND_READ, SET_HIDDEN, STRANDS_JSON, WEBGL_FAILED,
-                     collect_warnings, frames, help_hook, sweep, hero_result, hidden_by_attribute, ink_fraction, open_help,
-                     open_help_live, rising, wait_for_reason)
-from test_hero import NO_STAGE_WEBGL, SASHING_THROWS
+from helpers import (CLOCK_ADVANCE, HELP, HELP_LOAD_FAILED, NO_STAGE_WEBGL, RESIZE_AND_READ, SASHING_THROWS, SET_HIDDEN,
+                     STRANDS_JSON, WEBGL_FAILED, collect_warnings, frames, help_hook, hero_result, hidden_by_attribute,
+                     ink_fraction, open_help, open_help_live, rising, sweep, wait_for_reason)
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 

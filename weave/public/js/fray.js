@@ -19,8 +19,7 @@
 // counts as 1. setStir(p) takes [x, y, z] or null and stores a copy; anything but three finite numbers clears it.
 // ?pose=rest (createFray's `rest`): no breeze and no stir, and no integration step runs, so the points hold the
 // seeded rest pose exactly while the clock still advances.
-// The page hook stage.__weaveHelp = { fray, stop(reason), project(p), edge, needle, spool }: fray is this simulation,
-// edge the fray-edge curve in world space, and needle and spool the props as drawn. help.js has its full shape.
+// help.js exposes this simulation as stage.__weaveHelp.fray; help.js's header has the hook's full shape.
 import { mulberry32 } from './random.js';
 
 export const STRANDS = 10;

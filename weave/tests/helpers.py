@@ -343,6 +343,28 @@ def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, before_goto=None,
     return page, errors
 
 
+# --- Runtime fault scripts for the live heroes (#7; Help's too, #18). ---
+
+# Makes the sashing's canvas (#6's sashingSize(LAYOUT), 1204 x 912) refuse a context, so buildQuilt throws after
+# createRenderer has succeeded.
+SASHING_THROWS = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (...args) {
+      if (this.width === 1204 && this.height === 912) throw new Error('planted: paintSashing fails');
+      return original.apply(this, args);
+    };
+"""
+
+# U4: a WebGL context is refused only to the stage's (aria-hidden) canvas, so readEnvironment's probe still passes.
+NO_STAGE_WEBGL = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      if (/webgl/.test(type) && this.getAttribute('aria-hidden') === 'true') return null;
+      return original.call(this, type, ...args);
+    };
+"""
+
+
 # --- The Help page's live corner (#18). ---
 
 HELP_LOAD_FAILED = "WEAVE: the frayed corner could not load, so the still image stays."
