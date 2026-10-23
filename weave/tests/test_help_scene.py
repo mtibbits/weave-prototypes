@@ -7,7 +7,7 @@ import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from helpers import (CLOCK_ADVANCE, HELP, HELP_LOAD_FAILED, RESIZE_AND_READ, SET_HIDDEN, STRANDS_JSON, WEBGL_FAILED,
-                     collect_warnings, frames, help_hook, hero_result, hidden_by_attribute, ink_fraction, open_help,
+                     collect_warnings, frames, help_hook, sweep, hero_result, hidden_by_attribute, ink_fraction, open_help,
                      open_help_live, rising, wait_for_reason)
 from test_hero import NO_STAGE_WEBGL, SASHING_THROWS
 
@@ -460,24 +460,16 @@ def test_pointer_stirs_the_nearest_strand(make_page, base_url):
     assert errors == []
 
 
-def sweep(page, points=10):
-    box = page.locator("[data-hero]").bounding_box()
-    for i in range(points):
-        t = (i + 0.5) / points
-        page.mouse.move(box["x"] + box["width"] * t, box["y"] + box["height"] * (0.4 + 0.5 * t))
-        page.wait_for_timeout(30)
-
-
 @pytest.mark.parametrize("rest", [True, False], ids=["rest", "control"])
 def test_help_pose_rest_is_still_but_not_paused(make_page, base_url, rest):
     """AC 9, a port of test_pose.py's: the rest pose holds the threads still while the loop runs; without it (the
     control) the same sweeps move them."""
     page, errors = open_help_live(make_page, base_url, query="?pose=rest&nowatchdog" if rest else "?nowatchdog")
-    sweep(page)
+    sweep(page, y0=0.4, y1=0.9)
     stirs = [help_hook(page, ".fray.stir")]
     pose = strands(page)
     before = frames(page)
-    sweep(page)
+    sweep(page, y0=0.4, y1=0.9)
     stirs.append(help_hook(page, ".fray.stir"))
     page.wait_for_timeout(1000)
     assert frames(page) > before

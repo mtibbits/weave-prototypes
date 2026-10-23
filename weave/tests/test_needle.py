@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import hero_result, open_release
+from helpers import header_lines, header_prose, hero_result, open_release
 
 EPS = 1e-6                        # positions and unit lengths; float32 geometry readback (pothole Issue-10)
 ANTI = -0.999                     # +X . tangent must be at most this
@@ -446,20 +446,9 @@ HEADER_TOKENS = ("scene units", "tip", "+X", "0.18", "body", "tail", "#C9A227", 
                  "clamp", "[0, 1]", "getTangentAt", "local Z", "clockwise", "metalness", "dispose")
 
 
-def header_lines(text):
-    """needle.js's header: the run of column-0 // lines at the top of the file, before the first import."""
-    lines = []
-    for line in text.splitlines():
-        if not line.startswith("//"):
-            break
-        lines.append(line)
-    return lines
-
-
 def header_claims(text):
-    """Whether the header states the contract #16, E3 and E4 build on. Lines are joined and whitespace collapsed,
-    as test_docs.py's frame_comment readers do, so a token split by a line wrap still matches."""
-    prose = " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+    """Whether the header states the contract #16, E3 and E4 build on."""
+    prose = header_prose(text)
     return (all(token in prose for token in HEADER_TOKENS) and ("−Y" in prose or "-Y" in prose)
             and re.search(r"live[- ]path", prose) is not None)
 

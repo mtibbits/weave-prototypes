@@ -1,5 +1,6 @@
 """Shared test helpers. pytest puts tests/ on sys.path, so test modules import this directly."""
 import json
+import re
 import struct
 import zlib
 
@@ -644,7 +645,8 @@ SET_HIDDEN = r"""(hidden) => {
 
 
 # Resizes the stage from a rAF callback, then reads the stage canvas's drawing buffer from a ResizeObserver created
-# after main.js's, so it runs after main.js's resize in the same rendering update and before that update paints.
+# after the page's own (main.js's or help.js's), so it runs after the page's resize in the same rendering update and
+# before that update paints.
 RESIZE_AND_READ = r"""el => new Promise((resolve) => {
     const canvas = el.querySelector('canvas');
     const width = canvas.width;
@@ -665,6 +667,34 @@ RESIZE_AND_READ = r"""el => new Promise((resolve) => {
     probe.observe(el);
     requestAnimationFrame(() => { armed = true; el.style.width = `${Math.round(el.clientWidth * 0.8)}px`; });
 })"""
+
+
+# --- Module headers (#13, #18): the column-0 // run at the top of a JS file, read as one line of prose. ---
+
+
+def header_lines(text):
+    """A JS module's header: the run of column-0 // lines at the top of the file, before the first import."""
+    lines = []
+    for line in text.splitlines():
+        if not line.startswith("//"):
+            break
+        lines.append(line)
+    return lines
+
+
+def header_prose(text):
+    """The header's lines joined and whitespace collapsed, as test_docs.py's frame_comment readers do, so a token
+    split by a line wrap still matches."""
+    return " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+
+
+def sweep(page, points=10, y0=0.2, y1=0.8):
+    """Move the mouse across the stage in `points` steps, 30 ms apart, from (0, y0) to (1, y1) of its box."""
+    box = page.locator("[data-hero]").bounding_box()
+    for i in range(points):
+        t = (i + 0.5) / points
+        page.mouse.move(box["x"] + box["width"] * t, box["y"] + box["height"] * (y0 + (y1 - y0) * t))
+        page.wait_for_timeout(30)
 
 
 # --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---

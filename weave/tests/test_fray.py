@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from helpers import header_lines, header_prose
+
 FRAY = Path(__file__).resolve().parents[1] / "public" / "js" / "fray.js"
 
 # Ten pins 0.16 apart along a flat edge, as help.js spaces them, and a sim factory. sum(a, b) is the summed point
@@ -206,17 +208,8 @@ HEADER_PHRASES = ("10 strands", "16 points", "1/120", "mulberry32", "advance(dt)
                   "frayAmount", "hanging", "stir", "?pose=rest", "stage.__weaveHelp", "no Three")
 
 
-def header_lines(text):
-    lines = []
-    for line in text.splitlines():
-        if not line.startswith("//"):
-            break
-        lines.append(line)
-    return lines
-
-
 def header_claims(text):
-    prose = " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+    prose = header_prose(text)
     return all(phrase in prose for phrase in HEADER_PHRASES)
 
 

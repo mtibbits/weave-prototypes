@@ -1,19 +1,11 @@
 """?pose=rest and ?frame=still (the capture recipe), the page's snapshot(), and the corners that must stay in view."""
 import pytest
 
-from helpers import HOME, frames, hero_result, open_live, wait_for_quilt, wait_for_reason
+from helpers import HOME, frames, hero_result, open_live, sweep, wait_for_quilt, wait_for_reason
 
 # Stores the stage's snapshot as JSON in window.__snap; SAME_AS_STORED compares a fresh one with it.
 STORE = "el => { window.__snap = JSON.stringify(el.__weave.snapshot()); }"
 SAME_AS_STORED = "el => JSON.stringify(el.__weave.snapshot()) === window.__snap"
-
-
-def sweep(page, points=10):
-    box = page.locator("[data-hero]").bounding_box()
-    for i in range(points):
-        t = (i + 0.5) / points
-        page.mouse.move(box["x"] + box["width"] * t, box["y"] + box["height"] * (0.2 + 0.6 * t))
-        page.wait_for_timeout(30)
 
 
 @pytest.mark.parametrize("rest", [True, False])

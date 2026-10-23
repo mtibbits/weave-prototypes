@@ -3,9 +3,9 @@
 // The model: 10 strands, each a chain of 16 points. Point 0 is pinned to its pin on the fray edge and never moves.
 // The rest are Verlet points joined by distance constraints, moved by gravity (−y), damping, a weak pull back toward
 // the seeded rest pose (a thread's curl), a gentle seeded breeze in x and a soft push away from the stir point within
-// STIR_RADIUS (0.4 scene units; a block is 1.0). Every point
-// keeps its pin's z, so the strands move in their plane and a pointer cast onto that plane is exact. Points are in
-// the Help scene's world space, in scene units, as [x, y, z] arrays that are mutated in place, never reallocated.
+// STIR_RADIUS (0.4 scene units; a block is 1.0). Every point keeps its pin's z, so the strands move in their plane
+// and a pointer cast onto that plane is exact. Points are in the Help scene's world space, in scene units, as
+// [x, y, z] arrays that are mutated in place, never reallocated.
 // The clock: advance(dt) takes seconds, clamped to MAX_DT, and steps the physics in fixed steps of 1/120 s; `clock`
 // is the sim time in seconds. help.js passes the dt between requestAnimationFrame timestamps, never a Date
 // difference: #12's test clock pins Date, so a sim timed by Date would freeze in every test. A dt that is not a
@@ -43,13 +43,12 @@ const isUint32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
 export function createFray({ pins, length, seed, rest = false }) {
   if (!isUint32(seed)) throw new TypeError('createFray: seed must be a uint32');
   const rng = mulberry32(seed);
-  const anchors = pins.map((p) => [p[0], p[1], p[2]]);
   const restSegment = length / SEGMENTS;
-  // Per strand: the rest pose's lean and curl, then the breeze's two phases.
-  const strands = anchors.map((pin) => {
+  // Per strand: the rest pose's lean and curl, then the breeze's two phases. Point 0 is a copy of its pin.
+  const strands = pins.map((pin) => {
     const lean = (rng() - 0.5) * 0.25;
     const curl = (rng() - 0.5) * 0.9;
-    const points = [[...pin]];
+    const points = [[pin[0], pin[1], pin[2]]];
     for (let j = 1; j < POINTS; j += 1) {
       const a = lean + curl * (j / SEGMENTS);
       const [x, y] = points[j - 1];
@@ -64,12 +63,13 @@ export function createFray({ pins, length, seed, rest = false }) {
   let pending = 0;
   let stir = null;
 
+  // One fixed step of the physics; never called at ?pose=rest.
   function integrate() {
     const h2 = STEP * STEP;
-    strands.forEach((strand, k) => {
+    for (let k = 0; k < strands.length; k += 1) {
+      const strand = strands[k];
       const { points } = strand;
-      const [a, b] = phases[k];
-      const wind = rest ? 0 : BREEZE * (Math.sin(1.7 * clock + a) + 0.5 * Math.sin(4.3 * clock + b));
+      const wind = BREEZE * (Math.sin(1.7 * clock + phases[k][0]) + 0.5 * Math.sin(4.3 * clock + phases[k][1]));
       for (let j = 1; j < POINTS; j += 1) {
         const p = points[j];
         const q = previous[k][j];
@@ -79,7 +79,7 @@ export function createFray({ pins, length, seed, rest = false }) {
         if (stir) {
           const dx = p[0] - stir[0];
           const dy = p[1] - stir[1];
-          const d = Math.hypot(dx, dy);
+          const d = Math.sqrt(dx * dx + dy * dy);
           if (d < STIR_RADIUS) {
             const f = STIR_PUSH * (1 - d / STIR_RADIUS) ** 2;
             ax += d > 1e-9 ? (f * dx) / d : f;
@@ -102,7 +102,7 @@ export function createFray({ pins, length, seed, rest = false }) {
           const v = points[j];
           const dx = v[0] - u[0];
           const dy = v[1] - u[1];
-          const d = Math.hypot(dx, dy);
+          const d = Math.sqrt(dx * dx + dy * dy);
           if (d === 0) continue;
           const diff = (d - segment) / d;
           if (j === 1) {
@@ -116,7 +116,7 @@ export function createFray({ pins, length, seed, rest = false }) {
           }
         }
       }
-    });
+    }
   }
 
   return {

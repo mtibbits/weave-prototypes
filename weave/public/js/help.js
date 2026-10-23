@@ -17,14 +17,14 @@ import { decideMode, FrameWatchdog, readEnvironment } from './eligibility.js';
 const LOAD_FAILED = 'WEAVE: the frayed corner could not load, so the still image stays.';
 const WEBGL_FAILED = 'WEAVE: WebGL setup failed, so the still image stays.';
 
-// The corner's two blocks: [fabric preset, seed id] for slots 10 and 11 (row 2), fixed here, never from panels.js.
-const CORNER_FABRICS = [['indigo-dots', 'help-corner-a'], ['mustard-calico', 'help-corner-b']];
-const CORNER_SLOTS = [10, 11];
+// The corner's two blocks, slots 10 and 11 (row 2): a fabric preset and a seed id each, fixed here, never from
+// panels.js. A block's loose threads take its preset's ground colour (colors[0]).
+const CORNER = Object.freeze([{ slot: 10, preset: 'indigo-dots', seed: 'help-corner-a' },
+  { slot: 11, preset: 'mustard-calico', seed: 'help-corner-b' }]);
+// The threads under the sashing: a darker muslin, which reads on the linen page.
+const SASHING_THREAD = '#B5A27C';
 // The needle's tail and the spool's thread, one colour (the needle tail's default, #13).
 const THREAD_COLOR = '#C9A227';
-// The threads come from the cloth above them: each block's ground colour (the presets' colors[0]), and a darker
-// muslin under the sashing, which reads on the linen page.
-const THREAD_COLORS = { 10: '#2E3F73', 11: '#D9A441', sashing: '#B5A27C' };
 const SEED = 'help-fray';
 // The fray: the bottom binding stops short of it, so along [EDGE_X0, EDGE_X1] the raw edge shows, at y = -H/2.
 const EDGE_X0 = 0.35;
@@ -162,19 +162,19 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
       quad(EDGE_X1, W / 2, -H / 2, bindingTop, 0)]) scene.add(new THREE.Mesh(g, sashMaterial));
 
     // The two blocks, lifted off the sashing so they never z-fight it.
-    CORNER_SLOTS.forEach((slot, k) => {
+    for (const { slot, preset, seed } of CORNER) {
       const c = F.makeCanvas(512);
-      F.paintFabric(c, ...CORNER_FABRICS[k]);
+      F.paintFabric(c, preset, seed);
       const block = new THREE.Mesh(new THREE.PlaneGeometry(L.LAYOUT.block, L.LAYOUT.block),
         S.fabricMaterial({ map: texture(c) }));
       block.position.set(...L.slotCentre(slot), BLOCK_LIFT);
       scene.add(block);
-    });
+    }
 
     // The thread colour under a quilt-space x: the block's cloth, or the sashing's.
     const colorAt = (x) => {
-      const slot = CORNER_SLOTS.find((s) => Math.abs(x - L.slotCentre(s)[0]) <= L.LAYOUT.block / 2);
-      return slot === undefined ? THREAD_COLORS.sashing : THREAD_COLORS[slot];
+      const block = CORNER.find(({ slot }) => Math.abs(x - L.slotCentre(slot)[0]) <= L.LAYOUT.block / 2);
+      return block ? F.fabricFor(block.preset).colors[0] : SASHING_THREAD;
     };
     // The fringe, in the binding's band along the fray, painted once.
     const fringeCanvas = F.makeCanvas(1024, 96);
@@ -192,21 +192,18 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
       new THREE.Vector3(EDGE_X1 - 0.05, -H / 2, STRAND_Z));
     const pins = Array.from({ length: Y.STRANDS }, (_, k) => edge.getPointAt((k + 0.5) / Y.STRANDS).toArray());
     fray = Y.createFray({ pins, length: STRAND_LENGTH, seed: R.seedFor(SEED, 'fray'), rest: hooks.rest });
-    const strandMaterials = new Map();
-    const strandMaterial = (color) => {
-      if (!strandMaterials.has(color)) {
-        strandMaterials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide }));
-      }
-      return strandMaterials.get(color);
-    };
+    // One material per thread colour, shared by the strands of that colour.
+    const strandMaterials = new Map([...new Set(pins.map(([x]) => colorAt(x)))].map((color) => [color,
+      new THREE.MeshStandardMaterial({ color, roughness: 0.9, side: THREE.DoubleSide })]));
     const index = [];
     for (let j = 0; j + 1 < Y.POINTS; j += 1) index.push(2 * j, 2 * j + 1, 2 * j + 2, 2 * j + 1, 2 * j + 3, 2 * j + 2);
     for (let k = 0; k < Y.STRANDS; k += 1) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(Y.POINTS * 6), 3));
-      g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(Y.POINTS * 6).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+      const normals = new Float32Array(Y.POINTS * 6).map((_, i) => (i % 3 === 2 ? 1 : 0));
+      g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       g.setIndex(index);
-      const mesh = new THREE.Mesh(g, strandMaterial(colorAt(pins[k][0])));
+      const mesh = new THREE.Mesh(g, strandMaterials.get(colorAt(pins[k][0])));
       mesh.frustumCulled = false;
       strandMeshes.push(mesh);
       scene.add(mesh);
@@ -242,12 +239,18 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
         const o = points[Math.max(j - 1, 0)];
         let tx = q[0] - o[0];
         let ty = q[1] - o[1];
-        const len = Math.hypot(tx, ty) || 1;
+        const len = Math.sqrt(tx * tx + ty * ty) || 1;
         tx /= len;
         ty /= len;
         const nx = (-ty * STRAND_WIDTH) / 2;
         const ny = (tx * STRAND_WIDTH) / 2;
-        a.set([p[0] - nx, p[1] - ny, p[2], p[0] + nx, p[1] + ny, p[2]], 6 * j);
+        const i = 6 * j;
+        a[i] = p[0] - nx;
+        a[i + 1] = p[1] - ny;
+        a[i + 2] = p[2];
+        a[i + 3] = p[0] + nx;
+        a[i + 4] = p[1] + ny;
+        a[i + 5] = p[2];
       }
       attr.needsUpdate = true;
     });

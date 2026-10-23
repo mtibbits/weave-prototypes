@@ -1,9 +1,10 @@
 """spool.js: the Help corner's coded spool (#18): its children, frame and size, its thread colour and its header, which
 E4's #22 builds on."""
-import re
 from pathlib import Path
 
 import pytest
+
+from helpers import header_lines, header_prose
 
 SPOOL = Path(__file__).resolve().parents[1] / "public" / "js" / "spool.js"
 
@@ -80,17 +81,8 @@ HEADER_PHRASES = ("origin", "+Y", "`spool`", "`thread`", "Spool", "SpoolThread",
                   "#C9A227", "scene units", "live-path")
 
 
-def header_lines(text):
-    lines = []
-    for line in text.splitlines():
-        if not line.startswith("//"):
-            break
-        lines.append(line)
-    return lines
-
-
 def header_claims(text):
-    prose = " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+    prose = header_prose(text)
     return all(phrase in prose for phrase in HEADER_PHRASES)
 
 
