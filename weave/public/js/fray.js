@@ -15,8 +15,8 @@
 // Fields: strands[i].points (16 [x, y, z], the pinned top first) and strands[i].hanging, the strand's current rest
 // length over its starting rest length (a setting #19 shortens, not a measured length); frayAmount, from 0 (mended)
 // to 1 (fully frayed); state; clock; and stir, an [x, y, z] copy in world space, or null. In #18 the state is always
-// 'frayed', frayAmount is 1 and every hanging is 1; #19 adds the other states. setStir(p) takes [x, y, z] or null and
-// stores a copy.
+// 'frayed', frayAmount is 1 and every hanging is 1; #19 adds the other states. A hanging that is not a finite number
+// counts as 1. setStir(p) takes [x, y, z] or null and stores a copy; anything but three finite numbers clears it.
 // ?pose=rest (createFray's `rest`): no breeze and no stir, and no integration step runs, so the points hold the
 // seeded rest pose exactly while the clock still advances.
 // The page hook stage.__weaveHelp = { fray, stop(reason), project(p), edge, needle, spool }: fray is this simulation,
@@ -93,7 +93,9 @@ export function createFray({ pins, length, seed, rest = false }) {
         p[0] += vx + ax * h2;
         p[1] += vy + ay * h2;
       }
-      const segment = restSegment * strand.hanging;
+      // hanging is #19's to write: anything but a finite number keeps the full length, never a NaN chain.
+      const hanging = Number(strand.hanging);
+      const segment = restSegment * (Number.isFinite(hanging) ? Math.max(0, hanging) : 1);
       for (let n = 0; n < ITERATIONS; n += 1) {
         for (let j = 1; j < POINTS; j += 1) {
           const u = points[j - 1];
@@ -124,7 +126,8 @@ export function createFray({ pins, length, seed, rest = false }) {
     get clock() { return clock; },
     get stir() { return stir && [...stir]; },
     setStir(p) {
-      stir = rest || p === null || p === undefined ? null : [Number(p[0]), Number(p[1]), Number(p[2])];
+      const point = Array.isArray(p) && p.length === 3 ? p.map(Number) : null;
+      stir = rest || !point || !point.every(Number.isFinite) ? null : point;
     },
     advance(dt) {
       if (typeof dt !== 'number' || !(dt > 0)) return;

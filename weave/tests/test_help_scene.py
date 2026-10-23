@@ -271,6 +271,18 @@ def test_help_fringe_is_painted_once_and_frames_allocate_no_geometry(make_page, 
     assert errors == []
 
 
+def test_help_fringe_keeps_its_threshold_for_a_bad_fray_amount(make_page, base_url):
+    """frayAmount is #19's to write: NaN must not reach alphaTest, where crossing 0 recompiles the fringe without its
+    alpha cut and draws a dark band."""
+    page, errors = open_help_live(make_page, base_url)
+    fringe = help_hook(page, ".fringe")
+    page.eval_on_selector("[data-hero]", "el => { el.__weaveHelp.fray.frayAmount = NaN; }")
+    page.wait_for_timeout(200)
+    bad = help_hook(page, ".fringe")
+    assert bad["threshold"] == fringe["threshold"] and bad["materialVersion"] == fringe["materialVersion"], (fringe, bad)
+    assert errors == []
+
+
 def test_help_click_does_nothing_and_has_no_mend_button(make_page, base_url):
     """Until #19: no Mend it button, and a click on the hero changes nothing."""
     page, errors = open_help_live(make_page, base_url)

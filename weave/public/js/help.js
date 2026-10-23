@@ -101,8 +101,12 @@ function paintFringe(canvas, rng, colorAt) {
 }
 
 // The fringe's alphaTest for a frayAmount: 0.05 shows the full fringe (1), 1 shows only the band (0). It stays in
-// (0, 1], so a change never crosses 0 and recompiles the shader; it is one uniform.
-const fringeThreshold = (frayAmount) => 1 - 0.95 * Math.min(1, Math.max(0, frayAmount));
+// (0, 1], so a change never crosses 0 and recompiles the shader; it is one uniform. frayAmount is #19's to write, so
+// a value that is not a finite number counts as fully frayed.
+const fringeThreshold = (frayAmount) => {
+  const f = Number.isFinite(frayAmount) ? Math.min(1, Math.max(0, frayAmount)) : 1;
+  return 1 - 0.95 * f;
+};
 
 function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L, random: R, fray: Y }) {
   const canvas = document.createElement('canvas');

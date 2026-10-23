@@ -230,3 +230,22 @@ def test_fray_js_header_states_the_model():
     claim = [i for i, line in enumerate(header_lines(text)) if "16 points" in line]
     assert len(claim) == 1, claim
     assert header_claims("\n".join(lines[:claim[0]] + lines[claim[0] + 1:])) is False
+
+
+@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "'1'", "undefined"])
+def test_a_bad_hanging_never_breaks_a_strand(js, bad):
+    """hanging is #19's to write: a value that is not a finite number must not poison the strand's points for good."""
+    r = run(js, f"""
+        const f = make();
+        f.strands[3].hanging = {bad}; run(f, 1);
+        f.strands[3].hanging = 1; run(f, 1);
+        return f.strands.flatMap((s) => s.points.flat()).every(Number.isFinite);
+    """)
+    assert r is True
+
+
+@pytest.mark.parametrize("bad", ["5", "'abc'", "{}", "[1, 2]", "[NaN, 0, 0]", "[0, Infinity, 0]"])
+def test_set_stir_ignores_a_malformed_point(js, bad):
+    """A point that is not three finite numbers clears the stir, so fray.stir never reads non-null and meaningless."""
+    r = run(js, f"const f = make(); f.setStir([0.5, -0.2, 0.014]); f.setStir({bad}); return f.stir;")
+    assert r is None
