@@ -2,9 +2,9 @@
 import pytest
 
 from conftest import FIXED_DATE
-from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, PAUSE_NAME, QUILT_HINT, SEW_NAME, STILL_HINT, TILES_HINT,
-                     UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result, hidden_by_attribute,
-                     ink_fraction, live_quilt, open_live, rising, wait_for_reason, weave)
+from helpers import (DEFAULT_IDS, HOME, LOAD_FAILED, NO_STAGE_WEBGL, PAUSE_NAME, QUILT_HINT, SASHING_THROWS, SEW_NAME,
+                     STILL_HINT, TILES_HINT, UNSTITCH_NAME, WEBGL_FAILED, collect_errors, frames, hero_result,
+                     hidden_by_attribute, ink_fraction, live_quilt, open_live, rising, wait_for_reason, weave)
 
 
 def assert_still_page(page):
@@ -154,26 +154,6 @@ def test_default_watchdog_stays_live(make_page, base_url):
     assert hero_result(page) == ["live", "ok"]
     assert frames(page) > before
     assert errors == []
-
-
-# Makes the sashing's canvas (#6's sashingSize(LAYOUT), 1204 x 912) refuse a context, so buildQuilt throws after
-# createRenderer has succeeded.
-SASHING_THROWS = r"""
-    const original = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (...args) {
-      if (this.width === 1204 && this.height === 912) throw new Error('planted: paintSashing fails');
-      return original.apply(this, args);
-    };
-"""
-
-# U4: a WebGL context is refused only to the stage's (aria-hidden) canvas, so readEnvironment's probe still passes.
-NO_STAGE_WEBGL = r"""
-    const original = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
-      if (/webgl/.test(type) && this.getAttribute('aria-hidden') === 'true') return null;
-      return original.call(this, type, ...args);
-    };
-"""
 
 
 def open_desktop(make_page, base_url, query="?nowatchdog", init_script=None, route=None):

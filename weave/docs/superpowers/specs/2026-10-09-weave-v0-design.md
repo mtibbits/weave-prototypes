@@ -32,8 +32,8 @@ Clicking the quilt unstitches it into a dashboard of tiles you can rearrange. Th
 
 **Non-goals for v0**
 - Photoreal rendering. A Blender realism pass (cloth drape, a poster render) comes later.
-- The frayed-corner Help page's scene. #17 ships the Help page's shell, with a placeholder still; its frayed-corner
-  scene comes in #18 and #19.
+- The frayed-corner Help page's mend and its captured still. #17 ships the Help page's shell, with a placeholder
+  still; #18 makes its frayed corner live, and #19 adds the mend and captures the still.
 - Real data. Every number shown is sample data.
 
 ## 3. Repo and hosting
@@ -237,10 +237,24 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   toggles synchronously starts the next transition inside the dispatch, so listeners after it read that newer
   state (verify.py's window does this on `tiles`); after a teardown nothing is written and no `weave:mode` fires.
 - The Help page, `/weave/help/` (`weave/public/help/index.html`, #17). Its `[data-hero]` stage (`role="img"`) holds
-  only the still and is #18's mount point; controls go beside the stage, inside `.hero-figure`, never inside it.
+  the still and, on the live path (#18, `js/help.js`), the frayed corner's `aria-hidden` canvas above it; controls go
+  beside the stage, inside `.hero-figure`, never inside it.
   Its card links and team name come from `window.WEAVE_SITE = { teamName, links: { serviceDesk, tutorial, docs } }`,
   set by `site-config.js`; `js/config.js` exports `safeUrl`, `resolveConfig`, `applyConfig`, `boot`, `MISSING_LABEL`
   and `DEFAULT_TEAM`.
+- On the Help page, `stage.__weaveHelp` on the `[data-hero]` element (#18) is set when the corner goes live and
+  outlives a teardown: `fray`, the live `fray.js` simulation, with `strands[i].points` (16 `[x, y, z]` world points,
+  the pinned top first), `strands[i].hanging` (the rest-length ratio, not a measured length), `frayAmount` (1 is
+  fully frayed), `state`, `clock` (sim seconds) and `stir` (the pointer's point on the strand plane, or null);
+  `stop(reason)`; `edge`, the fray-edge curve in world space (`getPointAt(u)` for u from 0 to 1); and `needle` and
+  `spool`, the props as drawn (#22 points them at its modelled props); `project([x, y, z])` and `fringe` are
+  test-only.
+- `data-fray-state` on the Help stage mirrors `fray.state` (`frayed` in #18); it is set on the live path only and
+  removed by a fallback, as `data-mode` is on the home page.
+- On the Help page, `?pose=rest` holds the threads at their seeded rest pose, with no breeze and no pointer stir, for
+  #19's repeatable capture; the loop, `data-hero-frames` and the watchdog keep running, so a slow machine still
+  falls back. `?nowatchdog` and `?watchdogLimitMs=N` work as on the home page, and the first live frame sets the same
+  `weave:first-live-frame` mark.
 
 ## 10. Testing
 
@@ -264,7 +278,7 @@ pytest + Playwright, with Chromium on the GPU, as in Coalesce:
 
 ## 11. Later (not v0)
 
-- The Help page's frayed-corner scene (#18, #19); #17 ships its shell.
+- The Help page's mend and its captured still (#19); #17 ships its shell, and #18 makes its frayed corner live.
 - A Blender cloth-drape map and a photoreal poster.
 - The acronym on the quilt label.
 - The real launch set.

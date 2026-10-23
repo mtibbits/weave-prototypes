@@ -1,5 +1,6 @@
 """Shared test helpers. pytest puts tests/ on sys.path, so test modules import this directly."""
 import json
+import re
 import struct
 import zlib
 
@@ -310,12 +311,13 @@ def site_body(cfg):
     return f"window.WEAVE_SITE = {json.dumps(cfg)};"
 
 
-def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, **context_args):
+def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, before_goto=None, **context_args):
     """Open the Help page with site-config.js routed to `site`; returns (page, errors).
 
     `site` is a dict (served as settings), a str (the raw body), NOT_FOUND (a 404) or None (no route, so the
     committed file loads). Whenever it routes, it asserts the route ran exactly once: a route that never matched
-    would let the empty-settings tests pass against the committed empty file.
+    would let the empty-settings tests pass against the committed empty file. `before_goto(page)` runs after that
+    route and before navigation (request logs, routes and init scripts), as open_live's does.
     """
     context_args.setdefault("reduced_motion", "reduce")
     page = make_page(**context_args)
@@ -332,11 +334,58 @@ def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, **context_args):
             route.fulfill(**reply)
 
         page.route("**/site-config.js", handle)
+    if before_goto is not None:
+        before_goto(page)
     page.goto(base_url + path)
     page.wait_for_load_state("networkidle")
     if site is not None:
         assert len(fired) == 1, f"the site-config.js route ran {len(fired)} times: {fired}"
     return page, errors
+
+
+# --- Runtime fault scripts for the live heroes (#7; Help's too, #18). ---
+
+# Makes the sashing's canvas (#6's sashingSize(LAYOUT), 1204 x 912) refuse a context, so buildQuilt throws after
+# createRenderer has succeeded.
+SASHING_THROWS = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (...args) {
+      if (this.width === 1204 && this.height === 912) throw new Error('planted: paintSashing fails');
+      return original.apply(this, args);
+    };
+"""
+
+# U4: a WebGL context is refused only to the stage's (aria-hidden) canvas, so readEnvironment's probe still passes.
+NO_STAGE_WEBGL = r"""
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      if (/webgl/.test(type) && this.getAttribute('aria-hidden') === 'true') return null;
+      return original.call(this, type, ...args);
+    };
+"""
+
+
+# --- The Help page's live corner (#18). ---
+
+HELP_LOAD_FAILED = "WEAVE: the frayed corner could not load, so the still image stays."
+# Every strand's 16 points, as JSON: equal strings mean an identical pose.
+STRANDS_JSON = "el => JSON.stringify(el.__weaveHelp.fray.strands.map((s) => s.points))"
+
+
+def open_help_live(make_page, base_url, query="?nowatchdog", **kwargs):
+    """open_help on desktop at `query`, then wait until the corner is live; returns (page, errors).
+
+    site-config.js stays routed and asserted (#17's rule). The stage is scrolled into view, so the loop is running
+    on return."""
+    page, errors = open_help(make_page, base_url, path=HELP + query, **{"reduced_motion": "no-preference", **kwargs})
+    assert hero_result(page) == ["live", "ok"], errors
+    page.locator("[data-hero]").scroll_into_view_if_needed()
+    return page, errors
+
+
+def help_hook(page, expr):
+    """Evaluate `el.__weaveHelp<expr>` on the stage, e.g. help_hook(page, '.fray.clock')."""
+    return page.eval_on_selector("[data-hero]", f"el => el.__weaveHelp{expr}")
 
 
 # --- The live hero (#7). ---
@@ -605,6 +654,69 @@ def wait_for_reason(page, reason, timeout=20000):
     returns at live/ok, before any runtime fallback has happened."""
     page.wait_for_function("(reason) => document.querySelector('[data-hero]')?.dataset.heroReason === reason",
                            arg=reason, timeout=timeout)
+
+
+# Forces document.hidden / visibilityState and fires visibilitychange; returns the frame count right after, so a
+# frame already requested that still runs once would show up in the hold.
+SET_HIDDEN = r"""(hidden) => {
+    Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { value: hidden ? 'hidden' : 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    return Number(document.querySelector('[data-hero]').dataset.heroFrames || 0);
+}"""
+
+
+# Resizes the stage from a rAF callback, then reads the stage canvas's drawing buffer from a ResizeObserver created
+# after the page's own (main.js's or help.js's), so it runs after the page's resize in the same rendering update and
+# before that update paints.
+RESIZE_AND_READ = r"""el => new Promise((resolve) => {
+    const canvas = el.querySelector('canvas');
+    const width = canvas.width;
+    let armed = false;
+    const probe = new ResizeObserver(() => {
+      if (!armed) return;
+      probe.disconnect();
+      const copy = document.createElement('canvas');
+      copy.width = canvas.width;
+      copy.height = canvas.height;
+      const ctx = copy.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+      let ink = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i]) ink += 1;
+      resolve({ before: width, after: canvas.width, ink: ink / (data.length / 4) });
+    });
+    probe.observe(el);
+    requestAnimationFrame(() => { armed = true; el.style.width = `${Math.round(el.clientWidth * 0.8)}px`; });
+})"""
+
+
+# --- Module headers (#13, #18): the column-0 // run at the top of a JS file, read as one line of prose. ---
+
+
+def header_lines(text):
+    """A JS module's header: the run of column-0 // lines at the top of the file, before the first import."""
+    lines = []
+    for line in text.splitlines():
+        if not line.startswith("//"):
+            break
+        lines.append(line)
+    return lines
+
+
+def header_prose(text):
+    """The header's lines joined and whitespace collapsed, as test_docs.py's frame_comment readers do, so a token
+    split by a line wrap still matches."""
+    return " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+
+
+def sweep(page, points=10, y0=0.2, y1=0.8):
+    """Move the mouse across the stage in `points` steps, 30 ms apart, from (0, y0) to (1, y1) of its box."""
+    box = page.locator("[data-hero]").bounding_box()
+    for i in range(points):
+        t = (i + 0.5) / points
+        page.mouse.move(box["x"] + box["width"] * t, box["y"] + box["height"] * (y0 + (y1 - y0) * t))
+        page.wait_for_timeout(30)
 
 
 # --- Panel-list fixtures shared by test_catalog.py (pure) and test_robustness.py (page). ---

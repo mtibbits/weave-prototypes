@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import hero_result, open_release
+from helpers import header_lines, header_prose, hero_result, open_release
 
 EPS = 1e-6                        # positions and unit lengths; float32 geometry readback (pothole Issue-10)
 ANTI = -0.999                     # +X . tangent must be at most this
@@ -446,20 +446,9 @@ HEADER_TOKENS = ("scene units", "tip", "+X", "0.18", "body", "tail", "#C9A227", 
                  "clamp", "[0, 1]", "getTangentAt", "local Z", "clockwise", "metalness", "dispose")
 
 
-def header_lines(text):
-    """needle.js's header: the run of column-0 // lines at the top of the file, before the first import."""
-    lines = []
-    for line in text.splitlines():
-        if not line.startswith("//"):
-            break
-        lines.append(line)
-    return lines
-
-
 def header_claims(text):
-    """Whether the header states the contract #16, E3 and E4 build on. Lines are joined and whitespace collapsed,
-    as test_docs.py's frame_comment readers do, so a token split by a line wrap still matches."""
-    prose = " ".join(" ".join(re.sub(r"^// ?", "", line) for line in header_lines(text)).split())
+    """Whether the header states the contract #16, E3 and E4 build on."""
+    prose = header_prose(text)
     return (all(token in prose for token in HEADER_TOKENS) and ("−Y" in prose or "-Y" in prose)
             and re.search(r"live[- ]path", prose) is not None)
 
@@ -492,18 +481,22 @@ def test_imports_needle_catches_every_form():
     assert [f for f in comments if imports_needle(f)] == []
 
 
-def test_only_scene_imports_needle():
+def test_only_scene_and_help_import_needle():
     """#16: scene.js imports the needle, and main.js reaches scene.js only through import(), so the still path never
-    loads it; #18 adds its own live-path import here."""
+    loads it. #18: help.js imports the needle (and the spool) only through import(), on its live path."""
     public = WEAVE / "public"
     subjects = ([p for p in (public / "js").glob("*.js") if p.name != "needle.js"] + list(public.rglob("*.html"))
                 + [public / "panels.js"] + list((WEAVE / "dev").glob("*.html")))
     # 12 modules at #13's base, plus panels.js, index.html and faces.html: a moved glob cannot empty the scan.
     assert len(subjects) >= 15, subjects
-    assert [p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))] == ["scene.js"]
+    assert sorted(p.name for p in subjects if imports_needle(p.read_text(encoding="utf-8"))) == ["help.js", "scene.js"]
     main = re.sub(r"(?m)(^|\s)//[^\n]*", " ", (public / "js" / "main.js").read_text(encoding="utf-8"))
     assert re.findall(r"[\w(]*\s*\(?\s*['\"]\./scene\.js['\"]", main) == ["import('./scene.js'"]
     assert not re.search(r"from\s+['\"]\./scene\.js['\"]|import\s+['\"]\./scene\.js['\"]", main)
+    help_js = re.sub(r"(?m)(^|\s)//[^\n]*", " ", (public / "js" / "help.js").read_text(encoding="utf-8"))
+    for name in ("needle", "spool", "scene"):
+        assert re.findall(rf"[\w(]*\s*\(?\s*['\"]\./{name}\.js['\"]", help_js) == [f"import('./{name}.js'"], name
+        assert not re.search(rf"from\s+['\"]\./{name}\.js['\"]|import\s+['\"]\./{name}\.js['\"]", help_js), name
 
 
 @pytest.mark.parametrize("context, reason", [
