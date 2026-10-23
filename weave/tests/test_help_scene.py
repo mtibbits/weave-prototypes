@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import TimeoutError as PWTimeout
 
-from helpers import (STRANDS_JSON, frames, help_hook, hero_result, hidden_by_attribute, ink_fraction, open_help,
-                     open_help_live, rising)
+from helpers import (CLOCK_ADVANCE, HELP, HELP_LOAD_FAILED, RESIZE_AND_READ, SET_HIDDEN, STRANDS_JSON, WEBGL_FAILED,
+                     collect_warnings, frames, help_hook, hero_result, hidden_by_attribute, ink_fraction, open_help,
+                     open_help_live, rising, wait_for_reason)
+from test_hero import NO_STAGE_WEBGL, SASHING_THROWS
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
 
@@ -287,3 +289,297 @@ def test_help_never_requests_panels_js_on_the_live_path(make_page, base_url):
     page, _ = open_help_live(make_page, base_url, before_goto=logged(requested))
     assert any("three.module" in url for url in requested), requested  # the live path really loaded
     assert not [url for url in requested if url.endswith("/panels.js")], requested
+
+
+# --- The loop: Pause, resizes, a hidden tab, off screen and the one clock. ---
+
+
+def fray_clock(page):
+    return help_hook(page, ".fray.clock")
+
+
+def strands(page):
+    return page.eval_on_selector("[data-hero]", STRANDS_JSON)
+
+
+def stage_ink(page):
+    """The stage's ink, and the same with the canvas hidden (the control)."""
+    stage = page.locator("[data-hero]")
+    live = ink_fraction(stage.screenshot())
+    page.eval_on_selector("[data-hero] canvas", "el => { el.style.visibility = 'hidden'; }")
+    control = ink_fraction(stage.screenshot())
+    page.eval_on_selector("[data-hero] canvas", "el => { el.style.visibility = ''; }")
+    return live, control
+
+
+# Records fray.clock at the first counted frame after this call.
+WATCH_NEXT_CLOCK = r"""el => {
+    window.__nextClock = null;
+    const observer = new MutationObserver(() => { window.__nextClock = el.__weaveHelp.fray.clock; observer.disconnect(); });
+    observer.observe(el, { attributes: true, attributeFilter: ['data-hero-frames'] });
+}"""
+
+
+def test_help_pause_freezes_threads_and_play_resumes_without_a_jump(make_page, base_url):
+    """AC 6, a port of test_live.py's Pause test (coalesce's test_pause_stops_and_resumes_rendering)."""
+    page, errors = open_help_live(make_page, base_url)
+    assert rising(page, 300)
+    pause = page.locator("[data-pause]")
+    pause.click()
+    assert pause.get_attribute("aria-pressed") == "true" and pause.inner_text() == "Play motion"
+    page.wait_for_timeout(200)
+    held = (strands(page), frames(page), fray_clock(page))
+    page.wait_for_timeout(1000)
+    assert (strands(page), frames(page), fray_clock(page)) == held
+    page.eval_on_selector("[data-hero]", WATCH_NEXT_CLOCK)
+    pause.click()
+    assert pause.get_attribute("aria-pressed") == "false" and pause.inner_text() == "Pause motion"
+    page.wait_for_timeout(600)
+    assert frames(page) > held[1]
+    first = page.evaluate("window.__nextClock")
+    assert first is not None and first - held[2] <= 1 / 30, (first, held[2])
+    assert errors == []
+
+
+def test_help_paused_scene_redraws_after_a_resize(make_page, base_url):
+    """AC 6, a port of test_live.py's paused-resize test: the alpha canvas reads as paper if it is not redrawn."""
+    page, _ = open_help_live(make_page, base_url)
+    page.locator("[data-pause]").click()
+    page.wait_for_timeout(200)
+    stage = page.locator("[data-hero]")
+    before = (stage.bounding_box()["width"], page.eval_on_selector("[data-hero] canvas", "c => c.width"))
+    held = frames(page)
+    page.set_viewport_size({"width": 820, "height": 900})
+    page.wait_for_timeout(600)
+    after = (stage.bounding_box()["width"], page.eval_on_selector("[data-hero] canvas", "c => c.width"))
+    assert after[0] != before[0] and after[1] != before[1]  # the stage and its buffer really changed
+    assert frames(page) == held
+    live, control = stage_ink(page)
+    assert live >= 0.05 and live >= 3 * control, (live, control)
+
+
+def test_help_live_resize_redraws_before_the_frame_paints(make_page, base_url):
+    """Issue-7: a resize while the loop runs lands after that frame's render, so it must redraw itself."""
+    page, errors = open_help_live(make_page, base_url)
+    assert rising(page, 300)
+    r = page.eval_on_selector("[data-hero]", RESIZE_AND_READ)
+    assert r["after"] != r["before"]
+    assert r["ink"] > 0.1, r
+    assert errors == []
+
+
+def test_help_hidden_tab_holds_frames_and_clock(make_page, base_url):
+    """AC 7."""
+    page, errors = open_help_live(make_page, base_url)
+    assert rising(page, 300)
+    held = page.evaluate(SET_HIDDEN, True)
+    clock = fray_clock(page)
+    page.wait_for_timeout(1000)
+    assert frames(page) == held and fray_clock(page) == clock
+    page.evaluate(SET_HIDDEN, False)
+    page.wait_for_timeout(600)
+    assert frames(page) > held and fray_clock(page) > clock
+    assert errors == []
+
+
+def test_help_off_screen_stage_idles(make_page, base_url):
+    page, _ = open_help_live(make_page, base_url, viewport={"width": 1440, "height": 500})
+    assert rising(page, 300)
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    page.wait_for_timeout(300)
+    assert page.eval_on_selector("[data-hero]", "el => el.getBoundingClientRect().bottom") <= 0
+    held = frames(page)
+    page.wait_for_timeout(800)
+    assert frames(page) == held
+    page.locator("[data-hero]").scroll_into_view_if_needed()
+    page.wait_for_timeout(600)
+    assert frames(page) > held
+
+
+def test_help_frozen_date_keeps_threads_moving(make_page, base_url):
+    """AC 8: Date is pinned (the default make_page, #12's fixture), and the sim still runs on rAF time."""
+    page, errors = open_help_live(make_page, base_url)
+    assert page.evaluate(CLOCK_ADVANCE) == 0  # control: Date really is pinned
+    clock, pose = fray_clock(page), strands(page)
+    page.wait_for_timeout(1000)
+    assert fray_clock(page) > clock + 0.5 and strands(page) != pose
+    assert errors == []
+
+
+# --- The stir and ?pose=rest. ---
+
+# Sums each strand's frame-to-frame point movement over every counted frame from now on, into window.__moved.
+RECORD_MOVES = r"""el => {
+    const f = el.__weaveHelp.fray;
+    const copy = () => f.strands.map((s) => s.points.map((p) => [...p]));
+    let prev = copy();
+    window.__moved = new Array(f.strands.length).fill(0);
+    window.__recorder = new MutationObserver(() => {
+      const now = copy();
+      now.forEach((s, i) => s.forEach((p, j) => {
+        window.__moved[i] += Math.hypot(p[0] - prev[i][j][0], p[1] - prev[i][j][1], p[2] - prev[i][j][2]);
+      }));
+      prev = now;
+    });
+    window.__recorder.observe(el, { attributes: true, attributeFilter: ['data-hero-frames'] });
+}"""
+
+
+def test_pointer_stirs_the_nearest_strand(make_page, base_url):
+    """AC 5 (U1 on the page)."""
+    page, errors = open_help_live(make_page, base_url)
+    p = help_hook(page, ".fray.strands[4].points[8]")
+    x, y = page.eval_on_selector("[data-hero]", "(el, p) => el.__weaveHelp.project(p)", p)
+    page.mouse.move(x, y)
+    page.wait_for_timeout(100)
+    stir = help_hook(page, ".fray.stir")
+    assert stir is not None and max(abs(a - b) for a, b in zip(stir, p)) <= 0.05, (stir, p)
+    pins = help_hook(page, ".fray.strands.map((s) => s.points[0])")
+    farthest = max(range(10), key=lambda i: abs(pins[i][0] - pins[4][0]))
+    page.eval_on_selector("[data-hero]", RECORD_MOVES)
+    for i in range(20):
+        page.mouse.move(x + (40 if i % 2 == 0 else -40), y)
+        page.wait_for_timeout(50)
+    moved = page.evaluate("window.__recorder.disconnect(), window.__moved")
+    assert moved[4] > moved[farthest] and moved[4] > 0, (moved, farthest)
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(100)
+    assert help_hook(page, ".fray.stir") is None
+    assert errors == []
+
+
+def sweep(page, points=10):
+    box = page.locator("[data-hero]").bounding_box()
+    for i in range(points):
+        t = (i + 0.5) / points
+        page.mouse.move(box["x"] + box["width"] * t, box["y"] + box["height"] * (0.4 + 0.5 * t))
+        page.wait_for_timeout(30)
+
+
+@pytest.mark.parametrize("rest", [True, False], ids=["rest", "control"])
+def test_help_pose_rest_is_still_but_not_paused(make_page, base_url, rest):
+    """AC 9, a port of test_pose.py's: the rest pose holds the threads still while the loop runs; without it (the
+    control) the same sweeps move them."""
+    page, errors = open_help_live(make_page, base_url, query="?pose=rest&nowatchdog" if rest else "?nowatchdog")
+    sweep(page)
+    stirs = [help_hook(page, ".fray.stir")]
+    pose = strands(page)
+    before = frames(page)
+    sweep(page)
+    stirs.append(help_hook(page, ".fray.stir"))
+    page.wait_for_timeout(1000)
+    assert frames(page) > before
+    assert (strands(page) == pose) is rest
+    if rest:
+        assert stirs == [None, None]
+    assert errors == []
+
+
+def test_help_pose_rest_still_falls_back_when_slow(make_page, base_url):
+    """AC 9: ?pose=rest freezes the motion inputs only; the watchdog still rules (D34)."""
+    page, _ = open_help(make_page, base_url, path=HELP + "?pose=rest&watchdogLimitMs=0", reduced_motion="no-preference")
+    wait_for_reason(page, "too-slow")
+    assert hero_result(page) == ["still", "too-slow"]
+    assert_help_still(page)
+
+
+# --- Every runtime fallback, each with its fault shown to have arrived. ---
+
+
+def fallback_page(make_page, base_url, case):
+    """The Help page set up for runtime fallback `case`; returns (page, errors, warnings, hits)."""
+    warnings, hits = [], []
+    query = "?watchdogLimitMs=0" if case == "too-slow" else "?nowatchdog"
+
+    def abort(route):
+        hits.append(route.request.url)
+        route.abort()
+
+    def before(page):
+        collect_warnings(page, ("WEAVE: ",), warnings)
+        if case == "load-failed":
+            page.route("**/three.module.min.js", abort)
+        if case == "load-failed-build":
+            page.add_init_script(SASHING_THROWS)
+        if case == "webgl-failed":
+            page.add_init_script(NO_STAGE_WEBGL)
+
+    page, errors = open_help(make_page, base_url, path=HELP + query, reduced_motion="no-preference", before_goto=before)
+    return page, errors, warnings, hits
+
+
+@pytest.mark.parametrize("case", ["too-slow", "load-failed", "load-failed-build", "context-lost", "webgl-failed"])
+def test_help_runtime_fallbacks(make_page, base_url, case):
+    """AC 11's runtime reasons: each falls back to the still with nothing live left, and each fault really arrived
+    (Issue-17's vacuous-degrade rule)."""
+    page, errors, warnings, hits = fallback_page(make_page, base_url, case)
+    reason = "load-failed" if case == "load-failed-build" else case
+    if case == "context-lost":
+        assert hero_result(page) == ["live", "ok"]
+        page.eval_on_selector("[data-hero] canvas",
+                              "c => c.getContext('webgl2').getExtension('WEBGL_lose_context').loseContext()")
+    wait_for_reason(page, reason)
+    assert hero_result(page) == ["still", reason]
+    assert_help_still(page)
+    if case == "too-slow":
+        assert frames(page) >= 3  # the loop really ran before the watchdog ruled
+    if case == "load-failed":
+        assert len(hits) >= 1, hits
+    if case in ("load-failed", "load-failed-build"):
+        assert len([w for w in warnings if w.startswith(HELP_LOAD_FAILED)]) == 1, warnings
+        assert not [e for e in errors if e.startswith("pageerror")], errors
+    if case == "context-lost":
+        assert errors == []
+    if case == "webgl-failed":
+        assert errors == ["console.error: THREE.WebGLRenderer: Error creating WebGL context."]
+        assert len([w for w in warnings if w.startswith(WEBGL_FAILED)]) == 1, warnings
+
+
+def test_help_stop_hook_tears_down_once(make_page, base_url):
+    page, errors = open_help_live(make_page, base_url)
+    page.eval_on_selector("[data-hero]",
+                          "el => { el.__weaveHelp.stop('context-lost'); el.__weaveHelp.stop('too-slow'); }")
+    assert hero_result(page) == ["still", "context-lost"]
+    assert_help_still(page)
+    held, clock = frames(page), fray_clock(page)
+    page.wait_for_timeout(600)
+    assert frames(page) == held and fray_clock(page) == clock
+    assert help_hook(page, ".fray.state") == "frayed"  # the hook outlives the teardown
+    assert errors == []
+
+
+# --- The h1 holds as Pause shows and hides (Issue-15; draft round 1). ---
+
+H1_BOX = ("async () => { await document.fonts.ready; const r = document.querySelector('.hero h1').getBoundingClientRect();"
+          " return [r.x, r.y, r.width, r.height]; }")
+
+
+def close_box(a, b, tol=0.5):
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def test_help_h1_holds_across_go_live_and_fallback(make_page, base_url):
+    still, _ = open_help(make_page, base_url)
+    assert hero_result(still) == ["still", "reduced-motion"]
+    reference = still.evaluate(H1_BOX)
+    row = still.locator("[data-controls]")
+    assert row.count() == 1 and row.evaluate("el => getComputedStyle(el).visibility") == "hidden"
+    assert row.bounding_box()["height"] >= 44
+
+    page, errors = open_help_live(make_page, base_url)
+    live_row = page.locator("[data-controls]")
+    # Subject count first: the row and Pause really showed before anything is measured against them.
+    assert live_row.count() == 1 and live_row.is_visible() and page.locator("[data-pause]").is_visible()
+    assert close_box(page.evaluate(H1_BOX), reference), (page.evaluate(H1_BOX), reference)
+    page.eval_on_selector("[data-hero]", "el => el.__weaveHelp.stop('too-slow')")
+    wait_for_reason(page, "too-slow")
+    assert live_row.evaluate("el => el.hidden") is True
+    assert close_box(page.evaluate(H1_BOX), reference), (page.evaluate(H1_BOX), reference)
+    assert errors == []
+
+    # Planted control: without the reserve, the row collapses and the centred h1 moves.
+    still.eval_on_selector("[data-controls]", "el => el.removeAttribute('data-reserve')")
+    moved = still.evaluate(H1_BOX)
+    assert abs(moved[1] - reference[1]) > 10, (moved, reference)
+    # Home guard: only Help carries data-reserve, so the scoped rules never reach the home page.
+    assert "data-reserve" not in (PUBLIC / "index.html").read_text(encoding="utf-8")
