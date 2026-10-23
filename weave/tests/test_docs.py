@@ -324,3 +324,60 @@ def test_weave_readme_budgets_covers_the_sew_in_run():
         assert phrase in budgets, phrase
     said = sentences(budgets)
     assert any("6" in s and "12" in s and "unmeasured" in s and "#38" in s for s in said), said
+
+
+# --- #17: the Help page. ---
+
+HELP_LINKS = "Help links"
+
+
+def test_weave_readme_has_the_help_links_section():
+    readme = WEAVE / "README.md"
+    help_links = section(readme, HELP_LINKS)
+    for phrase in ("public/site-config.js", "teamName", "serviceDesk", "tutorial", "docs", "Link coming soon",
+                   "https://"):
+        assert phrase in help_links, phrase
+    said = sentences(help_links.replace("public/site-config.js", "site-config.js"))
+    assert any("public" in s and ("internal" in s or "hostname" in s) for s in said), said
+    headings = re.findall(r"^## (.+?)\s*$", readme.read_text(encoding="utf-8"), re.M)
+    assert headings.index("Budgets") < headings.index(HELP_LINKS) < headings.index("Licenses"), headings
+
+
+def test_weave_readme_preview_names_the_help_page():
+    assert "/public/help/" in section(WEAVE / "README.md", "Preview")
+
+
+def test_spec_lists_the_help_hooks():
+    spec = SPEC.read_text(encoding="utf-8")
+    hooks = re.search(r"^### URL and page hooks\s*$(.*?)(?=^##)", spec, re.M | re.S).group(1)
+    for phrase in ("/weave/help/", "[data-hero]", ".hero-figure", "window.WEAVE_SITE", "js/config.js"):
+        assert phrase in hooks, phrase
+    assert any("controls" in s and "beside the stage" in s and "never inside" in s for s in sentences(hooks)), \
+        sentences(hooks)
+
+
+def test_spec_and_root_readme_know_the_help_page():
+    spec = SPEC.read_text(encoding="utf-8")
+    urls = re.search(r"\*\*Published URLs:\*\*(.*?)(?=\n\n)", spec, re.S).group(1)
+    assert "…/weave/help/" in urls, urls
+    page = re.search(r"^## 8\..*?(?=^## 9\.)", spec, re.M | re.S).group(0)
+    header = re.search(r"\*\*Header:\*\*(.*?)(?=^- \*\*)", page, re.M | re.S).group(1)
+    names = ['"What\'s in it"', '"Help"', '"Coalesce"', '"Source"']
+    at = [header.find(name) for name in names]
+    assert -1 not in at and at == sorted(at), (header, at)
+    goals = re.search(r"^## 2\..*?(?=^## 3\.)", spec, re.M | re.S).group(0)
+    assert "It is next after v0." not in goals
+    later = re.search(r"^## 11\..*?(?=^## |\Z)", spec, re.M | re.S).group(0)
+    assert "- The frayed-corner Help page." not in later
+    root = (REPO / "README.md").read_text(encoding="utf-8")
+    weave_bullet = next(line for line in root.splitlines() if line.startswith("- **WEAVE**"))
+    assert "Help page" in weave_bullet, weave_bullet
+
+
+def test_help_links_says_what_the_tests_read():
+    """Only two tests touch the committed file, and neither reads a value: one checks its comments, one its shape."""
+    said = sentences(section(WEAVE / "README.md", HELP_LINKS))
+    tests = [s for s in said if "tests" in s]
+    assert tests, said
+    assert any("never read" in s and "values" in s and ("shape" in s or "structure" in s) for s in tests), tests
+    assert not any("each one serves its own settings" in s for s in tests), tests

@@ -32,7 +32,8 @@ Clicking the quilt unstitches it into a dashboard of tiles you can rearrange. Th
 
 **Non-goals for v0**
 - Photoreal rendering. A Blender realism pass (cloth drape, a poster render) comes later.
-- The frayed-corner Help page. It is next after v0.
+- The frayed-corner Help page's scene. #17 ships the Help page's shell, with a placeholder still; its frayed-corner
+  scene comes in #18 and #19.
 - Real data. Every number shown is sample data.
 
 ## 3. Repo and hosting
@@ -56,6 +57,7 @@ weave-prototypes/                 github.com/mtibbits/weave-prototypes (public)
 **Published URLs:**
 - the front page: `https://mtibbits.github.io/weave-prototypes/`
 - the WEAVE prototype: `…/weave/`
+- the WEAVE Help page: `…/weave/help/`
 - the Coalesce prototype: `…/coalesce/`
 
 **Action versions:** `actions/checkout@v6`, `actions/upload-pages-artifact@v5` and `actions/deploy-pages@v5`. These are the versions the owner's volk fork deploys with.
@@ -145,7 +147,7 @@ All motion is springs toward per-block targets plus a few scripted timelines.
 
 ## 8. The page
 
-- **Header:** a woven-square mark and the "WEAVE" wordmark, a "Prototype · work in progress" pill, and nav links "What's in it", "Coalesce" and "Source".
+- **Header:** a woven-square mark and the "WEAVE" wordmark, a "Prototype · work in progress" pill, and nav links "What's in it", "Help", "Coalesce" and "Source".
 - **Hero:**
   - eyebrow: the full acronym;
   - headline: "Every part of your workforce, *woven* together.";
@@ -234,6 +236,11 @@ These ship on the public page; the tests, the capture tools and the sibling epic
   `__weave.mode` already reads the new state and, on a settle, `data-mode` has already flipped. A handler that
   toggles synchronously starts the next transition inside the dispatch, so listeners after it read that newer
   state (verify.py's window does this on `tiles`); after a teardown nothing is written and no `weave:mode` fires.
+- The Help page, `/weave/help/` (`weave/public/help/index.html`, #17). Its `[data-hero]` stage (`role="img"`) holds
+  only the still and is #18's mount point; controls go beside the stage, inside `.hero-figure`, never inside it.
+  Its card links and team name come from `window.WEAVE_SITE = { teamName, links: { serviceDesk, tutorial, docs } }`,
+  set by `site-config.js`; `js/config.js` exports `safeUrl`, `resolveConfig`, `applyConfig`, `boot`, `MISSING_LABEL`
+  and `DEFAULT_TEAM`.
 
 ## 10. Testing
 
@@ -257,7 +264,7 @@ pytest + Playwright, with Chromium on the GPU, as in Coalesce:
 
 ## 11. Later (not v0)
 
-- The frayed-corner Help page.
+- The Help page's frayed-corner scene (#18, #19); #17 ships its shell.
 - A Blender cloth-drape map and a photoreal poster.
 - The acronym on the quilt label.
 - The real launch set.

@@ -2,7 +2,7 @@
 
 Work-in-progress prototypes, published with GitHub Pages. The first two are for one workforce tool:
 
-- **WEAVE** (`weave/`): the Workforce Engagement, Actions & Visibility Environment. This is the home page for the planned web dashboard, with a 3D quilt hero where every block is a dashboard panel. It is in progress.
+- **WEAVE** (`weave/`): the Workforce Engagement, Actions & Visibility Environment. It has a home page for the planned web dashboard, with a 3D quilt hero where every block is a dashboard panel, and a Help page. It is in progress.
 - **Coalesce** (`coalesce/`): Home and Help pages for the Excel add-in in use today, with a 3D crowd hero. It was imported with its history from the original `coalesce-site` repo.
 - **blazeAhead** (`blazeahead/`): Home, Help and a torch-lit 3D tour for the blazeAhead VS Code extension. It is a snapshot of the local `blazeahead-site` repo at 07cbacc; its development history stays there.
 

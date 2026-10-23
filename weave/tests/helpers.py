@@ -1,4 +1,5 @@
 """Shared test helpers. pytest puts tests/ on sys.path, so test modules import this directly."""
+import json
 import struct
 import zlib
 
@@ -283,6 +284,58 @@ def open_page(make_page, base_url, panels_body=None, warnings=None, **context_ar
         page.route("**/panels.js", lambda route: route.fulfill(content_type="text/javascript", body=panels_body))
     page.goto(base_url + HOME)
     page.wait_for_load_state("networkidle")
+    return page, errors
+
+
+# --- The Help page (#17). Its tests never read the committed site-config.js values: they route a fixture. ---
+
+HELP = "/public/help/"
+FILLED_SITE = {"teamName": "Workforce Systems",
+               "links": {"serviceDesk": "https://desk.example.com/portal/7", "tutorial": "https://learn.example.com/weave",
+                         "docs": "https://docs.example.com/weave"}}
+EMPTY_SITE = {"teamName": "", "links": {"serviceDesk": "", "tutorial": "", "docs": ""}}
+SITE_SYNTAX_ERROR = "window.WEAVE_SITE = {"
+NOT_FOUND = object()
+CARD_KEYS = ["serviceDesk", "tutorial", "docs"]
+CARD_TITLES = ["Report a problem", "Take the tutorial", "Read the docs"]
+
+# Links the resolver must drop: unsafe schemes, scheme-less text, and non-strings. "a/b" and "ab/x" are rejected only
+# by a correctly escaped \.\.?\/ in SAFE_URL.
+BAD_LINKS = ["javascript:alert(1)", "data:text/html,x", "ftp://x.example", "www.example.com/docs", "a/b", "ab/x", "",
+             "   ", 42, None]
+
+
+def site_body(cfg):
+    """A site-config.js body that sets window.WEAVE_SITE to `cfg`."""
+    return f"window.WEAVE_SITE = {json.dumps(cfg)};"
+
+
+def open_help(make_page, base_url, site=EMPTY_SITE, path=HELP, **context_args):
+    """Open the Help page with site-config.js routed to `site`; returns (page, errors).
+
+    `site` is a dict (served as settings), a str (the raw body), NOT_FOUND (a 404) or None (no route, so the
+    committed file loads). Whenever it routes, it asserts the route ran exactly once: a route that never matched
+    would let the empty-settings tests pass against the committed empty file.
+    """
+    context_args.setdefault("reduced_motion", "reduce")
+    page = make_page(**context_args)
+    errors = collect_errors(page)
+    fired = []
+    if site is not None:
+        if site is NOT_FOUND:
+            reply = {"status": 404, "content_type": "text/plain", "body": "Not found"}
+        else:
+            reply = {"content_type": "text/javascript", "body": site_body(site) if isinstance(site, dict) else site}
+
+        def handle(route):
+            fired.append(route.request.url)
+            route.fulfill(**reply)
+
+        page.route("**/site-config.js", handle)
+    page.goto(base_url + path)
+    page.wait_for_load_state("networkidle")
+    if site is not None:
+        assert len(fired) == 1, f"the site-config.js route ran {len(fired)} times: {fired}"
     return page, errors
 
 
