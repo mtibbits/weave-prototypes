@@ -39,6 +39,8 @@ const ITERATIONS = 6;
 const SEGMENTS = POINTS - 1;
 
 const isUint32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
+// Strict: a string, null, a boolean or an array is not a number here, though Number() would make one of it.
+const isFiniteNumber = (n) => typeof n === 'number' && Number.isFinite(n);
 
 export function createFray({ pins, length, seed, rest = false }) {
   if (!isUint32(seed)) throw new TypeError('createFray: seed must be a uint32');
@@ -94,8 +96,7 @@ export function createFray({ pins, length, seed, rest = false }) {
         p[1] += vy + ay * h2;
       }
       // hanging is #19's to write: anything but a finite number keeps the full length, never a NaN chain.
-      const hanging = Number(strand.hanging);
-      const segment = restSegment * (Number.isFinite(hanging) ? Math.max(0, hanging) : 1);
+      const segment = restSegment * (isFiniteNumber(strand.hanging) ? Math.max(0, strand.hanging) : 1);
       for (let n = 0; n < ITERATIONS; n += 1) {
         for (let j = 1; j < POINTS; j += 1) {
           const u = points[j - 1];
@@ -126,8 +127,7 @@ export function createFray({ pins, length, seed, rest = false }) {
     get clock() { return clock; },
     get stir() { return stir && [...stir]; },
     setStir(p) {
-      const point = Array.isArray(p) && p.length === 3 ? p.map(Number) : null;
-      stir = rest || !point || !point.every(Number.isFinite) ? null : point;
+      stir = !rest && Array.isArray(p) && p.length === 3 && p.every(isFiniteNumber) ? [p[0], p[1], p[2]] : null;
     },
     advance(dt) {
       if (typeof dt !== 'number' || !(dt > 0)) return;

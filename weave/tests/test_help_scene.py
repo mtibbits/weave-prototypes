@@ -490,6 +490,30 @@ def test_help_pose_rest_still_falls_back_when_slow(make_page, base_url):
 # --- Every runtime fallback, each with its fault shown to have arrived. ---
 
 
+# Counts WEBGL_lose_context.loseContext() calls on the stage's (aria-hidden) canvas into window.__stageLost; the
+# eligibility probe's own canvas is not counted.
+COUNT_STAGE_CONTEXT_LOSS = r"""
+    for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+      const original = proto.getExtension;
+      proto.getExtension = function (name, ...args) {
+        const ext = original.call(this, name, ...args);
+        if (ext && name === 'WEBGL_lose_context' && !ext.__counted) {
+          const gl = this;
+          const lose = ext.loseContext.bind(ext);
+          ext.loseContext = () => {
+            if (gl.canvas.getAttribute && gl.canvas.getAttribute('aria-hidden') === 'true') {
+              window.__stageLost = (window.__stageLost || 0) + 1;
+            }
+            return lose();
+          };
+          ext.__counted = true;
+        }
+        return ext;
+      };
+    }
+"""
+
+
 def fallback_page(make_page, base_url, case):
     """The Help page set up for runtime fallback `case`; returns (page, errors, warnings, hits)."""
     warnings, hits = [], []
@@ -505,6 +529,7 @@ def fallback_page(make_page, base_url, case):
             page.route("**/three.module.min.js", abort)
         if case == "load-failed-build":
             page.add_init_script(SASHING_THROWS)
+            page.add_init_script(COUNT_STAGE_CONTEXT_LOSS)
         if case == "webgl-failed":
             page.add_init_script(NO_STAGE_WEBGL)
 
@@ -529,6 +554,9 @@ def test_help_runtime_fallbacks(make_page, base_url, case):
         assert frames(page) >= 3  # the loop really ran before the watchdog ruled
     if case == "load-failed":
         assert len(hits) >= 1, hits
+    if case == "load-failed-build":
+        # The renderer was built before the scene threw, so its context must have been released.
+        assert page.evaluate("window.__stageLost || 0") == 1
     if case in ("load-failed", "load-failed-build"):
         assert len([w for w in warnings if w.startswith(HELP_LOAD_FAILED)]) == 1, warnings
         assert not [e for e in errors if e.startswith("pageerror")], errors

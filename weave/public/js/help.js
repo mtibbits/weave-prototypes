@@ -228,6 +228,14 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
     return;
   }
 
+  const dog = hooks.watchdog ? new FrameWatchdog({ limitMs: hooks.limitMs }) : null;
+  let stopped = false;
+  let paused = false;
+  let onScreen = true;
+  let rafId = 0;
+  let last = 0;
+  let frames = 0;
+
   // Each strand's ribbon, rewritten in place from fray.js's points: STRAND_WIDTH across, in the strand plane.
   function writeStrands() {
     fray.strands.forEach(({ points }, k) => {
@@ -264,13 +272,6 @@ function startLive({ THREE, scene: S, needle: N, spool: P, fabric: F, layout: L,
     renderer.render(scene, camera);
   }
 
-  const dog = hooks.watchdog ? new FrameWatchdog({ limitMs: hooks.limitMs }) : null;
-  let stopped = false;
-  let paused = false;
-  let onScreen = true;
-  let rafId = 0;
-  let last = 0;
-  let frames = 0;
 
   function writeFrayState() {
     if (stage.dataset.frayState !== fray.state) stage.dataset.frayState = fray.state;

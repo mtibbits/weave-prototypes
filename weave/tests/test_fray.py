@@ -225,19 +225,23 @@ def test_fray_js_header_states_the_model():
     assert header_claims("\n".join(lines[:claim[0]] + lines[claim[0] + 1:])) is False
 
 
-@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "'1'", "undefined"])
+@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "'1'", "undefined", "null", "''", "false", "[]"])
 def test_a_bad_hanging_never_breaks_a_strand(js, bad):
     """hanging is #19's to write: a value that is not a finite number must not poison the strand's points for good."""
     r = run(js, f"""
         const f = make();
+        const tip = () => {{ const p = f.strands[3].points; return Math.hypot(p[15][0] - p[0][0], p[15][1] - p[0][1]); }};
         f.strands[3].hanging = {bad}; run(f, 1);
+        const held = tip();
         f.strands[3].hanging = 1; run(f, 1);
-        return f.strands.flatMap((s) => s.points.flat()).every(Number.isFinite);
+        return {{ finite: f.strands.flatMap((s) => s.points.flat()).every(Number.isFinite), held }};
     """)
-    assert r is True
+    # Not a number counts as 1: the strand keeps its full length (0.6), never collapsing to its pin.
+    assert r["finite"] is True and r["held"] > 0.4, r
 
 
-@pytest.mark.parametrize("bad", ["5", "'abc'", "{}", "[1, 2]", "[NaN, 0, 0]", "[0, Infinity, 0]"])
+@pytest.mark.parametrize("bad", ["5", "'abc'", "{}", "[1, 2]", "[NaN, 0, 0]", "[0, Infinity, 0]", "[null, null, null]",
+                                 "['', 0, 0]", "['0.5', 0, 0]"])
 def test_set_stir_ignores_a_malformed_point(js, bad):
     """A point that is not three finite numbers clears the stir, so fray.stir never reads non-null and meaningless."""
     r = run(js, f"const f = make(); f.setStir([0.5, -0.2, 0.014]); f.setStir({bad}); return f.stir;")
